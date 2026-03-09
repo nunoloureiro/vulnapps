@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Vulnapps{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="/" class="navbar-brand"><img src="/static/logo.svg" alt="" class="navbar-logo">vulnapps</a>
+            <ul class="navbar-nav">
+                <li><a href="/apps">Apps</a></li>
+                {% if user %}
+                    <li><a href="/scans">Scans</a></li>
+                    {% if user.role == 'admin' %}
+                        <li><a href="/admin/users">Admin</a></li>
+                    {% endif %}
+                    <li><a href="/auth/logout" class="btn btn-outline btn-sm">Logout</a></li>
+                {% else %}
+                    <li><a href="/auth/login" class="btn btn-outline btn-sm">Login</a></li>
+                    <li><a href="/auth/register" class="btn btn-primary btn-sm">Register</a></li>
+                {% endif %}
+            </ul>
+        </div>
+    </nav>
+    <main class="container">
+        {% if error %}
+            <div class="alert alert-error mt-2">{{ error }}</div>
+        {% endif %}
+        {% if success %}
+            <div class="alert alert-success mt-2">{{ success }}</div>
+        {% endif %}
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

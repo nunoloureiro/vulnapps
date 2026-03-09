@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Scans - Vulnapps{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Scans</h1>
+</div>
+
+{% if scans %}
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Scanner</th>
+                    <th>App</th>
+                    <th>Date</th>
+                    <th>Authenticated</th>
+                    <th>TP</th>
+                    <th>FP</th>
+                    <th>FN</th>
+                    <th>Submitted By</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for scan in scans %}
+                <tr>
+                    <td><a href="/apps/{{ scan.app_id }}/scans/{{ scan.id }}">{{ scan.scanner_name }}</a></td>
+                    <td><a href="/apps/{{ scan.app_id }}">{{ scan.app_name }}</a></td>
+                    <td>{{ scan.scan_date }}</td>
+                    <td>{{ 'Yes' if scan.authenticated else 'No' }}</td>
+                    <td class="text-success">{{ scan.tp if scan.tp is defined else '-' }}</td>
+                    <td class="text-error">{{ scan.fp if scan.fp is defined else '-' }}</td>
+                    <td class="text-error">{{ scan.fn if scan.fn is defined else '-' }}</td>
+                    <td class="text-secondary">{{ scan.submitted_by }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="empty-state">
+    <h3>No scans found</h3>
+    <p>No scan results have been submitted yet.</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none">
+  <!-- Shield outline -->
+  <path d="M20 3L6 9v10c0 9.5 6 16.5 14 19 8-2.5 14-9.5 14-19V9L20 3z" fill="#18181b" stroke="#f97316" stroke-width="1.5"/>
+  <!-- Crosshair circle -->
+  <circle cx="20" cy="19" r="7" stroke="#f97316" stroke-width="1.5" fill="none"/>
+  <!-- Crosshair dot -->
+  <circle cx="20" cy="19" r="2" fill="#f97316"/>
+  <!-- Crosshair lines -->
+  <line x1="20" y1="10" x2="20" y2="15" stroke="#f97316" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="20" y1="23" x2="20" y2="28" stroke="#f97316" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="11" y1="19" x2="16" y2="19" stroke="#f97316" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="24" y1="19" x2="29" y2="19" stroke="#f97316" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

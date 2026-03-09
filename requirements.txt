@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+aiosqlite
+pyjwt
+bcrypt
+python-dotenv
+httpx
+pytest
+pytest-asyncio

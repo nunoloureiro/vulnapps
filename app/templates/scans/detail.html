@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}{{ scan.scanner_name }} Scan - Vulnapps{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">{{ scan.scanner_name }}</h1>
+    <a href="/apps/{{ app.id }}" class="btn btn-outline">Back to App</a>
+</div>
+
+<div class="card">
+    <div class="detail-grid">
+        <span class="detail-label">Scanner</span>
+        <span class="detail-value">{{ scan.scanner_name }}</span>
+
+        <span class="detail-label">App</span>
+        <span class="detail-value"><a href="/apps/{{ app.id }}">{{ app.name }}</a></span>
+
+        <span class="detail-label">Scan Date</span>
+        <span class="detail-value">{{ scan.scan_date }}</span>
+
+        <span class="detail-label">Authenticated</span>
+        <span class="detail-value">{{ 'Yes' if scan.authenticated else 'No' }}</span>
+
+        <span class="detail-label">Submitted By</span>
+        <span class="detail-value text-secondary">{{ scan.submitted_by }}</span>
+
+        {% if scan.notes %}
+        <span class="detail-label">Notes</span>
+        <span class="detail-value">{{ scan.notes }}</span>
+        {% endif %}
+    </div>
+</div>
+
+<h2 class="page-title mt-3 mb-2">Metrics</h2>
+<div class="metrics-grid mb-2">
+    <div class="metric-card">
+        <div class="metric-value text-success">{{ metrics.tp }}</div>
+        <div class="metric-label">True Positives</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-value text-error">{{ metrics.fp }}</div>
+        <div class="metric-label">False Positives</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-value text-error">{{ metrics.fn }}</div>
+        <div class="metric-label">False Negatives</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-value text-accent">{{ '%.1f' % (metrics.precision * 100) if metrics.precision is not none else 'N/A' }}{% if metrics.precision is not none %}%{% endif %}</div>
+        <div class="metric-label">Precision</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-value text-accent">{{ '%.1f' % (metrics.recall * 100) if metrics.recall is not none else 'N/A' }}{% if metrics.recall is not none %}%{% endif %}</div>
+        <div class="metric-label">Recall</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-value text-accent">{{ '%.1f' % (metrics.f1 * 100) if metrics.f1 is not none else 'N/A' }}{% if metrics.f1 is not none %}%{% endif %}</div>
+        <div class="metric-label">F1 Score</div>
+    </div>
+</div>
+
+<h2 class="page-title mt-3 mb-2">Findings</h2>
+{% if findings %}
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Method</th>
+                    <th>URL</th>
+                    <th>Parameter</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for finding in findings %}
+                <tr>
+                    <td>{{ finding.vuln_type }}</td>
+                    <td class="font-mono">{{ finding.http_method or '-' }}</td>
+                    <td class="font-mono text-sm">{{ finding.url or '-' }}</td>
+                    <td class="font-mono">{{ finding.parameter or '-' }}</td>
+                    <td>
+                        {% if finding.matched_vuln_id %}
+                            <span class="badge badge-low">TP</span>
+                        {% else %}
+                            <span class="badge badge-critical">FP</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No findings reported in this scan.</p>
+</div>
+{% endif %}
+
+{% if missed_vulns %}
+<h2 class="page-title mt-3 mb-2">Missed Vulnerabilities (FN)</h2>
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Vuln ID</th>
+                    <th>Title</th>
+                    <th>Type</th>
+                    <th>Severity</th>
+                    <th>URL</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for vuln in missed_vulns %}
+                <tr>
+                    <td class="font-mono">{{ vuln.vuln_id }}</td>
+                    <td><a href="/apps/{{ app.id }}/vulns/{{ vuln.id }}">{{ vuln.title }}</a></td>
+                    <td>{{ vuln.vuln_type }}</td>
+                    <td><span class="badge badge-{{ vuln.severity }}">{{ vuln.severity }}</span></td>
+                    <td class="font-mono text-sm">{{ vuln.url or '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

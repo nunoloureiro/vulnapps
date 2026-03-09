@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Vulnapps - Vulnerability Registry{% endblock %}
+{% block content %}
+<div class="hero">
+    <h1>Track Scanner <span class="text-accent">Accuracy</span></h1>
+    <p>Register vulnerable applications, document their vulnerabilities, then submit scan results to measure how well your security scanners actually perform.</p>
+    <div class="hero-actions">
+        <a href="/apps" class="btn btn-primary">Browse Apps</a>
+        {% if not user %}
+            <a href="/auth/register" class="btn btn-outline">Get Started</a>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

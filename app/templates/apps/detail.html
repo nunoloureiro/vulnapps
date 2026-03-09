@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}{{ app.name }} - Vulnapps{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">{{ app.name }} <span class="text-muted text-sm">v{{ app.version }}</span></h1>
+    <div>
+        {% if user and user.role in ['contributor', 'admin'] %}
+            <a href="/apps/{{ app.id }}/edit" class="btn btn-outline">Edit App</a>
+            <a href="/apps/{{ app.id }}/vulns/new" class="btn btn-primary">Add Vulnerability</a>
+        {% endif %}
+        {% if user %}
+            <a href="/apps/{{ app.id }}/scans" class="btn btn-outline">Submit Scan</a>
+        {% endif %}
+        {% if scan_count >= 2 %}
+            <a href="/apps/{{ app.id }}/compare" class="btn btn-outline">Compare Scans</a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card mb-2">
+    <div class="detail-grid">
+        <div class="detail-label">Description</div>
+        <div class="detail-value">{{ app.description or 'No description provided.' }}</div>
+
+        <div class="detail-label">URL</div>
+        <div class="detail-value">
+            {% if app.url %}
+                <a href="{{ app.url }}">{{ app.url }}</a>
+            {% else %}
+                <span class="text-muted">N/A</span>
+            {% endif %}
+        </div>
+
+        <div class="detail-label">Tech Stack</div>
+        <div class="detail-value">
+            {% if tech_stack %}
+                {% for tech in tech_stack %}
+                    <span class="badge badge-info">{{ tech }}</span>
+                {% endfor %}
+            {% else %}
+                <span class="text-muted">N/A</span>
+            {% endif %}
+        </div>
+
+        <div class="detail-label">Created by</div>
+        <div class="detail-value">{{ app.creator_name or app.created_by }}</div>
+
+        <div class="detail-label">Scans</div>
+        <div class="detail-value"><a href="/scans">{{ scan_count }} scan{{ '' if scan_count == 1 else 's' }}</a></div>
+    </div>
+</div>
+
+<div class="page-header">
+    <h2 class="page-title">Vulnerabilities <span class="text-muted text-sm">({{ vuln_count }})</span></h2>
+</div>
+
+{% if vuln_count > 0 %}
+<div class="metrics-grid mb-2">
+    {% for sev in ['critical', 'high', 'medium', 'low', 'info'] %}
+        {% if severity_counts[sev] > 0 %}
+        <div class="metric-card">
+            <div class="metric-value"><span class="badge badge-{{ sev }}" style="font-size: 1.25rem; padding: 0.25rem 0.75rem;">{{ severity_counts[sev] }}</span></div>
+            <div class="metric-label">{{ sev }}</div>
+        </div>
+        {% endif %}
+    {% endfor %}
+</div>
+{% endif %}
+
+{% if vulns %}
+    <div class="card">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Title</th>
+                        <th>Severity</th>
+                        <th>Type</th>
+                        <th>URL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for vuln in vulns %}
+                        <tr>
+                            <td class="font-mono text-sm">{{ vuln.vuln_id }}</td>
+                            <td><a href="/apps/{{ app.id }}/vulns/{{ vuln.id }}">{{ vuln.title }}</a></td>
+                            <td><span class="badge badge-{{ vuln.severity }}">{{ vuln.severity }}</span></td>
+                            <td>{{ vuln.vuln_type }}</td>
+                            <td class="font-mono text-sm">{{ vuln.url or '-' }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+{% else %}
+    <div class="empty-state">
+        <p>No vulnerabilities documented yet.</p>
+    </div>
+{% endif %}
+{% endblock %}

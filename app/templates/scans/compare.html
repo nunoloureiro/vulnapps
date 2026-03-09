@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}Compare Scans - {{ app.name }} - Vulnapps{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Compare Scans <span class="text-muted text-sm">{{ app.name }} v{{ app.version }}</span></h1>
+    <a href="/apps/{{ app.id }}" class="btn btn-outline">Back to App</a>
+</div>
+
+{% if not comparison %}
+{# === SCAN SELECTOR === #}
+<div class="card">
+    <h3 class="card-title mb-2">Select scans to compare <span class="text-muted text-sm">(max 7)</span></h3>
+    {% if available_scans %}
+    <form id="compare-form">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width:40px"></th>
+                        <th>Scanner</th>
+                        <th>Date</th>
+                        <th>Auth</th>
+                        <th>Submitted by</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for scan in available_scans %}
+                    <tr>
+                        <td><input type="checkbox" name="scan_ids" value="{{ scan.id }}" class="scan-checkbox" style="accent-color: var(--accent); width:16px; height:16px;"></td>
+                        <td><strong>{{ scan.scanner_name }}</strong></td>
+                        <td>{{ scan.scan_date }}</td>
+                        <td>{{ 'Yes' if scan.authenticated else 'No' }}</td>
+                        <td class="text-secondary">{{ scan.submitter_name or scan.submitted_by }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="mt-2">
+            <button type="submit" class="btn btn-primary" id="compare-btn" disabled>Compare Selected</button>
+            <span class="text-muted text-sm" id="selection-count" style="margin-left: 0.75rem;">0 selected</span>
+        </div>
+    </form>
+    {% else %}
+    <div class="empty-state">
+        <p>No scans available for this app yet.</p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+(function() {
+    var form = document.getElementById('compare-form');
+    var btn = document.getElementById('compare-btn');
+    var countEl = document.getElementById('selection-count');
+    var checkboxes = document.querySelectorAll('.scan-checkbox');
+
+    function update() {
+        var checked = document.querySelectorAll('.scan-checkbox:checked');
+        var n = checked.length;
+        btn.disabled = n < 2 || n > 7;
+        countEl.textContent = n + ' selected' + (n > 7 ? ' (max 7)' : '');
+        // Disable unchecked boxes when 7 are selected
+        checkboxes.forEach(function(cb) {
+            if (!cb.checked) cb.disabled = n >= 7;
+        });
+    }
+
+    checkboxes.forEach(function(cb) { cb.addEventListener('change', update); });
+
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var ids = [];
+        document.querySelectorAll('.scan-checkbox:checked').forEach(function(cb) {
+            ids.push(cb.value);
+        });
+        window.location.href = '/apps/{{ app.id }}/compare?scans=' + ids.join(',');
+    });
+})();
+</script>
+
+{% else %}
+{# === COMPARISON RESULTS === #}
+
+{# Metrics comparison table #}
+<div class="card mb-2">
+    <h3 class="card-title mb-2">Metrics Comparison</h3>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    {% for s in comparison.scanners %}
+                        <th class="text-center">{{ s.scan.scanner_name }}<br><span class="text-muted text-xs">{{ s.scan.scan_date }}</span></th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="detail-label">True Positives</td>
+                    {% for s in comparison.scanners %}
+                        <td class="text-center font-mono text-success">{{ s.metrics.tp }}</td>
+                    {% endfor %}
+                </tr>
+                <tr>
+                    <td class="detail-label">False Positives</td>
+                    {% for s in comparison.scanners %}
+                        <td class="text-center font-mono text-error">{{ s.metrics.fp }}</td>
+                    {% endfor %}
+                </tr>
+                <tr>
+                    <td class="detail-label">False Negatives</td>
+                    {% for s in comparison.scanners %}
+                        <td class="text-center font-mono text-error">{{ s.metrics.fn }}</td>
+                    {% endfor %}
+                </tr>
+                <tr>
+                    <td class="detail-label">Precision</td>
+                    {% for s in comparison.scanners %}
+                        {% set val = s.metrics.precision * 100 %}
+                        <td class="text-center font-mono {% if val >= 70 %}text-success{% elif val >= 40 %}text-warning{% else %}text-error{% endif %}">{{ '%.1f' % val }}%</td>
+                    {% endfor %}
+                </tr>
+                <tr>
+                    <td class="detail-label">Recall</td>
+                    {% for s in comparison.scanners %}
+                        {% set val = s.metrics.recall * 100 %}
+                        <td class="text-center font-mono {% if val >= 70 %}text-success{% elif val >= 40 %}text-warning{% else %}text-error{% endif %}">{{ '%.1f' % val }}%</td>
+                    {% endfor %}
+                </tr>
+                <tr>
+                    <td class="detail-label">F1 Score</td>
+                    {% for s in comparison.scanners %}
+                        {% set val = s.metrics.f1 * 100 %}
+                        <td class="text-center font-mono {% if val >= 70 %}text-success{% elif val >= 40 %}text-warning{% else %}text-error{% endif %}"><strong>{{ '%.1f' % val }}%</strong></td>
+                    {% endfor %}
+                </tr>
+                <tr>
+                    <td class="detail-label">Detection Rate</td>
+                    {% for s in comparison.scanners %}
+                        {% set rate = (s.metrics.tp / comparison.known_vuln_count * 100) if comparison.known_vuln_count > 0 else 0 %}
+                        <td class="text-center font-mono text-accent">{{ '%.0f' % rate }}% <span class="text-muted text-xs">({{ s.metrics.tp }}/{{ comparison.known_vuln_count }})</span></td>
+                    {% endfor %}
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{# Detection matrix #}
+<div class="card">
+    <h3 class="card-title mb-2">Detection Matrix</h3>
+    <div class="table-wrap">
+        <table class="matrix-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Vulnerability</th>
+                    <th>Severity</th>
+                    {% for s in comparison.scanners %}
+                        <th class="text-center matrix-header">{{ s.scan.scanner_name }}</th>
+                    {% endfor %}
+                    <th class="text-center">Found</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in comparison.matrix %}
+                <tr>
+                    <td class="font-mono text-sm">{{ row.vuln.vuln_id }}</td>
+                    <td>{{ row.vuln.title }}</td>
+                    <td><span class="badge badge-{{ row.vuln.severity }}">{{ row.vuln.severity }}</span></td>
+                    {% for detected in row.detections %}
+                        <td class="text-center">
+                            {% if detected %}
+                                <span class="matrix-hit">&#10003;</span>
+                            {% else %}
+                                <span class="matrix-miss">&#10007;</span>
+                            {% endif %}
+                        </td>
+                    {% endfor %}
+                    <td class="text-center font-mono">
+                        <span class="{% if row.found_by == comparison.scanners|length %}text-success{% elif row.found_by == 0 %}text-error{% else %}text-warning{% endif %}">
+                            {{ row.found_by }}/{{ comparison.scanners|length }}
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{# False Positives #}
+{% set has_fps = [] %}
+{% for s in comparison.scanners %}{% if s.fp_findings %}{% if has_fps.append(1) %}{% endif %}{% endif %}{% endfor %}
+{% if has_fps %}
+<h2 class="page-title mt-3 mb-2">False Positives</h2>
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Scanner</th>
+                    <th>Type</th>
+                    <th>Method</th>
+                    <th>URL</th>
+                    <th>Parameter</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in comparison.scanners %}
+                    {% for fp in s.fp_findings %}
+                    <tr>
+                        {% if loop.first %}
+                            <td rowspan="{{ s.fp_findings|length }}" style="vertical-align:top; border-right:1px solid var(--border);">
+                                <strong>{{ s.scan.scanner_name }}</strong>
+                                <br><span class="text-error text-xs">{{ s.fp_findings|length }} FP{{ 's' if s.fp_findings|length != 1 }}</span>
+                            </td>
+                        {% endif %}
+                        <td class="text-error">{{ fp.vuln_type }}</td>
+                        <td class="font-mono">{{ fp.http_method or '-' }}</td>
+                        <td class="font-mono text-sm">{{ fp.url }}</td>
+                        <td class="font-mono">{{ fp.parameter or '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<div class="mt-2">
+    <a href="/apps/{{ app.id }}/compare" class="btn btn-outline">Change Selection</a>
+</div>
+
+{% endif %}
+{% endblock %}

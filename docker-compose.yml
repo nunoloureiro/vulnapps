@@ -1,0 +1,16 @@
+services:
+  vulnapps:
+    build: .
+    container_name: vulnapps
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - vulnapps-data:/data
+    env_file:
+      - .env
+    environment:
+      - DATABASE_PATH=/data/vulnapps.db
+
+volumes:
+  vulnapps-data:

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ vuln.title }} - Vulnapps{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">{{ vuln.title }}</h1>
+        <p class="text-sm text-secondary mt-1">{{ app.name }}</p>
+    </div>
+    <div class="flex gap-1">
+        {% if user and (user.role == 'contributor' or user.role == 'admin') %}
+            <a href="/apps/{{ app.id }}/vulns/{{ vuln.id }}/edit" class="btn btn-outline">Edit</a>
+        {% endif %}
+        <a href="/apps/{{ app.id }}" class="btn btn-outline">Back to App</a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="detail-grid">
+        <span class="detail-label">Vuln ID</span>
+        <span class="detail-value font-mono">{{ vuln.vuln_id }}</span>
+
+        <span class="detail-label">Title</span>
+        <span class="detail-value">{{ vuln.title }}</span>
+
+        <span class="detail-label">Severity</span>
+        <span class="detail-value">
+            <span class="badge badge-{{ vuln.severity }}">{{ vuln.severity }}</span>
+        </span>
+
+        <span class="detail-label">Type</span>
+        <span class="detail-value">{{ vuln.vuln_type }}</span>
+
+        <span class="detail-label">HTTP Method</span>
+        <span class="detail-value font-mono">{{ vuln.http_method or '-' }}</span>
+
+        <span class="detail-label">URL</span>
+        <span class="detail-value font-mono">{{ vuln.url or '-' }}</span>
+
+        <span class="detail-label">Parameter</span>
+        <span class="detail-value font-mono">{{ vuln.parameter or '-' }}</span>
+
+        <span class="detail-label">Code Location</span>
+        <span class="detail-value font-mono">{{ vuln.code_location or '-' }}</span>
+    </div>
+</div>
+
+{% if vuln.description %}
+<div class="card mt-2">
+    <h3 class="card-title mb-2">Description</h3>
+    <p class="text-sm">{{ vuln.description }}</p>
+</div>
+{% endif %}
+
+{% if vuln.poc %}
+<div class="card mt-2">
+    <h3 class="card-title mb-2">Proof of Concept</h3>
+    <pre style="background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; overflow-x: auto;"><code class="font-mono text-sm">{{ vuln.poc }}</code></pre>
+</div>
+{% endif %}
+
+{% if vuln.remediation %}
+<div class="card mt-2">
+    <h3 class="card-title mb-2">Remediation</h3>
+    <p class="text-sm">{{ vuln.remediation }}</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Apps - Vulnapps{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Apps</h1>
+    {% if user and user.role in ['contributor', 'admin'] %}
+        <a href="/apps/new" class="btn btn-primary">Add App</a>
+    {% endif %}
+</div>
+
+<form method="get" action="/apps" class="mb-2">
+    <input type="text" name="q" value="{{ q or '' }}" class="search-box" placeholder="Search apps...">
+</form>
+
+{% if apps %}
+    <div class="card-grid">
+        {% for item in apps %}
+            <a href="/apps/{{ item.app.id }}" class="card">
+                <h3 class="card-title">{{ item.app.name }} <span class="text-muted text-sm">v{{ item.app.version }}</span></h3>
+                {% if item.tech %}
+                    <div class="mt-1">
+                        {% for t in item.tech %}
+                            <span class="badge badge-info">{{ t }}</span>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+                {% if item.app.description %}
+                    <p class="text-secondary text-sm mt-1">{{ item.app.description[:120] }}{% if item.app.description|length > 120 %}...{% endif %}</p>
+                {% endif %}
+                <p class="text-muted text-sm mt-1">{{ item.app.vuln_count }} vulnerabilit{{ 'y' if item.app.vuln_count == 1 else 'ies' }}</p>
+            </a>
+        {% endfor %}
+    </div>
+{% else %}
+    <div class="empty-state">
+        <p>No apps found{% if q %} matching "{{ q }}"{% endif %}.</p>
+    </div>
+{% endif %}
+{% endblock %}
