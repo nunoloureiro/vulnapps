@@ -39,25 +39,35 @@ def _can_edit_app(user, app) -> bool:
 
 
 @router.get("", response_class=HTMLResponse)
-async def list_apps(request: Request, q: str = ""):
+async def list_apps(request: Request, q: str = "", visibility: str = "", team_id: int = None):
     user = request.state.user
     db = await get_connection()
     try:
         vis_clause, vis_params = app_visibility_filter(user)
+        extra_filters = ""
+        extra_params = []
+
+        if visibility in ("public", "team", "private"):
+            extra_filters += " AND apps.visibility = ?"
+            extra_params.append(visibility)
+
+        if team_id and user:
+            extra_filters += " AND apps.team_id = ?"
+            extra_params.append(team_id)
+
+        if q:
+            extra_filters += " AND apps.name LIKE ?"
+            extra_params.append(f"%{q}%")
+
         base_query = f"""
             SELECT apps.*, users.name as creator_name,
                    (SELECT COUNT(*) FROM vulnerabilities WHERE app_id=apps.id) as vuln_count
             FROM apps
             LEFT JOIN users ON apps.created_by=users.id
-            WHERE {vis_clause}
+            WHERE {vis_clause}{extra_filters}
+            ORDER BY apps.created_at DESC
         """
-        if q:
-            cursor = await db.execute(
-                base_query + " AND apps.name LIKE ? ORDER BY apps.created_at DESC",
-                vis_params + [f"%{q}%"],
-            )
-        else:
-            cursor = await db.execute(base_query + " ORDER BY apps.created_at DESC", vis_params)
+        cursor = await db.execute(base_query, vis_params + extra_params)
         apps = await cursor.fetchall()
 
         # Get tech stack for each app
@@ -65,11 +75,31 @@ async def list_apps(request: Request, q: str = ""):
         for app in apps:
             tech = await _get_tech_stack(db, app["id"])
             apps_with_tech.append({"app": app, "tech": tech})
+
+        # Get user's teams for filter dropdown
+        user_teams = []
+        if user:
+            cursor = await db.execute(
+                """SELECT teams.id, teams.name FROM teams
+                   JOIN team_members ON team_members.team_id = teams.id
+                   WHERE team_members.user_id = ?
+                   ORDER BY teams.name""",
+                (user["sub"],),
+            )
+            user_teams = await cursor.fetchall()
     finally:
         await db.close()
 
     return templates.TemplateResponse(
-        "apps/list.html", {"request": request, "user": request.state.user, "apps": apps_with_tech, "q": q}
+        "apps/list.html", {
+            "request": request,
+            "user": request.state.user,
+            "apps": apps_with_tech,
+            "q": q,
+            "visibility": visibility,
+            "team_id": team_id,
+            "user_teams": user_teams,
+        }
     )
 
 

@@ -51,20 +51,28 @@ async def example_csv():
 
 
 @router.get("/scans", response_class=HTMLResponse)
-async def list_scans(request: Request, app_id: int = None):
+async def list_scans(request: Request, app_id: int = None, visibility: str = "", team_id: int = None):
     user = request.state.user
 
     db = await get_connection()
     try:
-        app_filter = ""
-        params = []
+        extra_filters = ""
+        extra_params = []
         app = None
 
         if app_id:
-            app_filter = "AND scans.app_id = ?"
-            params.append(app_id)
+            extra_filters += " AND scans.app_id = ?"
+            extra_params.append(app_id)
             cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))
             app = await cursor.fetchone()
+
+        if visibility in ("public", "team", "private"):
+            extra_filters += " AND apps.visibility = ?"
+            extra_params.append(visibility)
+
+        if team_id and user:
+            extra_filters += " AND apps.team_id = ?"
+            extra_params.append(team_id)
 
         vis_clause, vis_params = scan_visibility_filter(user)
         cursor = await db.execute(
@@ -74,16 +82,36 @@ async def list_scans(request: Request, app_id: int = None):
                FROM scans
                LEFT JOIN apps ON scans.app_id=apps.id
                LEFT JOIN users ON scans.submitted_by=users.id
-               WHERE {vis_clause} {app_filter}
+               WHERE {vis_clause}{extra_filters}
                ORDER BY scans.created_at DESC""",
-            vis_params + params,
+            vis_params + extra_params,
         )
         scans = await cursor.fetchall()
+
+        # Get user's teams for filter dropdown
+        user_teams = []
+        if user:
+            cursor = await db.execute(
+                """SELECT teams.id, teams.name FROM teams
+                   JOIN team_members ON team_members.team_id = teams.id
+                   WHERE team_members.user_id = ?
+                   ORDER BY teams.name""",
+                (user["sub"],),
+            )
+            user_teams = await cursor.fetchall()
     finally:
         await db.close()
 
     return templates.TemplateResponse(
-        "scans/list.html", {"request": request, "user": request.state.user, "scans": scans, "app": app}
+        "scans/list.html", {
+            "request": request,
+            "user": request.state.user,
+            "scans": scans,
+            "app": app,
+            "visibility": visibility,
+            "team_id": team_id,
+            "user_teams": user_teams,
+        }
     )
 
 
