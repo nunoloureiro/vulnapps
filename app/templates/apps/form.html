@@ -40,7 +40,9 @@
                     <select id="visibility" name="visibility" class="form-select">
                         {% set default_vis = app.visibility if app else 'private' %}
                         {% for v in ['private', 'team', 'public'] %}
+                            {% if v != 'public' or user.role == 'admin' %}
                             <option value="{{ v }}" {{ 'selected' if (app and app.visibility == v) or (not app and v == default_vis) else '' }}>{{ v|capitalize }}</option>
+                            {% endif %}
                         {% endfor %}
                     </select>
                 </div>
