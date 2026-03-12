@@ -6,6 +6,7 @@
 UPDATE users SET role = 'user' WHERE role IN ('viewer', 'contributor');
 
 -- Step 2: Recreate users table with new CHECK constraint
+DROP TABLE IF EXISTS users_new;
 CREATE TABLE users_new (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     name          TEXT NOT NULL,
@@ -26,6 +27,7 @@ ALTER TABLE users_new RENAME TO users;
 UPDATE team_members SET role = 'contributor' WHERE role = 'member';
 
 -- Step 4: Recreate team_members with new CHECK constraint
+DROP TABLE IF EXISTS team_members_new;
 CREATE TABLE team_members_new (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     team_id  INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
