@@ -4,13 +4,16 @@
 <div class="page-header">
     <h1 class="page-title">{{ app.name }}{% if app.version %} <span class="text-muted text-sm">v{{ app.version }}</span>{% endif %}</h1>
     <div class="flex items-center gap-1">
-        {% if user and user.role in ['contributor', 'admin'] %}
+        {% if can_edit %}
             <a href="/apps/{{ app.id }}/edit" class="btn btn-outline">Edit App</a>
             <a href="/apps/{{ app.id }}/vulns/new" class="btn btn-primary">Add Vulnerability</a>
             <button type="button" class="btn btn-outline" onclick="document.getElementById('import-section').style.display = document.getElementById('import-section').style.display === 'none' ? '' : 'none'">Import Vulns</button>
         {% endif %}
-        {% if user and user.role != 'viewer' %}
+        {% if can_submit_scan %}
             <a href="/apps/{{ app.id }}/scans" class="btn btn-outline">Submit Scan</a>
+        {% endif %}
+        {% if user %}
+            <a href="/apps/new?clone_from={{ app.id }}" class="btn btn-outline">Clone</a>
         {% endif %}
         {% if scan_count >= 2 %}
             <a href="/apps/{{ app.id }}/compare" class="btn btn-outline">Compare Scans</a>
@@ -18,7 +21,7 @@
     </div>
 </div>
 
-{% if user and user.role in ['contributor', 'admin'] %}
+{% if can_edit %}
 <div class="card mb-2" id="import-section" style="display: none;">
     <h3 class="card-title mb-2">Import Vulnerabilities</h3>
     <p class="text-sm text-secondary mb-2">Upload a JSON or CSV file with vulnerabilities. Download examples: <a href="/apps/vulns/example/json">JSON</a> | <a href="/apps/vulns/example/csv">CSV</a></p>
@@ -95,7 +98,7 @@
                         <th class="sortable" data-col="2">Severity</th>
                         <th class="sortable" data-col="3">Type</th>
                         <th class="sortable" data-col="4">Location</th>
-                        {% if user and user.role in ['contributor', 'admin'] %}
+                        {% if can_edit %}
                             <th style="width: 70px;"></th>
                         {% endif %}
                     </tr>
@@ -109,7 +112,7 @@
                             <td class="cell-editable" data-field="severity" data-type="select" data-value="{{ vuln.severity }}" data-sort="{{ {'critical':0,'high':1,'medium':2,'low':3,'info':4}[vuln.severity] }}"><span class="badge badge-{{ vuln.severity }}">{{ vuln.severity }}</span></td>
                             <td class="cell-editable" data-field="vuln_type" data-value="{{ vuln.vuln_type or '' }}">{{ vuln.vuln_type or '' }}</td>
                             <td class="font-mono text-sm">{{ location }}</td>
-                            {% if user and user.role in ['contributor', 'admin'] %}
+                            {% if can_edit %}
                             <td>
                                 <div class="flex gap-1">
                                     <a href="/apps/{{ app.id }}/vulns/{{ vuln.id }}/edit" class="btn-icon" title="Edit all fields">
@@ -168,7 +171,7 @@
     });
 })();
 
-{% if user and user.role in ['contributor', 'admin'] %}
+{% if can_edit %}
 // Inline editing
 document.querySelectorAll('.cell-editable').forEach(function(td) {
     td.addEventListener('click', function(e) {

@@ -27,6 +27,9 @@ def decode_token(token: str) -> dict | None:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
         payload["sub"] = int(payload["sub"])
+        # Normalize stale roles from old tokens
+        if payload.get("role") in ("viewer", "contributor"):
+            payload["role"] = "user"
         return payload
     except (jwt.PyJWTError, ValueError, KeyError):
         return None

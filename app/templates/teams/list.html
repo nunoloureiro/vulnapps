@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">Teams</h1>
-    {% if user and user.role != 'viewer' %}
+    {% if user %}
         <a href="/teams/new" class="btn btn-primary">Create Team</a>
     {% endif %}
 </div>

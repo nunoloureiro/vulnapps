@@ -29,11 +29,16 @@ async def update_user_role(request: Request, user_id: int):
     form = await request.form()
     role = form.get("role")
 
-    if role not in ("viewer", "user", "contributor"):
+    if role not in ("user", "admin"):
         return RedirectResponse(url="/admin/users", status_code=303)
 
     db = await get_connection()
     try:
+        # Don't allow changing own role
+        admin = request.state.user
+        if user_id == admin["sub"]:
+            return RedirectResponse(url="/admin/users", status_code=303)
+
         await db.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
         await db.commit()
     finally:
@@ -53,7 +58,7 @@ async def inline_update_user(request: Request, user_id: int):
         return {"ok": False}
 
     # Validate role if being changed
-    if "role" in updates and updates["role"] not in ("viewer", "user", "contributor"):
+    if "role" in updates and updates["role"] not in ("user",):
         return {"ok": False, "error": "Invalid role"}
 
     # Don't allow editing admin users (except self name/email)

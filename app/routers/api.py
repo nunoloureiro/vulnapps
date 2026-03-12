@@ -1,20 +1,25 @@
 from fastapi import APIRouter, Request, HTTPException
 from app.database import get_connection
-from app.dependencies import require_user, require_contributor
+from app.dependencies import require_user, require_app_write, require_scan_write, get_team_role
 from app.matching import match_finding
+from app.visibility import app_visibility_filter, scan_visibility_filter
 
 router = APIRouter(prefix="/api/v1")
 
 
 @router.get("/apps")
 async def list_apps(request: Request):
+    user = request.state.user
     db = await get_connection()
     try:
+        vis_clause, vis_params = app_visibility_filter(user)
         cursor = await db.execute(
-            """SELECT apps.*, users.name as creator_name,
+            f"""SELECT apps.*, users.name as creator_name,
                       (SELECT COUNT(*) FROM vulnerabilities WHERE app_id=apps.id) as vuln_count
                FROM apps LEFT JOIN users ON apps.created_by=users.id
-               ORDER BY apps.created_at DESC"""
+               WHERE {vis_clause}
+               ORDER BY apps.created_at DESC""",
+            vis_params,
         )
         apps = [dict(row) for row in await cursor.fetchall()]
     finally:
@@ -25,13 +30,15 @@ async def list_apps(request: Request):
 
 @router.get("/apps/{app_id}")
 async def app_detail(request: Request, app_id: int):
+    user = request.state.user
     db = await get_connection()
     try:
+        vis_clause, vis_params = app_visibility_filter(user)
         cursor = await db.execute(
-            """SELECT apps.*, users.name as creator_name
+            f"""SELECT apps.*, users.name as creator_name
                FROM apps LEFT JOIN users ON apps.created_by=users.id
-               WHERE apps.id = ?""",
-            (app_id,),
+               WHERE apps.id = ? AND {vis_clause}""",
+            [app_id] + vis_params,
         )
         app = await cursor.fetchone()
         if not app:
@@ -57,8 +64,17 @@ async def app_detail(request: Request, app_id: int):
 
 @router.get("/apps/{app_id}/vulns")
 async def list_vulns(request: Request, app_id: int):
+    user = request.state.user
     db = await get_connection()
     try:
+        vis_clause, vis_params = app_visibility_filter(user)
+        cursor = await db.execute(
+            f"SELECT id FROM apps WHERE id = ? AND {vis_clause}",
+            [app_id] + vis_params,
+        )
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="App not found")
+
         cursor = await db.execute(
             "SELECT * FROM vulnerabilities WHERE app_id = ? ORDER BY severity, title",
             (app_id,),
@@ -72,19 +88,36 @@ async def list_vulns(request: Request, app_id: int):
 
 @router.post("/apps")
 async def create_app(request: Request):
-    user = await require_contributor(request)
+    user = await require_user(request)
     body = await request.json()
 
     db = await get_connection()
     try:
+        visibility = body.get("visibility", "private")
+        if visibility not in ("public", "team", "private"):
+            visibility = "private"
+        team_id = body.get("team_id")
+
+        # Validate visibility permissions
+        if visibility == "public" and user["role"] != "admin":
+            raise HTTPException(status_code=403, detail="Only admins can create public apps")
+        if visibility == "team":
+            if not team_id:
+                raise HTTPException(status_code=400, detail="Team required for team visibility")
+            team_role = await get_team_role(db, user["sub"], int(team_id))
+            if user["role"] != "admin" and team_role not in ("admin", "contributor"):
+                raise HTTPException(status_code=403, detail="Team contributor access required")
+
         cursor = await db.execute(
-            "INSERT INTO apps (name, version, description, url, created_by) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO apps (name, version, description, url, created_by, visibility, team_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 body["name"],
                 body["version"],
                 body.get("description"),
                 body.get("url"),
                 user["sub"],
+                visibility,
+                int(team_id) if team_id else None,
             ),
         )
         app_id = cursor.lastrowid
@@ -112,11 +145,17 @@ async def create_app(request: Request):
 
 @router.post("/apps/{app_id}/vulns")
 async def create_vuln(request: Request, app_id: int):
-    user = await require_contributor(request)
     body = await request.json()
 
     db = await get_connection()
     try:
+        cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))
+        app = await cursor.fetchone()
+        if not app:
+            raise HTTPException(status_code=404, detail="App not found")
+
+        user = await require_app_write(request, db, app)
+
         cursor = await db.execute(
             """INSERT INTO vulnerabilities
                (app_id, vuln_id, title, severity, vuln_type, http_method, url, parameter,
@@ -155,25 +194,16 @@ async def list_scans(request: Request):
 
     db = await get_connection()
     try:
-        if user:
-            cursor = await db.execute(
-                """SELECT scans.*, apps.name as app_name,
-                          (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
-                          (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count
-                   FROM scans LEFT JOIN apps ON scans.app_id=apps.id
-                   WHERE scans.is_public=1 OR scans.submitted_by=?
-                   ORDER BY scans.created_at DESC""",
-                (user["sub"],),
-            )
-        else:
-            cursor = await db.execute(
-                """SELECT scans.*, apps.name as app_name,
-                          (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
-                          (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count
-                   FROM scans LEFT JOIN apps ON scans.app_id=apps.id
-                   WHERE scans.is_public=1
-                   ORDER BY scans.created_at DESC"""
-            )
+        vis_clause, vis_params = scan_visibility_filter(user)
+        cursor = await db.execute(
+            f"""SELECT scans.*, apps.name as app_name,
+                      (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
+                      (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count
+               FROM scans LEFT JOIN apps ON scans.app_id=apps.id
+               WHERE {vis_clause}
+               ORDER BY scans.created_at DESC""",
+            vis_params,
+        )
         scans = [dict(row) for row in await cursor.fetchall()]
     finally:
         await db.close()
@@ -183,7 +213,7 @@ async def list_scans(request: Request):
 
 @router.get("/scans/{scan_id}")
 async def scan_detail(request: Request, scan_id: int):
-    await require_user(request)
+    user = request.state.user
 
     db = await get_connection()
     try:
@@ -194,6 +224,20 @@ async def scan_detail(request: Request, scan_id: int):
 
         cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (scan["app_id"],))
         app = await cursor.fetchone()
+
+        # Visibility check
+        if not user:
+            if not (scan["is_public"] and app["visibility"] == "public"):
+                raise HTTPException(status_code=401, detail="Not authenticated")
+        elif user["role"] != "admin":
+            can_see = (
+                scan["is_public"]
+                or scan["submitted_by"] == user["sub"]
+                or (app["visibility"] == "team" and app["team_id"] and
+                    await get_team_role(db, user["sub"], app["team_id"]) is not None)
+            )
+            if not can_see:
+                raise HTTPException(status_code=403, detail="Access denied")
 
         cursor = await db.execute("SELECT * FROM scan_findings WHERE scan_id = ?", (scan_id,))
         findings = await cursor.fetchall()
@@ -240,15 +284,31 @@ async def submit_scan(request: Request, app_id: int):
     user = await require_user(request)
     body = await request.json()
 
-    scanner_name = body["scanner_name"]
-    scan_date = body["scan_date"]
-    authenticated = 1 if body.get("authenticated") else 0
-    is_public = 1 if body.get("is_public", True) else 0
-    notes = body.get("notes")
-    findings_data = body.get("findings", [])
-
     db = await get_connection()
     try:
+        cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))
+        app = await cursor.fetchone()
+        if not app:
+            raise HTTPException(status_code=404, detail="App not found")
+
+        # Check scan submission permission
+        if user["role"] != "admin":
+            if app["visibility"] == "public":
+                raise HTTPException(status_code=403, detail="Only admins can submit scans on public apps")
+            elif app["visibility"] == "private" and app["created_by"] != user["sub"]:
+                raise HTTPException(status_code=403, detail="Only the app creator can submit scans on private apps")
+            elif app["visibility"] == "team" and app["team_id"]:
+                team_role = await get_team_role(db, user["sub"], app["team_id"])
+                if team_role not in ("admin", "contributor"):
+                    raise HTTPException(status_code=403, detail="Team contributor access required")
+
+        scanner_name = body["scanner_name"]
+        scan_date = body["scan_date"]
+        authenticated = 1 if body.get("authenticated") else 0
+        is_public = 1 if body.get("is_public", True) else 0
+        notes = body.get("notes")
+        findings_data = body.get("findings", [])
+
         cursor = await db.execute(
             """INSERT INTO scans (app_id, scanner_name, scan_date, authenticated, is_public, notes, submitted_by)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",

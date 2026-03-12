@@ -7,7 +7,7 @@
         <p class="text-sm text-secondary mt-1">{{ app.name }}</p>
     </div>
     <div class="flex gap-1">
-        {% if user and (user.role == 'contributor' or user.role == 'admin') %}
+        {% if can_edit %}
             <a href="/apps/{{ app.id }}/vulns/{{ vuln.id }}/edit" class="btn btn-outline">Edit</a>
         {% endif %}
         <a href="/apps/{{ app.id }}" class="btn btn-outline">Back to App</a>

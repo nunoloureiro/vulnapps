@@ -7,7 +7,7 @@
         <form method="get" action="/apps">
             <input type="text" name="q" value="{{ q or '' }}" class="search-box" placeholder="Search apps...">
         </form>
-        {% if user and user.role in ['contributor', 'admin'] %}
+        {% if user %}
             <a href="/apps/new" class="btn btn-primary">Add App</a>
         {% endif %}
     </div>

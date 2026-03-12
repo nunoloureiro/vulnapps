@@ -31,6 +31,14 @@
             <label class="form-label" for="email">Email</label>
             <input type="email" id="email" name="email" class="form-input" placeholder="user@example.com" required>
         </div>
+        <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" for="role">Role</label>
+            <select id="role" name="role" class="form-select">
+                <option value="view">View</option>
+                <option value="contributor">Contributor</option>
+                <option value="admin">Admin</option>
+            </select>
+        </div>
         <button type="submit" class="btn btn-primary">Add</button>
     </form>
 </div>
@@ -46,7 +54,7 @@
                     <th>Email</th>
                     <th>Role</th>
                     {% if is_team_admin %}
-                        <th style="width: 150px;">Actions</th>
+                        <th style="width: 200px;">Actions</th>
                     {% endif %}
                 </tr>
             </thead>
@@ -60,13 +68,11 @@
                     <td>
                         <div class="flex gap-1 items-center">
                             <form method="post" action="/teams/{{ team.id }}/members/{{ m.id }}/role" style="display:inline;">
-                                {% if m.team_role == 'member' %}
-                                    <input type="hidden" name="role" value="admin">
-                                    <button type="submit" class="btn btn-outline btn-sm" title="Promote to admin">Promote</button>
-                                {% else %}
-                                    <input type="hidden" name="role" value="member">
-                                    <button type="submit" class="btn btn-outline btn-sm" title="Demote to member">Demote</button>
-                                {% endif %}
+                                <select name="role" class="form-select" style="width: auto; padding: 0.2rem 0.4rem; font-size: 0.8rem;" onchange="this.form.submit()">
+                                    {% for r in ['admin', 'contributor', 'view'] %}
+                                        <option value="{{ r }}" {{ 'selected' if m.team_role == r else '' }}>{{ r }}</option>
+                                    {% endfor %}
+                                </select>
                             </form>
                             <form method="post" action="/teams/{{ team.id }}/members/{{ m.id }}/remove" onsubmit="return confirm('Remove {{ m.name }} from team?');" style="display:inline;">
                                 <button type="submit" class="btn-icon btn-icon-danger" title="Remove">

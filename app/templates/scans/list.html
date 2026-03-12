@@ -22,7 +22,7 @@
                     <th>FP</th>
                     <th>FN</th>
                     <th>Submitted By</th>
-                    {% if user and user.role in ['contributor', 'admin'] %}
+                    {% if user %}
                         <th style="width: 40px;"></th>
                     {% endif %}
                 </tr>
@@ -38,13 +38,15 @@
                     <td class="text-error">{{ scan.fp_count if scan.fp_count is defined else '-' }}</td>
                     <td class="text-error">-</td>
                     <td class="text-secondary">{{ scan.submitter_name or scan.submitted_by }}</td>
-                    {% if user and user.role in ['contributor', 'admin'] %}
+                    {% if user %}
                     <td>
+                        {% if user.role == 'admin' or scan.submitted_by == user.sub %}
                         <form method="post" action="/scans/{{ scan.id }}/delete" onsubmit="return confirm('Delete this scan and all its findings?');" style="display:inline;">
                             <button type="submit" class="btn-icon btn-icon-danger" title="Delete scan">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                             </button>
                         </form>
+                        {% endif %}
                     </td>
                     {% endif %}
                 </tr>

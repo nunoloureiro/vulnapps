@@ -23,7 +23,7 @@ Dark theme with orange accents:
 - **Text:** White (`#fafafa`) headings, `#a1a1aa` secondary, `#71717a` muted
 - **Success/Error:** Green `#22c55e` for TP/good, Red `#ef4444` for FP/FN/bad
 - **Severity badges:** critical=red, high=orange, medium=yellow, low=green, info=blue
-- **Role badges:** user=gray, contributor=orange, admin=red
+- **Role badges:** user=gray, admin=red. Team roles: admin=red, contributor=orange, view=gray
 - Custom CSS (no framework) — Tailwind-inspired utility classes, hand-written for minimal footprint
 - Font: system font stack, monospace for code/IDs
 
@@ -31,16 +31,47 @@ Dark theme with orange accents:
 
 ## User Roles & Permissions
 
+### Account-Level Roles (2)
 | Role | Can do |
 |------|--------|
-| **viewer** | Browse apps/vulns/scans (read-only) |
-| **user** (default) | Everything viewer + submit scan results, create teams |
-| **contributor** | Everything user + create/edit apps and their vulnerabilities |
-| **admin** | Everything + manage all users, manage all teams |
+| **user** (default) | Create private/team apps, submit scans on own apps, manage teams |
+| **admin** | Everything + manage public apps/vulns/scans, manage users |
 
 - First registered user automatically becomes **admin**
 - Subsequent users register as **user** by default
-- Admin grants contributor/admin access via `/admin/users`
+- Admin grants admin access via `/admin/users`
+
+### Team-Level Roles (3)
+| Role | Can do within team |
+|------|--------|
+| **admin** | Manage team members, full control of team apps/vulns/scans |
+| **contributor** | Create/edit apps, vulns, scans within the team |
+| **view** | Read-only access to team apps, vulns, and scans |
+
+### Authorization Rules
+
+**Read access:**
+- Unauthenticated: public apps, vulns, public scans on public apps
+- Logged in: + own private apps/scans, team apps/scans (any team role)
+- Admin: everything
+
+**Write access to apps/vulns:**
+- Public apps: admin only
+- Private apps: app creator only
+- Team apps: team admin or team contributor, or app creator
+
+**Scan submission:**
+- Public apps: admin only (users must clone to private first)
+- Private apps: app creator
+- Team apps: team admin or contributor
+
+**Scan modification (match, FP, rematch, delete):**
+- Scan submitter (owns the scan)
+- Team admin/contributor (for team app scans)
+- Admin (always)
+
+### App Cloning
+Any logged-in user can clone any app they can read. Cloning creates a private copy with all vulns (not scans). Clone via `GET /apps/new?clone_from=<id>`.
 
 ---
 
@@ -54,7 +85,7 @@ vulnapps/
 │   ├── config.py             # Settings from env vars (SECRET_KEY, DATABASE_PATH, TOKEN_EXPIRY_HOURS)
 │   ├── database.py           # aiosqlite connection (Row factory), migration runner
 │   ├── auth.py               # bcrypt hash/verify, JWT create/decode (HS256)
-│   ├── dependencies.py       # get_current_user, require_user, require_active_user, require_contributor, require_admin
+│   ├── dependencies.py       # get_current_user, require_user, require_admin, require_app_write, require_scan_write, get_team_role
 │   ├── matching.py           # Shared scan finding matching logic (DAST + SAST)
 │   ├── visibility.py         # App visibility filter (public/team/private)
 │   ├── models.py             # Pydantic schemas (UserCreate, UserLogin, AppCreate, VulnCreate, ScanCreate, FindingCreate)
@@ -103,7 +134,9 @@ vulnapps/
 │   ├── 004_static_scan_support.sql      # Add filename to vulns + findings
 │   ├── 005_viewer_role.sql              # Add viewer role to users
 │   ├── 006_teams.sql                    # Teams + team_members tables
-│   └── 007_app_visibility.sql           # App visibility + team_id
+│   ├── 007_app_visibility.sql           # App visibility + team_id
+│   ├── ...                              # 008-011: incremental changes
+│   └── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
 ├── tests/
 │   └── __init__.py
 ├── tasks/
@@ -152,7 +185,7 @@ Uses `python-dotenv` to load `.env` file.
 
 ---
 
-## Database Schema (migrations 001–007)
+## Database Schema (migrations 001–012)
 
 ```sql
 PRAGMA journal_mode=WAL;
@@ -163,7 +196,7 @@ CREATE TABLE IF NOT EXISTS users (
     name          TEXT NOT NULL,
     email         TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    role          TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('viewer','user','contributor','admin')),
+    role          TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user','admin')),
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -252,7 +285,7 @@ CREATE TABLE IF NOT EXISTS team_members (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     team_id  INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role     TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('member','admin')),
+    role     TEXT NOT NULL DEFAULT 'view' CHECK(role IN ('admin','contributor','view')),
     UNIQUE(team_id, user_id)
 );
 
@@ -292,9 +325,10 @@ On startup (via FastAPI lifespan), all `.sql` files in `migrations/` are execute
 - `get_current_user` middleware checks cookie first, then header, injects result into `request.state.user`
 - Role-based auth functions raise HTTPException 401/403:
   - `require_user` — any authenticated user
-  - `require_active_user` — any non-viewer (rejects viewers with 403)
-  - `require_contributor` — contributor or admin
   - `require_admin` — admin only
+  - `require_app_write(request, db, app)` — admin, creator, or team contributor+
+  - `require_scan_write(request, db, scan, app)` — admin, submitter, or team contributor+
+  - `get_team_role(db, user_id, team_id)` — returns team role or None
 - Password hashing: bcrypt
 - JWT payload: `{ sub: user_id, name, role, exp }`
 - 24h token expiry, no refresh tokens
@@ -336,6 +370,9 @@ Pre-populated app: **TaintedPort v1.0** — intentionally vulnerable wine store 
 | TP-023 | Privilege Escalation via JWT Claim Forgery | critical | Privilege Escalation |
 | TP-024 | BOPLA - Excessive Data Exposure on Order Details | high | Data Exposure |
 | TP-025 | BFLA - Broken Function Level Authorization on Order Status | high | Broken Access Control |
+| TP-027 | SSRF via Wine Import URL | high | SSRF |
+| TP-028 | SQLi -> TOTP Secret Extraction -> 2FA Bypass -> Account Takeover | critical | SQLi |
+| TP-029 | Reflected XSS - Contact Form Preview (Server-Side) | medium | XSS |
 
 Source: `/Users/nuno/dev/TaintedPort/KnownVulnerabilities.txt`
 
@@ -356,53 +393,56 @@ Source: `/Users/nuno/dev/TaintedPort/KnownVulnerabilities.txt`
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/apps` | None | List apps with search (`?q=`). Query joins users for creator_name, subquery for vuln_count |
-| GET | `/apps/new` | Contributor+ | Create app form |
-| POST | `/apps/new` | Contributor+ | Insert app, redirect to `/apps/{id}` |
-| GET | `/apps/{id}` | None | App detail with vulns table, scan count |
-| GET | `/apps/{id}/edit` | Contributor+ | Edit app form |
-| POST | `/apps/{id}/edit` | Contributor+ | Update app, redirect to `/apps/{id}` |
+| GET | `/apps/new` | User+ | Create app form. Supports `?clone_from=<id>` to pre-fill from existing app |
+| POST | `/apps/new` | User+ | Insert app (validates visibility: public=admin, team=contributor+). Clones vulns if `clone_from` field set |
+| GET | `/apps/{id}` | None | App detail with vulns table, scan count. Passes `can_edit`, `can_submit_scan` booleans |
+| GET | `/apps/{id}/edit` | App write | Edit app form (uses `require_app_write`) |
+| POST | `/apps/{id}/edit` | App write | Update app (validates visibility changes) |
 
 ### Vulnerabilities (`/apps/{id}/vulns`)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/apps/{id}/vulns/new` | Contributor+ | Create vuln form |
-| POST | `/apps/{id}/vulns` | Contributor+ | Insert vuln, redirect to app detail |
-| GET | `/apps/{id}/vulns/{vid}` | None | Vuln detail (vid = DB id, not custom vuln_id) |
-| GET | `/apps/{id}/vulns/{vid}/edit` | Contributor+ | Edit vuln form |
-| POST | `/apps/{id}/vulns/{vid}/edit` | Contributor+ | Update vuln, redirect to vuln detail |
-| POST | `/apps/{id}/vulns/{vid}/delete` | Contributor+ | Delete vuln, redirect to app detail |
-| POST | `/apps/{id}/vulns/{vid}/inline` | Contributor+ | AJAX inline update (JSON body with field:value) |
+| GET | `/apps/{id}/vulns/new` | App write | Create vuln form (uses `require_app_write`) |
+| POST | `/apps/{id}/vulns` | App write | Insert vuln, redirect to app detail |
+| GET | `/apps/{id}/vulns/{vid}` | App read | Vuln detail (vid = DB id, not custom vuln_id). Passes `can_edit` boolean |
+| GET | `/apps/{id}/vulns/{vid}/edit` | App write | Edit vuln form |
+| POST | `/apps/{id}/vulns/{vid}/edit` | App write | Update vuln, redirect to vuln detail |
+| POST | `/apps/{id}/vulns/{vid}/delete` | App write | Delete vuln, redirect to app detail |
+| POST | `/apps/{id}/vulns/{vid}/inline` | App write | AJAX inline update (JSON body with field:value) |
 
 ### Scans
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/scans` | None | List scans (public + own private). Joins app name, subqueries for tp_count/fp_count |
+| GET | `/scans` | None | List scans (uses `scan_visibility_filter`: public + own + team scans) |
 | GET | `/scans/example/json` | None | Download example JSON findings file |
 | GET | `/scans/example/csv` | None | Download example CSV findings file |
-| GET | `/apps/{id}/scans` | Active User+ | Scan submission form (file upload + manual) |
-| POST | `/apps/{id}/scans` | Active User+ | Process scan: file upload or form, match findings, redirect to detail |
-| GET | `/scans/{id}` | User+ | Scan detail with metrics dashboard, findings table, missed vulns |
-| POST | `/scans/{id}/rematch` | Active User+ | Re-run automatic matching for all findings, return updated count |
+| GET | `/apps/{id}/scans` | User+ | Scan submission form. Validates: admin for public apps, creator for private, team contributor+ for team |
+| POST | `/apps/{id}/scans` | User+ | Process scan with same permission checks |
+| GET | `/scans/{id}` | Varies | Scan detail. Anonymous OK for public scans on public apps. Otherwise requires visibility check. Passes `can_edit_scan` boolean |
+| POST | `/scans/{id}/delete` | Scan write | Delete scan (uses `require_scan_write`) |
+| POST | `/scans/{id}/rematch` | Scan write | Re-run automatic matching for all findings |
+| POST | `/scans/{id}/findings/{fid}/match` | Scan write | Map finding to vuln |
+| POST | `/scans/{id}/findings/{fid}/mark-fp` | Scan write | Mark finding as false positive |
 | GET | `/apps/{id}/compare` | None | Scan comparison — selector when no params, results when `?scans=1,2,3` |
 
 ### Admin (`/admin`)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/admin/users` | Admin | List all users with inline editing |
-| POST | `/admin/users/{id}/role` | Admin | Update user role (viewer, user, or contributor) |
-| POST | `/admin/users/{id}/inline` | Admin | AJAX inline update name/email/role |
+| GET | `/admin/users` | Admin | List all users with inline editing (name/email only) |
+| POST | `/admin/users/{id}/role` | Admin | Toggle user/admin role (Make Admin / Revoke Admin) |
+| POST | `/admin/users/{id}/inline` | Admin | AJAX inline update name/email |
 | POST | `/admin/users/{id}/delete` | Admin | Delete user (cannot delete self or admins) |
 
 ### Teams (`/teams`)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/teams` | User+ | List teams (own teams; admin sees all) |
-| GET | `/teams/new` | Active User+ | Create team form |
-| POST | `/teams/new` | Active User+ | Create team (creator becomes team admin) |
+| GET | `/teams/new` | User+ | Create team form |
+| POST | `/teams/new` | User+ | Create team (creator becomes team admin) |
 | GET | `/teams/{id}` | Team member or admin | Team detail + member list |
-| POST | `/teams/{id}/members` | Team admin or app admin | Add member by email |
+| POST | `/teams/{id}/members` | Team admin or app admin | Add member by email with role (admin/contributor/view, default view) |
 | POST | `/teams/{id}/members/{uid}/remove` | Team admin or app admin | Remove member |
-| POST | `/teams/{id}/members/{uid}/role` | Team admin or app admin | Toggle member/admin role |
+| POST | `/teams/{id}/members/{uid}/role` | Team admin or app admin | Change member role (admin/contributor/view) |
 | POST | `/teams/{id}/delete` | Team admin or app admin | Delete team |
 
 ---
@@ -413,14 +453,14 @@ All return JSON. Auth via `Authorization: Bearer <token>` header.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/v1/apps` | None | List all apps |
-| GET | `/api/v1/apps/{id}` | None | App detail with vulns |
-| GET | `/api/v1/apps/{id}/vulns` | None | List vulns for app |
-| POST | `/api/v1/apps` | Contributor+ | Create app (JSON body) |
-| POST | `/api/v1/apps/{id}/vulns` | Contributor+ | Create vuln (JSON body) |
-| GET | `/api/v1/scans` | None | List scans (visibility filtered) |
-| GET | `/api/v1/scans/{id}` | User+ | Scan detail with metrics |
-| POST | `/api/v1/apps/{id}/scans` | User+ | Submit scan with findings (JSON body) |
+| GET | `/api/v1/apps` | None | List apps (visibility filtered) |
+| GET | `/api/v1/apps/{id}` | None | App detail with vulns (visibility filtered) |
+| GET | `/api/v1/apps/{id}/vulns` | None | List vulns for app (visibility filtered) |
+| POST | `/api/v1/apps` | User+ | Create app (JSON body, validates visibility permissions) |
+| POST | `/api/v1/apps/{id}/vulns` | App write | Create vuln (JSON body, uses `require_app_write`) |
+| GET | `/api/v1/scans` | None | List scans (uses `scan_visibility_filter`) |
+| GET | `/api/v1/scans/{id}` | Varies | Scan detail with metrics (visibility checked) |
+| POST | `/api/v1/apps/{id}/scans` | User+ | Submit scan (validates scan submission permissions) |
 | GET | `/api/v1/apps/{id}/compare?scans=1,2,3` | None | Compare up to 7 scans (JSON metrics + detection matrix) |
 
 ---
@@ -548,9 +588,9 @@ Displayed in a metrics-grid: TP (green), FP (red), Pending (yellow), FN (red), P
 
 ### Rematch Endpoint
 
-`POST /scans/{scan_id}/rematch` — Re-runs automatic matching for all findings in a scan. Requires active user (non-viewer). Re-matches ALL findings including manually mapped and manually marked FP ones. Returns `{"ok": true, "updated": count}`.
+`POST /scans/{scan_id}/rematch` — Re-runs automatic matching for all findings in a scan. Requires scan write access (submitter, team contributor+, or admin). Re-matches ALL findings including manually mapped and manually marked FP ones. Returns `{"ok": true, "updated": count}`.
 
-Use case: After splitting a coarse-grained vuln into finer ones, re-match picks up the new vulns. The UI shows a "Re-match All" button next to the Findings heading (contributor+ only) with a confirmation dialog.
+Use case: After splitting a coarse-grained vuln into finer ones, re-match picks up the new vulns. The UI shows a "Re-match All" button next to the Findings heading (scan write access only) with a confirmation dialog.
 
 ### Split/Refine Workflow
 
@@ -594,17 +634,20 @@ App form includes visibility dropdown and conditional team selector (shown only 
 ## Teams
 
 Users can create teams and add members by email. Team creator becomes team admin.
-Team admins (and app admins) can add/remove members and change member roles (member/admin).
+Team admins (and app admins) can add/remove members and change member roles (admin/contributor/view).
 
-Nav bar shows "Teams" link for all authenticated users. Viewers cannot create teams.
+Nav bar shows "Teams" link for all authenticated users. Any logged-in user can create teams.
 
 ---
 
 ## Scan Visibility
 
 - `scans.is_public` defaults to `1` (visible to all)
-- User can set to `0` (private) — only visible to the submitter and admins
-- List/detail views filter: `WHERE scans.is_public=1 OR scans.submitted_by=?`
+- User can set to `0` (private) — only visible to the submitter, team members, and admins
+- `app/visibility.py` provides `scan_visibility_filter(user)` which includes:
+  - Unauthenticated: public scans on public apps only
+  - Logged in: public scans + own scans + scans on team apps
+  - Admin: all scans
 
 ---
 
@@ -624,7 +667,7 @@ Nav bar shows "Teams" link for all authenticated users. Viewers cannot create te
 - Metrics grid (7 cards): TP, FP, Pending, FN, Precision%, Recall%, F1%
 - Findings table: type, method, url, parameter, filename, status badge (TP green / FP red / Pending yellow)
 - Status: TP = matched_vuln_id set, FP = is_false_positive=1, Pending = neither
-- Pending findings show "Mark FP" button for contributors/admins
+- Pending findings show "Mark FP" button for users with `can_edit_scan` access
 - Manual mapping dropdown: maps pending → TP (or unmaps TP → Pending, not FP)
 - Missed Vulnerabilities (FN) table: vuln_id, title (linked), type, severity, url
 
@@ -637,8 +680,9 @@ Nav bar shows "Teams" link for all authenticated users. Viewers cannot create te
 - Form uses `enctype="multipart/form-data"`
 
 ### App Detail Template (`apps/detail.html`)
-- Contributors see: Edit App, Add Vulnerability buttons
-- Non-viewer authenticated users see: Submit Scan button
+- Users with `can_edit` see: Edit App, Add Vulnerability, Import Vulns buttons
+- Users with `can_submit_scan` see: Submit Scan button
+- Any logged-in user sees: Clone button
 - Shows app visibility badge in detail grid
 - Shows `creator_name` (joined from users table) or falls back to `created_by` ID
 - **Tech Stack:** Displayed as `badge-info` badges (from `app_technologies` table)
@@ -679,7 +723,7 @@ CSS: `.text-center`, `.matrix-hit` (green checkmark), `.matrix-miss` (gray X), `
 **Buttons:** `.btn`, `.btn-primary` (orange), `.btn-outline`, `.btn-danger`, `.btn-sm`
 **Forms:** `.form-group`, `.form-label`, `.form-input`, `.form-select`, `.form-textarea`, `.form-row` (2-col grid), `.form-check`
 **Tables:** `.table-wrap`, `table`, `th`, `td`
-**Badges:** `.badge`, `.badge-critical`, `.badge-high`, `.badge-medium`, `.badge-low`, `.badge-info`, `.badge-pending`, `.badge-user`, `.badge-contributor`, `.badge-admin`, `.badge-viewer`, `.badge-member`
+**Badges:** `.badge`, `.badge-critical`, `.badge-high`, `.badge-medium`, `.badge-low`, `.badge-info`, `.badge-pending`, `.badge-user`, `.badge-admin`, `.badge-contributor`, `.badge-view`, `.badge-member` (legacy)
 **Metrics:** `.metrics-grid`, `.metric-card`, `.metric-value`, `.metric-label`
 **Text:** `.text-success`, `.text-error`, `.text-warning`, `.text-accent`, `.text-muted`, `.text-secondary`, `.text-sm`, `.text-xs`, `.font-mono`
 **Alerts:** `.alert`, `.alert-error`, `.alert-success`

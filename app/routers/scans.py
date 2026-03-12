@@ -4,12 +4,13 @@ import json
 from collections import Counter
 from datetime import datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse, Response
 from app.templating import templates
 from app.database import get_connection
-from app.dependencies import require_user, require_active_user
+from app.dependencies import require_user, require_scan_write, get_team_role
 from app.matching import match_finding
+from app.visibility import app_visibility_filter, scan_visibility_filter
 
 router = APIRouter(prefix="")
 
@@ -65,30 +66,18 @@ async def list_scans(request: Request, app_id: int = None):
             cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))
             app = await cursor.fetchone()
 
-        if user:
-            cursor = await db.execute(
-                f"""SELECT scans.*, apps.name as app_name, users.name as submitter_name,
-                          (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
-                          (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count
-                   FROM scans
-                   LEFT JOIN apps ON scans.app_id=apps.id
-                   LEFT JOIN users ON scans.submitted_by=users.id
-                   WHERE (scans.is_public=1 OR scans.submitted_by=?) {app_filter}
-                   ORDER BY scans.created_at DESC""",
-                [user["sub"]] + params,
-            )
-        else:
-            cursor = await db.execute(
-                f"""SELECT scans.*, apps.name as app_name, users.name as submitter_name,
-                          (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
-                          (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count
-                   FROM scans
-                   LEFT JOIN apps ON scans.app_id=apps.id
-                   LEFT JOIN users ON scans.submitted_by=users.id
-                   WHERE scans.is_public=1 {app_filter}
-                   ORDER BY scans.created_at DESC""",
-                params,
-            )
+        vis_clause, vis_params = scan_visibility_filter(user)
+        cursor = await db.execute(
+            f"""SELECT scans.*, apps.name as app_name, users.name as submitter_name,
+                      (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
+                      (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count
+               FROM scans
+               LEFT JOIN apps ON scans.app_id=apps.id
+               LEFT JOIN users ON scans.submitted_by=users.id
+               WHERE {vis_clause} {app_filter}
+               ORDER BY scans.created_at DESC""",
+            vis_params + params,
+        )
         scans = await cursor.fetchall()
     finally:
         await db.close()
@@ -100,23 +89,36 @@ async def list_scans(request: Request, app_id: int = None):
 
 @router.get("/apps/{app_id}/scans", response_class=HTMLResponse)
 async def submit_scan_form(request: Request, app_id: int):
-    await require_active_user(request)
+    user = await require_user(request)
 
     db = await get_connection()
     try:
         cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))
         app = await cursor.fetchone()
+        if not app:
+            raise HTTPException(status_code=404, detail="App not found")
+
+        # Check scan submission permission
+        if user["role"] != "admin":
+            if app["visibility"] == "public":
+                raise HTTPException(status_code=403, detail="Clone this app to submit scans. Only admins can submit scans on public apps.")
+            elif app["visibility"] == "private" and app["created_by"] != user["sub"]:
+                raise HTTPException(status_code=403, detail="Only the app creator can submit scans on private apps")
+            elif app["visibility"] == "team" and app["team_id"]:
+                team_role = await get_team_role(db, user["sub"], app["team_id"])
+                if team_role not in ("admin", "contributor"):
+                    raise HTTPException(status_code=403, detail="Team contributor access required to submit scans")
     finally:
         await db.close()
 
     return templates.TemplateResponse(
-        "scans/submit.html", {"request": request, "user": request.state.user, "app": app}
+        "scans/submit.html", {"request": request, "user": user, "app": app}
     )
 
 
 @router.post("/apps/{app_id}/scans")
 async def submit_scan(request: Request, app_id: int):
-    user = await require_active_user(request)
+    user = await require_user(request)
     form = await request.form()
 
     scanner_name = form.get("scanner_name")
@@ -125,54 +127,70 @@ async def submit_scan(request: Request, app_id: int):
     is_public = 1 if form.get("is_public") else 0
     notes = form.get("notes")
 
-    # Try file upload first
-    findings_data = []
-    scan_file = form.get("scan_file")
-    if scan_file and hasattr(scan_file, "read") and scan_file.filename:
-        content = (await scan_file.read()).decode("utf-8")
-        filename_lower = scan_file.filename.lower()
-
-        if filename_lower.endswith(".json"):
-            parsed = json.loads(content)
-            for f in parsed.get("findings", []):
-                if f.get("vuln_type"):
-                    findings_data.append({
-                        "vuln_type": f.get("vuln_type", ""),
-                        "http_method": f.get("http_method", ""),
-                        "url": f.get("url", ""),
-                        "parameter": f.get("parameter", ""),
-                        "filename": f.get("filename", ""),
-                    })
-        elif filename_lower.endswith(".csv"):
-            reader = csv.DictReader(io.StringIO(content))
-            for row in reader:
-                if row.get("vuln_type"):
-                    findings_data.append({
-                        "vuln_type": row.get("vuln_type", ""),
-                        "http_method": row.get("http_method", ""),
-                        "url": row.get("url", ""),
-                        "parameter": row.get("parameter", ""),
-                        "filename": row.get("filename", ""),
-                    })
-
-    # Fall back to manual form findings if no file
-    if not findings_data:
-        i = 0
-        while True:
-            vt = form.get(f"findings[{i}][vuln_type]")
-            if vt is None:
-                break
-            findings_data.append({
-                "vuln_type": vt,
-                "url": form.get(f"findings[{i}][url]", ""),
-                "http_method": form.get(f"findings[{i}][http_method]", ""),
-                "parameter": form.get(f"findings[{i}][parameter]", ""),
-                "filename": form.get(f"findings[{i}][filename]", ""),
-            })
-            i += 1
-
     db = await get_connection()
     try:
+        cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))
+        app = await cursor.fetchone()
+        if not app:
+            raise HTTPException(status_code=404, detail="App not found")
+
+        # Check scan submission permission
+        if user["role"] != "admin":
+            if app["visibility"] == "public":
+                raise HTTPException(status_code=403, detail="Only admins can submit scans on public apps")
+            elif app["visibility"] == "private" and app["created_by"] != user["sub"]:
+                raise HTTPException(status_code=403, detail="Only the app creator can submit scans on private apps")
+            elif app["visibility"] == "team" and app["team_id"]:
+                team_role = await get_team_role(db, user["sub"], app["team_id"])
+                if team_role not in ("admin", "contributor"):
+                    raise HTTPException(status_code=403, detail="Team contributor access required")
+
+        # Try file upload first
+        findings_data = []
+        scan_file = form.get("scan_file")
+        if scan_file and hasattr(scan_file, "read") and scan_file.filename:
+            content = (await scan_file.read()).decode("utf-8")
+            filename_lower = scan_file.filename.lower()
+
+            if filename_lower.endswith(".json"):
+                parsed = json.loads(content)
+                for f in parsed.get("findings", []):
+                    if f.get("vuln_type"):
+                        findings_data.append({
+                            "vuln_type": f.get("vuln_type", ""),
+                            "http_method": f.get("http_method", ""),
+                            "url": f.get("url", ""),
+                            "parameter": f.get("parameter", ""),
+                            "filename": f.get("filename", ""),
+                        })
+            elif filename_lower.endswith(".csv"):
+                reader = csv.DictReader(io.StringIO(content))
+                for row in reader:
+                    if row.get("vuln_type"):
+                        findings_data.append({
+                            "vuln_type": row.get("vuln_type", ""),
+                            "http_method": row.get("http_method", ""),
+                            "url": row.get("url", ""),
+                            "parameter": row.get("parameter", ""),
+                            "filename": row.get("filename", ""),
+                        })
+
+        # Fall back to manual form findings if no file
+        if not findings_data:
+            i = 0
+            while True:
+                vt = form.get(f"findings[{i}][vuln_type]")
+                if vt is None:
+                    break
+                findings_data.append({
+                    "vuln_type": vt,
+                    "url": form.get(f"findings[{i}][url]", ""),
+                    "http_method": form.get(f"findings[{i}][http_method]", ""),
+                    "parameter": form.get(f"findings[{i}][parameter]", ""),
+                    "filename": form.get(f"findings[{i}][filename]", ""),
+                })
+                i += 1
+
         cursor = await db.execute(
             """INSERT INTO scans (app_id, scanner_name, scan_date, authenticated, is_public, notes, submitted_by)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -204,10 +222,18 @@ async def submit_scan(request: Request, app_id: int):
 
 @router.post("/scans/{scan_id}/delete")
 async def delete_scan(request: Request, scan_id: int):
-    await require_active_user(request)
-
     db = await get_connection()
     try:
+        cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
+        scan = await cursor.fetchone()
+        if not scan:
+            raise HTTPException(status_code=404, detail="Scan not found")
+
+        cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (scan["app_id"],))
+        app = await cursor.fetchone()
+
+        await require_scan_write(request, db, scan, app)
+
         await db.execute("DELETE FROM scan_findings WHERE scan_id = ?", (scan_id,))
         await db.execute("DELETE FROM scans WHERE id = ?", (scan_id,))
         await db.commit()
@@ -226,23 +252,28 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
         cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))
         app = await cursor.fetchone()
 
-        # Get all visible scans for this app
+        # Determine edit permissions for the app
+        can_edit = False
         if user:
-            cursor = await db.execute(
-                """SELECT scans.*, users.name as submitter_name
-                   FROM scans LEFT JOIN users ON scans.submitted_by=users.id
-                   WHERE scans.app_id=? AND (scans.is_public=1 OR scans.submitted_by=?)
-                   ORDER BY scans.created_at DESC""",
-                (app_id, user["sub"]),
-            )
-        else:
-            cursor = await db.execute(
-                """SELECT scans.*, users.name as submitter_name
-                   FROM scans LEFT JOIN users ON scans.submitted_by=users.id
-                   WHERE scans.app_id=? AND scans.is_public=1
-                   ORDER BY scans.created_at DESC""",
-                (app_id,),
-            )
+            if user["role"] == "admin":
+                can_edit = True
+            elif app["visibility"] != "public" and app["created_by"] == user["sub"]:
+                can_edit = True
+            elif app["visibility"] == "team" and app["team_id"]:
+                team_role = await get_team_role(db, user["sub"], app["team_id"])
+                if team_role in ("admin", "contributor"):
+                    can_edit = True
+
+        # Get all visible scans for this app
+        vis_clause, vis_params = scan_visibility_filter(user)
+        cursor = await db.execute(
+            f"""SELECT scans.*, users.name as submitter_name
+               FROM scans LEFT JOIN apps ON scans.app_id=apps.id
+               LEFT JOIN users ON scans.submitted_by=users.id
+               WHERE scans.app_id=? AND {vis_clause}
+               ORDER BY scans.created_at DESC""",
+            [app_id] + vis_params,
+        )
         available_scans = await cursor.fetchall()
 
         # If no scan IDs provided, show selector
@@ -255,6 +286,7 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
                     "app": app,
                     "available_scans": available_scans,
                     "comparison": None,
+                    "can_edit": can_edit,
                 },
             )
 
@@ -270,6 +302,7 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
                     "available_scans": available_scans,
                     "comparison": None,
                     "error": "No valid scans selected.",
+                    "can_edit": can_edit,
                 },
             )
 
@@ -382,13 +415,14 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
                 "known_vuln_count": len(known_vulns),
             },
             "selected_ids": scan_ids,
+            "can_edit": can_edit,
         },
     )
 
 
 @router.get("/scans/{scan_id}", response_class=HTMLResponse)
 async def scan_detail(request: Request, scan_id: int):
-    await require_user(request)
+    user = request.state.user
 
     db = await get_connection()
     try:
@@ -397,9 +431,26 @@ async def scan_detail(request: Request, scan_id: int):
             (scan_id,),
         )
         scan = await cursor.fetchone()
+        if not scan:
+            raise HTTPException(status_code=404, detail="Scan not found")
 
         cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (scan["app_id"],))
         app = await cursor.fetchone()
+
+        # Visibility check: public scans on public apps for anonymous,
+        # otherwise check scan visibility
+        if not user:
+            if not (scan["is_public"] and app["visibility"] == "public"):
+                raise HTTPException(status_code=401, detail="Not authenticated")
+        elif user["role"] != "admin":
+            can_see = (
+                scan["is_public"]
+                or scan["submitted_by"] == user["sub"]
+                or (app["visibility"] == "team" and app["team_id"] and
+                    await get_team_role(db, user["sub"], app["team_id"]) is not None)
+            )
+            if not can_see:
+                raise HTTPException(status_code=403, detail="Access denied")
 
         cursor = await db.execute("SELECT * FROM scan_findings WHERE scan_id = ?", (scan_id,))
         findings = await cursor.fetchall()
@@ -410,8 +461,7 @@ async def scan_detail(request: Request, scan_id: int):
         )
         all_vulns = await cursor.fetchall()
 
-        # Compute metrics (pending findings excluded from precision/recall)
-        # TP counts unique matched vulns, not finding count
+        # Compute metrics
         matched_vuln_ids = {f["matched_vuln_id"] for f in findings if f["matched_vuln_id"] is not None}
         tp = len(matched_vuln_ids)
         fp = sum(1 for f in findings if f["is_false_positive"] == 1)
@@ -436,6 +486,18 @@ async def scan_detail(request: Request, scan_id: int):
             "recall": recall,
             "f1": f1,
         }
+
+        # Determine scan edit permissions
+        can_edit_scan = False
+        if user:
+            if user["role"] == "admin":
+                can_edit_scan = True
+            elif scan["submitted_by"] == user["sub"]:
+                can_edit_scan = True
+            elif app["visibility"] == "team" and app["team_id"]:
+                team_role = await get_team_role(db, user["sub"], app["team_id"])
+                if team_role in ("admin", "contributor"):
+                    can_edit_scan = True
     finally:
         await db.close()
 
@@ -443,7 +505,7 @@ async def scan_detail(request: Request, scan_id: int):
         "scans/detail.html",
         {
             "request": request,
-            "user": request.state.user,
+            "user": user,
             "scan": scan,
             "app": app,
             "metrics": metrics,
@@ -451,13 +513,13 @@ async def scan_detail(request: Request, scan_id: int):
             "missed_vulns": missed_vulns,
             "known_vulns": all_vulns,
             "vuln_finding_counts": dict(vuln_finding_counts),
+            "can_edit_scan": can_edit_scan,
         },
     )
 
 
 @router.post("/scans/{scan_id}/findings/{finding_id}/match")
 async def match_finding_to_vuln(request: Request, scan_id: int, finding_id: int):
-    await require_active_user(request)
     body = await request.json()
     vuln_id = body.get("vuln_id")  # None or int
 
@@ -465,12 +527,21 @@ async def match_finding_to_vuln(request: Request, scan_id: int, finding_id: int)
         matched_vuln_id = int(vuln_id)
         is_false_positive = 0
     else:
-        # Unmapping sets to pending (not FP) — user must explicitly mark FP
         matched_vuln_id = None
         is_false_positive = 0
 
     db = await get_connection()
     try:
+        cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
+        scan = await cursor.fetchone()
+        if not scan:
+            raise HTTPException(status_code=404, detail="Scan not found")
+
+        cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (scan["app_id"],))
+        app = await cursor.fetchone()
+
+        await require_scan_write(request, db, scan, app)
+
         await db.execute(
             "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = ? WHERE id = ? AND scan_id = ?",
             (matched_vuln_id, is_false_positive, finding_id, scan_id),
@@ -484,12 +555,17 @@ async def match_finding_to_vuln(request: Request, scan_id: int, finding_id: int)
 
 @router.post("/scans/{scan_id}/rematch")
 async def rematch_scan(request: Request, scan_id: int):
-    await require_active_user(request)
-
     db = await get_connection()
     try:
         cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
         scan = await cursor.fetchone()
+        if not scan:
+            raise HTTPException(status_code=404, detail="Scan not found")
+
+        cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (scan["app_id"],))
+        app = await cursor.fetchone()
+
+        await require_scan_write(request, db, scan, app)
 
         cursor = await db.execute(
             "SELECT * FROM vulnerabilities WHERE app_id = ?", (scan["app_id"],)
@@ -526,10 +602,18 @@ async def rematch_scan(request: Request, scan_id: int):
 
 @router.post("/scans/{scan_id}/findings/{finding_id}/mark-fp")
 async def mark_finding_fp(request: Request, scan_id: int, finding_id: int):
-    await require_active_user(request)
-
     db = await get_connection()
     try:
+        cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
+        scan = await cursor.fetchone()
+        if not scan:
+            raise HTTPException(status_code=404, detail="Scan not found")
+
+        cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (scan["app_id"],))
+        app = await cursor.fetchone()
+
+        await require_scan_write(request, db, scan, app)
+
         await db.execute(
             "UPDATE scan_findings SET matched_vuln_id = NULL, is_false_positive = 1 WHERE id = ? AND scan_id = ?",
             (finding_id, scan_id),

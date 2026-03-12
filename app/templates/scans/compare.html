@@ -95,7 +95,6 @@
 {# Metrics comparison table #}
 <div class="card mb-2">
     <h3 class="card-title mb-2">Metrics Comparison</h3>
-    <div class="table-wrap">
         <table>
             <thead>
                 <tr>
@@ -131,21 +130,21 @@
                     {% endfor %}
                 </tr>
                 <tr>
-                    <td class="detail-label">Precision <span class="text-muted text-xs" title="Measures the accuracy of positive predictions. Use when the cost of a false positive is high." style="cursor:help">ⓘ</span></td>
+                    <td class="detail-label">Precision <span class="tooltip-wrap text-muted text-xs">ⓘ<span class="tooltip-text">Measures the accuracy of positive predictions. Use when the cost of a false positive is high.</span></span></td>
                     {% for s in comparison.scanners %}
                         {% set val = s.metrics.precision * 100 %}
                         <td class="text-center font-mono {% if val >= 70 %}text-success{% elif val >= 40 %}text-warning{% else %}text-error{% endif %}">{{ '%.1f' % val }}%</td>
                     {% endfor %}
                 </tr>
                 <tr>
-                    <td class="detail-label">Recall <span class="text-muted text-xs" title="Measures the ability to find all positive instances. Use when the cost of a false negative is high." style="cursor:help">ⓘ</span></td>
+                    <td class="detail-label">Recall <span class="tooltip-wrap text-muted text-xs">ⓘ<span class="tooltip-text">Measures the ability to find all positive instances. Use when the cost of a false negative is high.</span></span></td>
                     {% for s in comparison.scanners %}
                         {% set val = s.metrics.recall * 100 %}
                         <td class="text-center font-mono {% if val >= 70 %}text-success{% elif val >= 40 %}text-warning{% else %}text-error{% endif %}">{{ '%.1f' % val }}%</td>
                     {% endfor %}
                 </tr>
                 <tr>
-                    <td class="detail-label">F1 Score <span class="text-muted text-xs" title="Harmonic mean of precision and recall. Use to balance both, especially with uneven class distributions." style="cursor:help">ⓘ</span></td>
+                    <td class="detail-label">F1 Score <span class="tooltip-wrap text-muted text-xs">ⓘ<span class="tooltip-text">Harmonic mean of precision and recall. Use to balance both, especially with uneven class distributions.</span></span></td>
                     {% for s in comparison.scanners %}
                         {% set val = s.metrics.f1 * 100 %}
                         <td class="text-center font-mono {% if val >= 70 %}text-success{% elif val >= 40 %}text-warning{% else %}text-error{% endif %}"><strong>{{ '%.1f' % val }}%</strong></td>
@@ -160,7 +159,6 @@
                 </tr>
             </tbody>
         </table>
-    </div>
 </div>
 
 {# Detection matrix #}
@@ -221,7 +219,7 @@
                         <th class="text-center matrix-header">{{ s.scan.scanner_name }}<br><span class="text-muted text-xs">{{ s.short_date }}</span></th>
                     {% endfor %}
                     <th class="text-center">Flagged</th>
-                    {% if user and user.role in ['contributor', 'admin'] %}
+                    {% if can_edit %}
                         <th></th>
                     {% endif %}
                 </tr>
@@ -244,7 +242,7 @@
                     <td class="text-center font-mono">
                         <span class="text-error">{{ fp.flagged_count }}/{{ comparison.scanners|length }}</span>
                     </td>
-                    {% if user and user.role in ['contributor', 'admin'] %}
+                    {% if can_edit %}
                     <td>
                         <a href="/apps/{{ app.id }}/vulns/new-from-fp?vuln_type={{ fp.vuln_type|urlencode }}&http_method={{ fp.http_method|urlencode }}&url={{ fp.url|urlencode }}&parameter={{ (fp.parameter or '')|urlencode }}&filename={{ (fp.filename or '')|urlencode }}" class="btn btn-outline btn-sm" title="Convert to known vulnerability">+ Vuln</a>
                     </td>

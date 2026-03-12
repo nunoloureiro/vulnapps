@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse
 from app.templating import templates
 from app.database import get_connection
-from app.dependencies import require_user, require_active_user
+from app.dependencies import require_user
 
 router = APIRouter(prefix="/teams")
 
@@ -57,16 +57,16 @@ async def list_teams(request: Request):
 
 @router.get("/new", response_class=HTMLResponse)
 async def new_team_form(request: Request):
-    await require_active_user(request)
+    user = await require_user(request)
 
     return templates.TemplateResponse(
-        "teams/form.html", {"request": request, "user": request.state.user, "team": None}
+        "teams/form.html", {"request": request, "user": user, "team": None}
     )
 
 
 @router.post("/new")
 async def create_team(request: Request):
-    user = await require_active_user(request)
+    user = await require_user(request)
     form = await request.form()
     name = form.get("name", "").strip()
 
@@ -155,13 +155,16 @@ async def add_member(request: Request, team_id: int):
 
         form = await request.form()
         email = form.get("email", "").strip()
+        role = form.get("role", "view")
+        if role not in ("admin", "contributor", "view"):
+            role = "view"
 
         cursor = await db.execute("SELECT id FROM users WHERE email = ?", (email,))
         target = await cursor.fetchone()
         if target:
             await db.execute(
-                "INSERT OR IGNORE INTO team_members (team_id, user_id, role) VALUES (?, ?, 'member')",
-                (team_id, target["id"]),
+                "INSERT OR IGNORE INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)",
+                (team_id, target["id"], role),
             )
             await db.commit()
     finally:
@@ -199,7 +202,7 @@ async def change_member_role(request: Request, team_id: int, uid: int):
 
         form = await request.form()
         role = form.get("role")
-        if role not in ("member", "admin"):
+        if role not in ("admin", "contributor", "view"):
             return RedirectResponse(url=f"/teams/{team_id}", status_code=303)
 
         await db.execute(

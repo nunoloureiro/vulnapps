@@ -41,10 +41,6 @@
         <div class="metric-label">False Positives</div>
     </div>
     <div class="metric-card">
-        <div class="metric-value text-warning" id="metric-pending">{{ metrics.pending }}</div>
-        <div class="metric-label">Pending</div>
-    </div>
-    <div class="metric-card">
         <div class="metric-value text-error" id="metric-fn">{{ metrics.fn }}</div>
         <div class="metric-label">False Negatives</div>
     </div>
@@ -63,8 +59,8 @@
 </div>
 
 <div class="flex items-center justify-between mt-3 mb-2">
-    <h2 class="page-title">Findings</h2>
-    {% if user and user.role in ['contributor', 'admin'] %}
+    <h2 class="page-title">Findings <span class="text-muted text-sm" id="findings-count">({{ findings|length }}{% if metrics.pending %}, <span id="metric-pending">{{ metrics.pending }}</span> pending{% endif %})</span></h2>
+    {% if can_edit_scan %}
     <button class="btn btn-outline btn-sm" id="rematch-btn" title="Re-run automatic matching for all findings">Re-match All</button>
     {% endif %}
 </div>
@@ -80,7 +76,7 @@
                     <th>Parameter</th>
                     <th>Status</th>
                     <th>Matched Vuln</th>
-                    {% if user and user.role in ['contributor', 'admin'] %}
+                    {% if can_edit_scan %}
                         <th></th>
                     {% endif %}
                 </tr>
@@ -115,7 +111,7 @@
                             <span class="text-muted text-sm">Unmapped</span>
                         {% endif %}
                     </td>
-                    {% if user and user.role in ['contributor', 'admin'] %}
+                    {% if can_edit_scan %}
                     <td class="finding-action">
                         <div class="flex gap-1 items-center">
                             {% if not finding.matched_vuln_id and finding.is_false_positive != 1 %}
@@ -138,7 +134,7 @@
 {% endif %}
 
 {% if missed_vulns %}
-<h2 class="page-title mt-3 mb-2">Missed Vulnerabilities (FN)</h2>
+<h2 class="page-title mt-3 mb-2">Missed Vulnerabilities <span class="text-muted text-sm" id="fn-count">({{ missed_vulns|length }})</span></h2>
 <div class="card">
     <div class="table-wrap">
         <table id="missed-vulns-table">
@@ -167,7 +163,7 @@
 </div>
 {% endif %}
 
-{% if user and user.role != 'viewer' %}
+{% if can_edit_scan %}
 <script>
 (function() {
     var scanId = {{ scan.id }};
@@ -313,21 +309,36 @@
 
         document.getElementById('metric-tp').textContent = tp;
         document.getElementById('metric-fp').textContent = fp;
-        document.getElementById('metric-pending').textContent = pending;
         document.getElementById('metric-fn').textContent = fn;
         document.getElementById('metric-precision').textContent = (precision * 100).toFixed(1) + '%';
         document.getElementById('metric-recall').textContent = (recall * 100).toFixed(1) + '%';
         document.getElementById('metric-f1').textContent = (f1 * 100).toFixed(1) + '%';
 
-        // Update missed vulns table
+        // Update findings heading count
+        var findingsCount = document.getElementById('findings-count');
+        if (findingsCount) {
+            var pendingEl = document.getElementById('metric-pending');
+            if (pending > 0) {
+                findingsCount.innerHTML = '(' + rows.length + ', <span id="metric-pending">' + pending + '</span> pending)';
+            } else {
+                findingsCount.textContent = '(' + rows.length + ')';
+            }
+        }
+
+        // Update missed vulns table and FN count
         var missedTable = document.getElementById('missed-vulns-table');
+        var visibleFn = 0;
         if (missedTable) {
             var tbody = missedTable.querySelector('tbody');
             tbody.querySelectorAll('tr').forEach(function(tr) {
                 var vid = parseInt(tr.dataset.vulnId);
-                tr.style.display = matchedIds.has(vid) ? 'none' : '';
+                var missed = !matchedIds.has(vid);
+                tr.style.display = missed ? '' : 'none';
+                if (missed) visibleFn++;
             });
         }
+        var fnCount = document.getElementById('fn-count');
+        if (fnCount) fnCount.textContent = '(' + fn + ')';
     }
 
     // Re-match All button
