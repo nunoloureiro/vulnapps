@@ -3,20 +3,25 @@
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">Apps</h1>
-    {% if user and user.role in ['contributor', 'admin'] %}
-        <a href="/apps/new" class="btn btn-primary">Add App</a>
-    {% endif %}
+    <div class="flex gap-1 items-center">
+        <form method="get" action="/apps">
+            <input type="text" name="q" value="{{ q or '' }}" class="search-box" placeholder="Search apps...">
+        </form>
+        {% if user and user.role in ['contributor', 'admin'] %}
+            <a href="/apps/new" class="btn btn-primary">Add App</a>
+        {% endif %}
+    </div>
 </div>
-
-<form method="get" action="/apps" class="mb-2">
-    <input type="text" name="q" value="{{ q or '' }}" class="search-box" placeholder="Search apps...">
-</form>
 
 {% if apps %}
     <div class="card-grid">
         {% for item in apps %}
             <a href="/apps/{{ item.app.id }}" class="card">
-                <h3 class="card-title">{{ item.app.name }} <span class="text-muted text-sm">v{{ item.app.version }}</span></h3>
+                <h3 class="card-title">{{ item.app.name }} <span class="text-muted text-sm">v{{ item.app.version }}</span>
+                    {% if item.app.visibility != 'public' %}
+                        <span class="badge badge-{{ 'medium' if item.app.visibility == 'team' else 'low' }}" style="font-size: 0.65rem;">{{ item.app.visibility }}</span>
+                    {% endif %}
+                </h3>
                 {% if item.tech %}
                     <div class="mt-1">
                         {% for t in item.tech %}
@@ -27,7 +32,12 @@
                 {% if item.app.description %}
                     <p class="text-secondary text-sm mt-1">{{ item.app.description[:120] }}{% if item.app.description|length > 120 %}...{% endif %}</p>
                 {% endif %}
-                <p class="text-muted text-sm mt-1">{{ item.app.vuln_count }} vulnerabilit{{ 'y' if item.app.vuln_count == 1 else 'ies' }}</p>
+                <div class="flex justify-between items-center mt-1">
+                    <span class="text-muted text-xs">{{ item.app.vuln_count }} vulnerabilit{{ 'y' if item.app.vuln_count == 1 else 'ies' }}</span>
+                    {% if item.app.creator_name %}
+                        <span class="text-muted text-xs">by {{ item.app.creator_name }}</span>
+                    {% endif %}
+                </div>
             </a>
         {% endfor %}
     </div>

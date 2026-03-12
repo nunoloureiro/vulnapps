@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, HTTPException
 from app.database import get_connection
 from app.dependencies import require_user, require_contributor
+from app.matching import match_finding
 
 router = APIRouter(prefix="/api/v1")
 
@@ -10,7 +11,7 @@ async def list_apps(request: Request):
     db = await get_connection()
     try:
         cursor = await db.execute(
-            """SELECT apps.*, users.username as creator_name,
+            """SELECT apps.*, users.name as creator_name,
                       (SELECT COUNT(*) FROM vulnerabilities WHERE app_id=apps.id) as vuln_count
                FROM apps LEFT JOIN users ON apps.created_by=users.id
                ORDER BY apps.created_at DESC"""
@@ -27,7 +28,7 @@ async def app_detail(request: Request, app_id: int):
     db = await get_connection()
     try:
         cursor = await db.execute(
-            """SELECT apps.*, users.username as creator_name
+            """SELECT apps.*, users.name as creator_name
                FROM apps LEFT JOIN users ON apps.created_by=users.id
                WHERE apps.id = ?""",
             (app_id,),
@@ -157,7 +158,7 @@ async def list_scans(request: Request):
         if user:
             cursor = await db.execute(
                 """SELECT scans.*, apps.name as app_name,
-                          (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
+                          (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
                           (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count
                    FROM scans LEFT JOIN apps ON scans.app_id=apps.id
                    WHERE scans.is_public=1 OR scans.submitted_by=?
@@ -167,7 +168,7 @@ async def list_scans(request: Request):
         else:
             cursor = await db.execute(
                 """SELECT scans.*, apps.name as app_name,
-                          (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
+                          (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
                           (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count
                    FROM scans LEFT JOIN apps ON scans.app_id=apps.id
                    WHERE scans.is_public=1
@@ -197,10 +198,11 @@ async def scan_detail(request: Request, scan_id: int):
         cursor = await db.execute("SELECT * FROM scan_findings WHERE scan_id = ?", (scan_id,))
         findings = await cursor.fetchall()
 
-        tp = sum(1 for f in findings if f["matched_vuln_id"] is not None)
-        fp = sum(1 for f in findings if f["is_false_positive"] == 1)
-
         matched_vuln_ids = {f["matched_vuln_id"] for f in findings if f["matched_vuln_id"] is not None}
+        tp = len(matched_vuln_ids)
+        fp = sum(1 for f in findings if f["is_false_positive"] == 1)
+        pending = sum(1 for f in findings if f["matched_vuln_id"] is None and f["is_false_positive"] == 0)
+
         cursor = await db.execute(
             "SELECT * FROM vulnerabilities WHERE app_id = ?", (scan["app_id"],)
         )
@@ -215,6 +217,7 @@ async def scan_detail(request: Request, scan_id: int):
         metrics = {
             "tp": tp,
             "fp": fp,
+            "pending": pending,
             "fn": fn,
             "precision": precision,
             "recall": recall,
@@ -259,29 +262,13 @@ async def submit_scan(request: Request, app_id: int):
         known_vulns = await cursor.fetchall()
 
         for f in findings_data:
-            f_vuln_type = f.get("vuln_type", "")
-            f_url = f.get("url", "")
-            f_http_method = f.get("http_method", "")
-            f_parameter = f.get("parameter", "")
-
-            matched_vuln_id = None
-            is_false_positive = 1
-
-            for v in known_vulns:
-                if (
-                    (v["vuln_type"] or "").lower() == (f_vuln_type or "").lower()
-                    and (v["http_method"] or "").lower() == (f_http_method or "").lower()
-                    and (v["url"] or "").lower() == (f_url or "").lower()
-                    and (v["parameter"] or "").lower() == (f_parameter or "").lower()
-                ):
-                    matched_vuln_id = v["id"]
-                    is_false_positive = 0
-                    break
+            matched_vuln_id, is_false_positive = match_finding(f, known_vulns)
 
             await db.execute(
-                """INSERT INTO scan_findings (scan_id, vuln_type, http_method, url, parameter, matched_vuln_id, is_false_positive)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (scan_id, f_vuln_type, f_http_method, f_url, f_parameter, matched_vuln_id, is_false_positive),
+                """INSERT INTO scan_findings (scan_id, vuln_type, http_method, url, parameter, filename, matched_vuln_id, is_false_positive)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (scan_id, f.get("vuln_type", ""), f.get("http_method", ""), f.get("url", ""),
+                 f.get("parameter", ""), f.get("filename", ""), matched_vuln_id, is_false_positive),
             )
 
         await db.commit()
@@ -321,9 +308,10 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
             cursor = await db.execute("SELECT * FROM scan_findings WHERE scan_id = ?", (sid,))
             findings = await cursor.fetchall()
 
-            tp = sum(1 for f in findings if f["matched_vuln_id"] is not None)
-            fp = sum(1 for f in findings if f["is_false_positive"] == 1)
             matched_ids = {f["matched_vuln_id"] for f in findings if f["matched_vuln_id"] is not None}
+            tp = len(matched_ids)
+            fp = sum(1 for f in findings if f["is_false_positive"] == 1)
+            pending = sum(1 for f in findings if f["matched_vuln_id"] is None and f["is_false_positive"] == 0)
             fn = sum(1 for v in known_vulns if v["id"] not in matched_ids)
 
             precision = tp / (tp + fp) if (tp + fp) > 0 else 0
@@ -334,7 +322,7 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
 
             scanners.append({
                 "scan": dict(scan),
-                "metrics": {"tp": tp, "fp": fp, "fn": fn, "precision": precision, "recall": recall, "f1": f1},
+                "metrics": {"tp": tp, "fp": fp, "pending": pending, "fn": fn, "precision": precision, "recall": recall, "f1": f1},
                 "matched_vuln_ids": list(matched_ids),
                 "false_positives": fp_findings,
             })

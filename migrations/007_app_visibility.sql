@@ -1,0 +1,2 @@
+ALTER TABLE apps ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public';
+ALTER TABLE apps ADD COLUMN team_id INTEGER REFERENCES teams(id);

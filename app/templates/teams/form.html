@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Create Team - Vulnapps{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Create Team</h1>
+    <a href="/teams" class="btn btn-outline">Cancel</a>
+</div>
+
+<div class="card">
+    <form method="post" action="/teams/new">
+        <div class="form-group">
+            <label class="form-label" for="name">Team Name</label>
+            <input type="text" id="name" name="name" class="form-input" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Create Team</button>
+    </form>
+</div>
+{% endblock %}

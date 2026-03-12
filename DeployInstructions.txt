@@ -8,6 +8,17 @@ docker build --platform linux/amd64 --no-cache -t nunoloureiro/vulnapps:latest .
 
 docker push nunoloureiro/vulnapps:latest
 
+* EC2> Update to latest version:
+
+sudo docker stop vulnapps; sudo docker rm vulnapps
+sudo docker pull nunoloureiro/vulnapps:latest
+source ~/.env.vulnapps
+sudo docker run -d --name vulnapps --restart unless-stopped -p 127.0.0.1:8001:8000 -v vulnapps-data:/data -e SECRET_KEY="$VULN_SECRET" -e DATABASE_PATH=/data/vulnapps.db -e TOKEN_EXPIRY_HOURS=24 nunoloureiro/vulnapps:latest
+
+sudo docker image prune -f
+
+
+
 * EC2> First time setup:
 
 bash aws/setup-ec2.sh
@@ -20,11 +31,8 @@ sudo nginx -t && sudo systemctl reload nginx
 # Optional: setup SSL with certbot
 sudo certbot --nginx -d vulnapps.net
 
-* EC2> Update to latest version:
 
-sudo docker pull nunoloureiro/vulnapps:latest
-sudo docker stop vulnapps; sudo docker rm vulnapps
-sudo docker run -d --name vulnapps --restart unless-stopped -p 127.0.0.1:8001:8000 -v vulnapps-data:/data -e SECRET_KEY="YOUR_SECRET_KEY" -e DATABASE_PATH=/data/vulnapps.db -e TOKEN_EXPIRY_HOURS=24 vulnapps:latest
+
 
 * Notes:
 

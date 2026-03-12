@@ -15,6 +15,7 @@
                 <li><a href="/apps">Apps</a></li>
                 {% if user %}
                     <li><a href="/scans">Scans</a></li>
+                    <li><a href="/teams">Teams</a></li>
                     {% if user.role == 'admin' %}
                         <li><a href="/admin/users">Admin</a></li>
                     {% endif %}

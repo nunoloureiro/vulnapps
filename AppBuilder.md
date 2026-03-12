@@ -33,9 +33,10 @@ Dark theme with orange accents:
 
 | Role | Can do |
 |------|--------|
-| **user** (default) | Register, login, browse apps/vulns, submit scan results, manage own scans |
+| **viewer** | Browse apps/vulns/scans (read-only) |
+| **user** (default) | Everything viewer + submit scan results, create teams |
 | **contributor** | Everything user + create/edit apps and their vulnerabilities |
-| **admin** | Everything + grant/revoke contributor role, manage all users |
+| **admin** | Everything + manage all users, manage all teams |
 
 - First registered user automatically becomes **admin**
 - Subsequent users register as **user** by default
@@ -53,8 +54,10 @@ vulnapps/
 │   ├── config.py             # Settings from env vars (SECRET_KEY, DATABASE_PATH, TOKEN_EXPIRY_HOURS)
 │   ├── database.py           # aiosqlite connection (Row factory), migration runner
 │   ├── auth.py               # bcrypt hash/verify, JWT create/decode (HS256)
-│   ├── dependencies.py       # get_current_user, require_user, require_contributor, require_admin
-│   ├── models.py             # Pydantic schemas (UserCreate, AppCreate, VulnCreate, ScanCreate, FindingCreate)
+│   ├── dependencies.py       # get_current_user, require_user, require_active_user, require_contributor, require_admin
+│   ├── matching.py           # Shared scan finding matching logic (DAST + SAST)
+│   ├── visibility.py         # App visibility filter (public/team/private)
+│   ├── models.py             # Pydantic schemas (UserCreate, UserLogin, AppCreate, VulnCreate, ScanCreate, FindingCreate)
 │   ├── templating.py         # Shared Jinja2Templates instance (breaks circular import)
 │   ├── seed.py               # TaintedPort seed data (25 vulns, auto-seeded on first admin registration)
 │   ├── routers/
@@ -63,7 +66,8 @@ vulnapps/
 │   │   ├── apps.py           # /apps — app CRUD (web)
 │   │   ├── vulns.py          # /apps/{id}/vulns — vulnerability CRUD (web)
 │   │   ├── scans.py          # /scans, /apps/{id}/scans — scan submission + metrics (web)
-│   │   ├── admin.py          # /admin — user management (web)
+│   │   ├── admin.py          # /admin — user management with inline editing (web)
+│   │   ├── teams.py          # /teams — team CRUD, member management (web)
 │   │   └── api.py            # /api/v1 — REST API (JSON)
 │   ├── templates/
 │   │   ├── base.html         # Layout: navbar, alerts, content block
@@ -83,13 +87,23 @@ vulnapps/
 │   │   │   ├── detail.html   # Metrics dashboard + findings table + missed vulns
 │   │   │   ├── submit.html   # Scan form with dynamic JS finding rows
 │   │   │   └── compare.html  # Scan comparison: selector + metrics table + detection matrix
-│   │   └── admin/
-│   │       └── users.html    # User table with role management
+│   │   ├── admin/
+│   │   │   └── users.html    # User table with inline editing + delete
+│   │   └── teams/
+│   │       ├── list.html     # Teams table
+│   │       ├── form.html     # Create team form
+│   │       └── detail.html   # Team detail + member management
 │   └── static/
 │       ├── style.css         # Full dark theme CSS
 │       └── logo.svg          # Shield + crosshair SVG logo (orange on dark)
 ├── migrations/
-│   └── 001_initial.sql       # Schema with all tables and indexes
+│   ├── 001_initial.sql       # Schema with all tables and indexes
+│   ├── 002_tech_stack.sql    # App technologies table
+│   ├── 003_rename_username_to_name.sql  # Rename username → name
+│   ├── 004_static_scan_support.sql      # Add filename to vulns + findings
+│   ├── 005_viewer_role.sql              # Add viewer role to users
+│   ├── 006_teams.sql                    # Teams + team_members tables
+│   └── 007_app_visibility.sql           # App visibility + team_id
 ├── tests/
 │   └── __init__.py
 ├── tasks/
@@ -138,7 +152,7 @@ Uses `python-dotenv` to load `.env` file.
 
 ---
 
-## Database Schema (`migrations/001_initial.sql`, `002_tech_stack.sql`)
+## Database Schema (migrations 001–007)
 
 ```sql
 PRAGMA journal_mode=WAL;
@@ -146,10 +160,10 @@ PRAGMA foreign_keys=ON;
 
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    username      TEXT NOT NULL UNIQUE,
+    name          TEXT NOT NULL,
     email         TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    role          TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user','contributor','admin')),
+    role          TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('viewer','user','contributor','admin')),
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -161,6 +175,8 @@ CREATE TABLE IF NOT EXISTS apps (
     url         TEXT,
     category    TEXT,                                   -- Legacy, not used in UI
     created_by  INTEGER NOT NULL REFERENCES users(id),
+    visibility  TEXT NOT NULL DEFAULT 'public',  -- public, team, private
+    team_id     INTEGER REFERENCES teams(id),
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(name, version)
@@ -175,7 +191,8 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
     vuln_type     TEXT,                         -- e.g. "XSS", "SQLi", "SSRF"
     http_method   TEXT,                         -- GET, POST, etc.
     url           TEXT,                         -- Affected URL/endpoint
-    parameter     TEXT,                         -- Affected parameter
+    parameter     TEXT,                         -- Affected parameter (DAST)
+    filename      TEXT,                         -- Affected file (SAST)
     description   TEXT,
     code_location TEXT,
     poc           TEXT,                         -- Proof of concept
@@ -202,8 +219,9 @@ CREATE TABLE IF NOT EXISTS scan_findings (
     scan_id         INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
     vuln_type       TEXT NOT NULL,
     http_method     TEXT,
-    url             TEXT NOT NULL,
+    url             TEXT,
     parameter       TEXT,
+    filename        TEXT,                         -- SAST finding filename
     matched_vuln_id INTEGER REFERENCES vulnerabilities(id),
     is_false_positive INTEGER NOT NULL DEFAULT 0
 );
@@ -221,6 +239,25 @@ CREATE TABLE IF NOT EXISTS app_technologies (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tech_app ON app_technologies(app_id);
+
+-- 006_teams.sql
+CREATE TABLE IF NOT EXISTS teams (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    created_by  INTEGER NOT NULL REFERENCES users(id),
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS team_members (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id  INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role     TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('member','admin')),
+    UNIQUE(team_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id);
+CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id);
 ```
 
 ### Tech Stack
@@ -245,15 +282,21 @@ finally:
 `get_connection()` returns an `aiosqlite.Connection` with `row_factory = aiosqlite.Row` (dict-like access) and `PRAGMA foreign_keys=ON`.
 
 ### Migration Runner
-On startup (via FastAPI lifespan), all `.sql` files in `migrations/` are executed in sorted order using `executescript()`. Uses `CREATE TABLE IF NOT EXISTS` for idempotency.
+On startup (via FastAPI lifespan), all `.sql` files in `migrations/` are executed in sorted order using `executescript()`. Tracks applied migrations in a `_migrations` table to avoid re-running non-idempotent migrations (e.g., ALTER TABLE). Uses `CREATE TABLE IF NOT EXISTS` for idempotency in schema-creation migrations.
 
 ### Auth Flow
+- **Login:** email + password (not username)
+- **Register:** name (display name) + email + password
 - **Web:** JWT stored in httponly cookie named `token`, set on login/register, deleted on logout
 - **API:** JWT in `Authorization: Bearer <token>` header
 - `get_current_user` middleware checks cookie first, then header, injects result into `request.state.user`
-- Role-based auth functions (`require_user`, `require_contributor`, `require_admin`) raise HTTPException 401/403
+- Role-based auth functions raise HTTPException 401/403:
+  - `require_user` — any authenticated user
+  - `require_active_user` — any non-viewer (rejects viewers with 403)
+  - `require_contributor` — contributor or admin
+  - `require_admin` — admin only
 - Password hashing: bcrypt
-- JWT payload: `{ sub: user_id, username, role, exp }`
+- JWT payload: `{ sub: user_id, name, role, exp }`
 - 24h token expiry, no refresh tokens
 
 ### First User = Admin + Seed Data
@@ -327,21 +370,40 @@ Source: `/Users/nuno/dev/TaintedPort/KnownVulnerabilities.txt`
 | GET | `/apps/{id}/vulns/{vid}` | None | Vuln detail (vid = DB id, not custom vuln_id) |
 | GET | `/apps/{id}/vulns/{vid}/edit` | Contributor+ | Edit vuln form |
 | POST | `/apps/{id}/vulns/{vid}/edit` | Contributor+ | Update vuln, redirect to vuln detail |
+| POST | `/apps/{id}/vulns/{vid}/delete` | Contributor+ | Delete vuln, redirect to app detail |
+| POST | `/apps/{id}/vulns/{vid}/inline` | Contributor+ | AJAX inline update (JSON body with field:value) |
 
 ### Scans
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/scans` | None | List scans (public + own private). Joins app name, subqueries for tp_count/fp_count |
-| GET | `/apps/{id}/scans` | User+ | Scan submission form with dynamic JS finding rows |
-| POST | `/apps/{id}/scans` | User+ | Process scan: create record, parse findings, auto-match, redirect to detail |
+| GET | `/scans/example/json` | None | Download example JSON findings file |
+| GET | `/scans/example/csv` | None | Download example CSV findings file |
+| GET | `/apps/{id}/scans` | Active User+ | Scan submission form (file upload + manual) |
+| POST | `/apps/{id}/scans` | Active User+ | Process scan: file upload or form, match findings, redirect to detail |
 | GET | `/scans/{id}` | User+ | Scan detail with metrics dashboard, findings table, missed vulns |
+| POST | `/scans/{id}/rematch` | Active User+ | Re-run automatic matching for all findings, return updated count |
 | GET | `/apps/{id}/compare` | None | Scan comparison — selector when no params, results when `?scans=1,2,3` |
 
 ### Admin (`/admin`)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/admin/users` | Admin | List all users with role badges |
-| POST | `/admin/users/{id}/role` | Admin | Update user role (only `user` or `contributor` allowed) |
+| GET | `/admin/users` | Admin | List all users with inline editing |
+| POST | `/admin/users/{id}/role` | Admin | Update user role (viewer, user, or contributor) |
+| POST | `/admin/users/{id}/inline` | Admin | AJAX inline update name/email/role |
+| POST | `/admin/users/{id}/delete` | Admin | Delete user (cannot delete self or admins) |
+
+### Teams (`/teams`)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/teams` | User+ | List teams (own teams; admin sees all) |
+| GET | `/teams/new` | Active User+ | Create team form |
+| POST | `/teams/new` | Active User+ | Create team (creator becomes team admin) |
+| GET | `/teams/{id}` | Team member or admin | Team detail + member list |
+| POST | `/teams/{id}/members` | Team admin or app admin | Add member by email |
+| POST | `/teams/{id}/members/{uid}/remove` | Team admin or app admin | Remove member |
+| POST | `/teams/{id}/members/{uid}/role` | Team admin or app admin | Toggle member/admin role |
+| POST | `/teams/{id}/delete` | Team admin or app admin | Delete team |
 
 ---
 
@@ -395,24 +457,146 @@ Dynamic rows added via JavaScript in `submit.html` — clones a template row, in
 }
 ```
 
-### Matching Logic
-For each finding, compare `(vuln_type, http_method, url, parameter)` against all known vulnerabilities for that app. **Case-insensitive** comparison on all four fields. `None`/empty treated as empty string.
+### Matching Logic (`app/matching.py`)
 
-- **Match found** → `matched_vuln_id = vuln.id`, `is_false_positive = 0` (True Positive)
-- **No match** → `matched_vuln_id = NULL`, `is_false_positive = 1` (False Positive)
+Shared `match_finding(finding, known_vulns)` function used by both web routes and API.
+
+Uses a **scoring-based system** instead of binary matching. Each known vuln is scored against the finding; the highest score above a threshold (60) wins.
+
+**vuln_type match is a hard gate** — candidates that don't match on vuln_type (via canonical aliases) are excluded entirely. This prevents matching an XSS finding to an SQLi vuln just because the URL matches.
+
+**Scoring table:**
+| Factor | Points | Notes |
+|---|---|---|
+| vuln_type match | 50 | Required — no match without this |
+| URL exact match | 100 | Strongest signal |
+| URL pattern match (placeholders) | 80 - 5*N | N = number of placeholder segments; min 50 |
+| URL prefix glob (`/admin/*`) | 40 | Moderate signal |
+| URL global wildcard (`/*`) | 10 | Weak — matches everything |
+| http_method match | 15 | Scanners sometimes differ |
+| parameter exact match | 20 | Strong differentiator |
+| parameter substring match | 10 | Handles `user_email` containing `email` |
+| SAST filename exact match | 100 | Strong signal for file-level findings |
+
+**URL pattern handling:**
+- Placeholder segments (`:id`, `{id}`, `(id)`, `<id>`, `[id]`) compiled to `([^/]+)` regex
+- Trailing `/*` compiled to `(/.*)?` (matches zero or more trailing segments)
+- `/*` alone compiled to `^/.*$` (matches any path)
+- Query strings stripped from finding URLs before comparison
+- Compiled regexes cached via `@lru_cache`
+
+**Vuln type aliases** — expanded groups covering: SQLi, XSS, IDOR, auth bypass, access control, info disclosure, path traversal, open redirect, security misconfiguration, privilege escalation, data exposure, business logic, CSRF, SSRF, RCE, XXE, SSTI, NoSQL injection, prototype pollution, HTTP header injection, insecure deserialization, file upload, CORS, clickjacking, JWT, weak crypto, hardcoded secrets.
+
+**Three finding states:**
+| State | matched_vuln_id | is_false_positive | Meaning |
+|---|---|---|---|
+| **TP** | set | 0 | Confident match (auto or manual) |
+| **Pending** | null | 0 | No auto-match, awaiting manual review |
+| **FP** | null | 1 | User explicitly marked as false positive |
+
+- **Automatic matching**: Score >= 60 → TP. Score < 60 → **Pending** (not FP)
+- **Manual mapping** (existing UI): User maps pending finding to known vuln → TP
+- **Mark FP** (button on scan detail): User explicitly marks as FP → `POST /scans/{id}/findings/{fid}/mark-fp`
+- **Metrics**: Pending findings are **excluded** from TP/FP/precision/recall calculations
+- **Compare page**: Pending findings excluded from FP matrix
+
+Two matching modes based on finding content:
+
+**DAST matching** (when finding has `url`):
+Score based on vuln_type + URL pattern + http_method + parameter. If both finding and known vuln have URLs but they don't match, that candidate is skipped.
+
+**SAST matching** (when finding has `filename` but no `url`):
+Score based on vuln_type + filename exact match (case-insensitive).
+
+### File Upload for Scan Submission
+
+Scans can be submitted via file upload (JSON or CSV) in addition to manual form entry. If a file is uploaded, manual findings are ignored.
+
+**JSON format:**
+```json
+{"findings": [{"vuln_type": "XSS", "http_method": "GET", "url": "/search", "parameter": "q"}, {"vuln_type": "Hardcoded Secret", "filename": "src/config.py"}]}
+```
+
+**CSV format:**
+```
+vuln_type,http_method,url,parameter,filename
+XSS,GET,/search,q,
+Hardcoded Secret,,,,src/config.py
+```
+
+Example files downloadable at `GET /scans/example/json` and `GET /scans/example/csv`.
 
 ### Metrics Computation (on scan detail view)
 ```
-TP = count of findings where matched_vuln_id IS NOT NULL
-FP = count of findings where is_false_positive = 1
-FN = known vulns for the app NOT matched by any finding in this scan (computed at query time)
+TP      = count of UNIQUE matched vulns (not finding count) — multiple findings matching the same vuln count as 1 TP
+FP      = count of findings where is_false_positive = 1
+Pending = count of findings where matched_vuln_id IS NULL AND is_false_positive = 0
+FN      = known vulns for the app NOT matched by any finding in this scan
 
 precision = TP / (TP + FP)     if (TP + FP) > 0 else 0
 recall    = TP / (TP + FN)     if (TP + FN) > 0 else 0
 f1        = 2 * P * R / (P+R)  if (P + R) > 0 else 0
 ```
 
-Displayed in a metrics-grid: TP (green), FP (red), FN (red), Precision/Recall/F1 (orange, as percentages).
+**TP counts unique vulns, not findings.** If 3 scanner findings all match the same known vuln, TP=1. This prevents inflated precision when scanners report the same vuln multiple times (e.g., "Missing CSP", "Missing HSTS", "Missing X-Frame-Options" all matching TP-016 "Missing Security Headers"). In the scan list SQL, this uses `COUNT(DISTINCT matched_vuln_id)`.
+
+**Duplicate indicator:** When multiple findings match the same vuln, a badge shows "N findings" next to the matched vuln link. Computed via `Counter(matched_vuln_id for matched findings)` and passed as `vuln_finding_counts` dict to template.
+
+Pending findings are excluded from precision/recall calculations — they haven't been classified yet.
+
+Displayed in a metrics-grid: TP (green), FP (red), Pending (yellow), FN (red), Precision/Recall/F1 (orange, as percentages).
+
+### Rematch Endpoint
+
+`POST /scans/{scan_id}/rematch` — Re-runs automatic matching for all findings in a scan. Requires active user (non-viewer). Re-matches ALL findings including manually mapped and manually marked FP ones. Returns `{"ok": true, "updated": count}`.
+
+Use case: After splitting a coarse-grained vuln into finer ones, re-match picks up the new vulns. The UI shows a "Re-match All" button next to the Findings heading (contributor+ only) with a confirmation dialog.
+
+### Split/Refine Workflow
+
+The "+ Vuln" button appears on ALL findings (not just unmatched), allowing users to create fine-grained vulns from any finding — including ones already matched to a coarse vuln. After creating new vulns, "Re-match All" re-runs matching so findings map to the more specific vulns.
+
+---
+
+## Inline Editing Pattern
+
+Used in vuln table (app detail) and user table (admin). Each editable cell has:
+- `class="cell-editable"` — pointer cursor, orange highlight on hover
+- `data-field` — field name for API call
+- `data-value` — current value
+- `data-type="select"` — optional, renders dropdown instead of text input
+
+On click: replace cell content with input/select. Save on Enter/change/blur, cancel on Escape.
+Save via `fetch POST` to `/{resource}/{id}/inline` with JSON `{field: value}`.
+On success, update `data-value` and re-render display (badges for severity/role, links for titles).
+
+CSS: `.cell-editable`, `.cell-editable:hover`, `.inline-input`
+
+Actions column has pencil icon (link to full edit form) and trashcan icon (form POST to delete with confirm).
+CSS: `.btn-icon`, `.btn-icon:hover`, `.btn-icon-danger:hover`, `.vuln-row:hover`
+
+---
+
+## App Visibility
+
+Apps have a `visibility` field: `public` (default), `team`, or `private`.
+
+- **public**: visible to everyone (including unauthenticated users)
+- **team**: visible only to members of the assigned team + creator + admin
+- **private**: visible only to creator + admin
+
+`app/visibility.py` provides `app_visibility_filter(user)` which returns a SQL WHERE clause and params for filtering. Applied in app list and app detail queries.
+
+App form includes visibility dropdown and conditional team selector (shown only when visibility="team").
+
+---
+
+## Teams
+
+Users can create teams and add members by email. Team creator becomes team admin.
+Team admins (and app admins) can add/remove members and change member roles (member/admin).
+
+Nav bar shows "Teams" link for all authenticated users. Viewers cannot create teams.
 
 ---
 
@@ -430,35 +614,46 @@ Displayed in a metrics-grid: TP (green), FP (red), FN (red), Precision/Recall/F1
 - Sticky top navbar: logo (SVG shield+crosshair, 28x28) + brand "vulnapps" (orange), nav links (Apps, Scans), auth buttons
 - Favicon: `/static/logo.svg`
 - Scans link only shown to logged-in users
+- Teams link only shown to logged-in users
 - Admin link only shown to admin role
 - Alert blocks for `error` and `success` template variables
 - Content block for page-specific content
 
 ### Scan Detail Template (`scans/detail.html`)
 - Detail grid: scanner, app (linked), date, authenticated, submitted_by, notes
-- Metrics grid (6 cards): TP, FP, FN, Precision%, Recall%, F1%
-- Findings table: type, method, url, parameter, status badge (TP green / FP red)
-- Status determined by `finding.matched_vuln_id` (truthy = TP, falsy = FP)
+- Metrics grid (7 cards): TP, FP, Pending, FN, Precision%, Recall%, F1%
+- Findings table: type, method, url, parameter, filename, status badge (TP green / FP red / Pending yellow)
+- Status: TP = matched_vuln_id set, FP = is_false_positive=1, Pending = neither
+- Pending findings show "Mark FP" button for contributors/admins
+- Manual mapping dropdown: maps pending → TP (or unmaps TP → Pending, not FP)
 - Missed Vulnerabilities (FN) table: vuln_id, title (linked), type, severity, url
 
 ### Scan Submit Template (`scans/submit.html`)
+- File upload section (JSON/CSV) with example download links
+- Manual finding rows as fallback (used when no file uploaded)
 - JavaScript for dynamic finding rows with add/remove
 - Prevents removing the last row
-- Each row: vuln_type (text), http_method (select), url (text), parameter (text)
+- Each row: vuln_type (text), http_method (select), url (text, DAST), parameter (text, DAST), filename (text, SAST)
+- Form uses `enctype="multipart/form-data"`
 
 ### App Detail Template (`apps/detail.html`)
 - Contributors see: Edit App, Add Vulnerability buttons
-- Any authenticated user sees: Submit Scan button
+- Non-viewer authenticated users see: Submit Scan button
+- Shows app visibility badge in detail grid
 - Shows `creator_name` (joined from users table) or falls back to `created_by` ID
 - **Tech Stack:** Displayed as `badge-info` badges (from `app_technologies` table)
 - **Vulnerability Summary:** Before the vulns table, shows total count in header and a `metrics-grid` with severity-colored badge counts (only severities with >0 vulns shown)
 
 ### App Form Template (`apps/form.html`)
 - Tech Stack field: comma-separated text input with hint text, parsed server-side into individual `app_technologies` rows
+- Visibility dropdown: public (default), team, private
+- Team selector: shown only when visibility is "team", populated with user's teams
 
 ### App List Template (`apps/list.html`)
 - Each card shows tech stack badges instead of category
+- Shows visibility badge (team/private) when not public
 - Template receives `apps` as list of `{"app": row, "tech": [names]}` dicts
+- Apps filtered by visibility (via `app_visibility_filter`)
 
 ### Scan Comparison Template (`scans/compare.html`)
 Two-mode template controlled by `comparison` variable:
@@ -484,10 +679,11 @@ CSS: `.text-center`, `.matrix-hit` (green checkmark), `.matrix-miss` (gray X), `
 **Buttons:** `.btn`, `.btn-primary` (orange), `.btn-outline`, `.btn-danger`, `.btn-sm`
 **Forms:** `.form-group`, `.form-label`, `.form-input`, `.form-select`, `.form-textarea`, `.form-row` (2-col grid), `.form-check`
 **Tables:** `.table-wrap`, `table`, `th`, `td`
-**Badges:** `.badge`, `.badge-critical`, `.badge-high`, `.badge-medium`, `.badge-low`, `.badge-info`, `.badge-user`, `.badge-contributor`, `.badge-admin`
+**Badges:** `.badge`, `.badge-critical`, `.badge-high`, `.badge-medium`, `.badge-low`, `.badge-info`, `.badge-pending`, `.badge-user`, `.badge-contributor`, `.badge-admin`, `.badge-viewer`, `.badge-member`
 **Metrics:** `.metrics-grid`, `.metric-card`, `.metric-value`, `.metric-label`
 **Text:** `.text-success`, `.text-error`, `.text-warning`, `.text-accent`, `.text-muted`, `.text-secondary`, `.text-sm`, `.text-xs`, `.font-mono`
 **Alerts:** `.alert`, `.alert-error`, `.alert-success`
+**Inline Edit:** `.cell-editable`, `.inline-input`, `.btn-icon`, `.btn-icon-danger`, `.btn-save`, `.vuln-row`
 **Other:** `.detail-grid`, `.detail-label`, `.detail-value`, `.search-box`, `.empty-state`, `.hero`, `.hero-actions`, `.pagination`
 **Spacing:** `.mt-1`/`.mt-2`/`.mt-3`, `.mb-1`/`.mb-2`, `.flex`, `.items-center`, `.gap-1`/`.gap-2`, `.justify-between`
 

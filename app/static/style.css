@@ -147,6 +147,18 @@ a:hover { color: var(--accent-hover); }
 }
 .btn-danger:hover { opacity: 0.9; }
 .btn-sm { padding: 0.25rem 0.625rem; font-size: 0.8125rem; }
+button.btn-icon, a.btn-icon, .btn-icon { background: transparent !important; border: none !important; color: var(--text-muted); padding: 0.25rem; cursor: pointer; display: inline-flex; align-items: center; text-decoration: none; line-height: 1; }
+.btn-icon:hover { color: var(--accent); }
+.btn-icon-danger:hover { color: var(--error); }
+.btn-save:hover { color: var(--success); }
+
+/* Inline editing */
+.vuln-row:hover { background: var(--accent-dim); }
+.cell-editable { cursor: pointer; position: relative; }
+.cell-editable:hover { background: rgba(249, 115, 22, 0.12); }
+.inline-input { background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 4px; padding: 0.2rem 0.4rem; font-size: 0.8125rem; font-family: var(--font); width: 100%; }
+.inline-input:focus { outline: none; border-color: var(--accent-hover); box-shadow: 0 0 0 2px var(--accent-dim); }
+select.inline-input { cursor: pointer; }
 
 /* Forms */
 .form-group { margin-bottom: 1rem; }
@@ -210,6 +222,11 @@ th {
     letter-spacing: 0.05em;
 }
 tr:hover { background: rgba(255,255,255,0.02); }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--accent); }
+th.sortable::after { content: ''; margin-left: 0.25rem; }
+th.sort-asc::after { content: ' ▲'; font-size: 0.625rem; }
+th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 
 /* Badges */
 .badge {
@@ -230,6 +247,9 @@ tr:hover { background: rgba(255,255,255,0.02); }
 .badge-user { background: rgba(161,161,170,0.15); color: #a1a1aa; }
 .badge-contributor { background: rgba(249,115,22,0.15); color: #f97316; }
 .badge-admin { background: rgba(239,68,68,0.15); color: #ef4444; }
+.badge-viewer { background: rgba(113,113,122,0.15); color: #a1a1aa; }
+.badge-member { background: rgba(59,130,246,0.15); color: #60a5fa; }
+.badge-pending { background: rgba(234,179,8,0.15); color: #eab308; }
 
 /* Metrics */
 .metrics-grid {
@@ -321,11 +341,26 @@ tr:hover { background: rgba(255,255,255,0.02); }
 
 /* Search */
 .search-box {
-    display: flex;
-    gap: 0.75rem;
-    margin-bottom: 1.5rem;
+    width: 100%;
+    max-width: 400px;
+    padding: 0.5rem 0.75rem 0.5rem 2.25rem;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.875rem;
+    font-family: var(--font);
+    transition: border-color 0.15s;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: 0.625rem center;
 }
-.search-box .form-input { max-width: 320px; }
+.search-box:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.search-box::placeholder { color: var(--text-muted); }
 
 /* Pagination */
 .pagination {
@@ -355,6 +390,31 @@ tr:hover { background: rgba(255,255,255,0.02); }
 .matrix-miss { color: #3f3f46; font-size: 1.125rem; }
 .matrix-table td, .matrix-table th { padding: 0.5rem 0.75rem; }
 .matrix-header { max-width: 100px; word-wrap: break-word; }
+.tooltip-wrap { position: relative; display: inline-block; cursor: help; }
+.tooltip-wrap .tooltip-text {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    white-space: normal;
+    width: 250px;
+    text-align: left;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+    z-index: 10;
+    transition: opacity 0.15s;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.tooltip-wrap:hover .tooltip-text { visibility: visible; opacity: 1; }
 
 /* Empty state */
 .empty-state {

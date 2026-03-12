@@ -2,7 +2,7 @@
 {% block title %}Compare Scans - {{ app.name }} - Vulnapps{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h1 class="page-title">Compare Scans <span class="text-muted text-sm">{{ app.name }} v{{ app.version }}</span></h1>
+    <h1 class="page-title">Compare Scans <span class="text-muted text-sm">{{ app.name }}{% if app.version %} v{{ app.version }}{% endif %}</span></h1>
     <a href="/apps/{{ app.id }}" class="btn btn-outline">Back to App</a>
 </div>
 
@@ -16,7 +16,7 @@
             <table>
                 <thead>
                     <tr>
-                        <th style="width:40px"></th>
+                        <th style="width:40px"><input type="checkbox" id="select-all" style="accent-color: var(--accent); width:16px; height:16px;" title="Select all"></th>
                         <th>Scanner</th>
                         <th>Date</th>
                         <th>Auth</th>
@@ -60,13 +60,23 @@
         var n = checked.length;
         btn.disabled = n < 2 || n > 7;
         countEl.textContent = n + ' selected' + (n > 7 ? ' (max 7)' : '');
-        // Disable unchecked boxes when 7 are selected
         checkboxes.forEach(function(cb) {
             if (!cb.checked) cb.disabled = n >= 7;
         });
     }
 
     checkboxes.forEach(function(cb) { cb.addEventListener('change', update); });
+
+    var selectAll = document.getElementById('select-all');
+    selectAll.addEventListener('change', function() {
+        var shouldCheck = selectAll.checked;
+        checkboxes.forEach(function(cb, i) {
+            if (shouldCheck && i >= 7) return;
+            cb.checked = shouldCheck;
+            cb.disabled = false;
+        });
+        update();
+    });
 
     form.addEventListener('submit', function(e) {
         e.preventDefault();
@@ -91,7 +101,7 @@
                 <tr>
                     <th>Metric</th>
                     {% for s in comparison.scanners %}
-                        <th class="text-center">{{ s.scan.scanner_name }}<br><span class="text-muted text-xs">{{ s.scan.scan_date }}</span></th>
+                        <th class="text-center">{{ s.scan.scanner_name }}<br><span class="text-muted text-xs">{{ s.short_date }}</span></th>
                     {% endfor %}
                 </tr>
             </thead>
@@ -109,27 +119,33 @@
                     {% endfor %}
                 </tr>
                 <tr>
+                    <td class="detail-label">Pending</td>
+                    {% for s in comparison.scanners %}
+                        <td class="text-center font-mono text-warning">{{ s.metrics.pending }}</td>
+                    {% endfor %}
+                </tr>
+                <tr>
                     <td class="detail-label">False Negatives</td>
                     {% for s in comparison.scanners %}
                         <td class="text-center font-mono text-error">{{ s.metrics.fn }}</td>
                     {% endfor %}
                 </tr>
                 <tr>
-                    <td class="detail-label">Precision</td>
+                    <td class="detail-label">Precision <span class="text-muted text-xs" title="Measures the accuracy of positive predictions. Use when the cost of a false positive is high." style="cursor:help">ⓘ</span></td>
                     {% for s in comparison.scanners %}
                         {% set val = s.metrics.precision * 100 %}
                         <td class="text-center font-mono {% if val >= 70 %}text-success{% elif val >= 40 %}text-warning{% else %}text-error{% endif %}">{{ '%.1f' % val }}%</td>
                     {% endfor %}
                 </tr>
                 <tr>
-                    <td class="detail-label">Recall</td>
+                    <td class="detail-label">Recall <span class="text-muted text-xs" title="Measures the ability to find all positive instances. Use when the cost of a false negative is high." style="cursor:help">ⓘ</span></td>
                     {% for s in comparison.scanners %}
                         {% set val = s.metrics.recall * 100 %}
                         <td class="text-center font-mono {% if val >= 70 %}text-success{% elif val >= 40 %}text-warning{% else %}text-error{% endif %}">{{ '%.1f' % val }}%</td>
                     {% endfor %}
                 </tr>
                 <tr>
-                    <td class="detail-label">F1 Score</td>
+                    <td class="detail-label">F1 Score <span class="text-muted text-xs" title="Harmonic mean of precision and recall. Use to balance both, especially with uneven class distributions." style="cursor:help">ⓘ</span></td>
                     {% for s in comparison.scanners %}
                         {% set val = s.metrics.f1 * 100 %}
                         <td class="text-center font-mono {% if val >= 70 %}text-success{% elif val >= 40 %}text-warning{% else %}text-error{% endif %}"><strong>{{ '%.1f' % val }}%</strong></td>
@@ -158,7 +174,7 @@
                     <th>Vulnerability</th>
                     <th>Severity</th>
                     {% for s in comparison.scanners %}
-                        <th class="text-center matrix-header">{{ s.scan.scanner_name }}</th>
+                        <th class="text-center matrix-header">{{ s.scan.scanner_name }}<br><span class="text-muted text-xs">{{ s.short_date }}</span></th>
                     {% endfor %}
                     <th class="text-center">Found</th>
                 </tr>
@@ -190,39 +206,50 @@
     </div>
 </div>
 
-{# False Positives #}
-{% set has_fps = [] %}
-{% for s in comparison.scanners %}{% if s.fp_findings %}{% if has_fps.append(1) %}{% endif %}{% endif %}{% endfor %}
-{% if has_fps %}
+{# False Positives matrix #}
+{% if comparison.fp_matrix %}
 <h2 class="page-title mt-3 mb-2">False Positives</h2>
 <div class="card">
     <div class="table-wrap">
-        <table>
+        <table class="matrix-table">
             <thead>
                 <tr>
-                    <th>Scanner</th>
                     <th>Type</th>
-                    <th>Method</th>
-                    <th>URL</th>
+                    <th>Location</th>
                     <th>Parameter</th>
+                    {% for s in comparison.scanners %}
+                        <th class="text-center matrix-header">{{ s.scan.scanner_name }}<br><span class="text-muted text-xs">{{ s.short_date }}</span></th>
+                    {% endfor %}
+                    <th class="text-center">Flagged</th>
+                    {% if user and user.role in ['contributor', 'admin'] %}
+                        <th></th>
+                    {% endif %}
                 </tr>
             </thead>
             <tbody>
-                {% for s in comparison.scanners %}
-                    {% for fp in s.fp_findings %}
-                    <tr>
-                        {% if loop.first %}
-                            <td rowspan="{{ s.fp_findings|length }}" style="vertical-align:top; border-right:1px solid var(--border);">
-                                <strong>{{ s.scan.scanner_name }}</strong>
-                                <br><span class="text-error text-xs">{{ s.fp_findings|length }} FP{{ 's' if s.fp_findings|length != 1 }}</span>
-                            </td>
-                        {% endif %}
-                        <td class="text-error">{{ fp.vuln_type }}</td>
-                        <td class="font-mono">{{ fp.http_method or '-' }}</td>
-                        <td class="font-mono text-sm">{{ fp.url }}</td>
-                        <td class="font-mono">{{ fp.parameter or '-' }}</td>
-                    </tr>
+                {% for fp in comparison.fp_matrix %}
+                <tr>
+                    <td class="text-error">{{ fp.vuln_type }}</td>
+                    <td class="font-mono text-sm">{{ fp.location }}</td>
+                    <td class="font-mono">{{ fp.parameter or '-' }}</td>
+                    {% for flagged in fp.flagged_by %}
+                        <td class="text-center">
+                            {% if flagged %}
+                                <span class="matrix-hit" style="color: var(--error);">&#10003;</span>
+                            {% else %}
+                                <span class="matrix-miss">&#10007;</span>
+                            {% endif %}
+                        </td>
                     {% endfor %}
+                    <td class="text-center font-mono">
+                        <span class="text-error">{{ fp.flagged_count }}/{{ comparison.scanners|length }}</span>
+                    </td>
+                    {% if user and user.role in ['contributor', 'admin'] %}
+                    <td>
+                        <a href="/apps/{{ app.id }}/vulns/new-from-fp?vuln_type={{ fp.vuln_type|urlencode }}&http_method={{ fp.http_method|urlencode }}&url={{ fp.url|urlencode }}&parameter={{ (fp.parameter or '')|urlencode }}&filename={{ (fp.filename or '')|urlencode }}" class="btn btn-outline btn-sm" title="Convert to known vulnerability">+ Vuln</a>
+                    </td>
+                    {% endif %}
+                </tr>
                 {% endfor %}
             </tbody>
         </table>

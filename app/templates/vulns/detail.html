@@ -39,6 +39,9 @@
         <span class="detail-label">Parameter</span>
         <span class="detail-value font-mono">{{ vuln.parameter or '-' }}</span>
 
+        <span class="detail-label">Filename</span>
+        <span class="detail-value font-mono">{{ vuln.filename or '-' }}{% if vuln.filename and vuln.line_number %}:{{ vuln.line_number }}{% endif %}</span>
+
         <span class="detail-label">Code Location</span>
         <span class="detail-value font-mono">{{ vuln.code_location or '-' }}</span>
     </div>

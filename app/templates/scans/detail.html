@@ -21,7 +21,7 @@
         <span class="detail-value">{{ 'Yes' if scan.authenticated else 'No' }}</span>
 
         <span class="detail-label">Submitted By</span>
-        <span class="detail-value text-secondary">{{ scan.submitted_by }}</span>
+        <span class="detail-value text-secondary">{{ scan.submitter_name or scan.submitted_by }}</span>
 
         {% if scan.notes %}
         <span class="detail-label">Notes</span>
@@ -33,32 +33,41 @@
 <h2 class="page-title mt-3 mb-2">Metrics</h2>
 <div class="metrics-grid mb-2">
     <div class="metric-card">
-        <div class="metric-value text-success">{{ metrics.tp }}</div>
+        <div class="metric-value text-success" id="metric-tp">{{ metrics.tp }}</div>
         <div class="metric-label">True Positives</div>
     </div>
     <div class="metric-card">
-        <div class="metric-value text-error">{{ metrics.fp }}</div>
+        <div class="metric-value text-error" id="metric-fp">{{ metrics.fp }}</div>
         <div class="metric-label">False Positives</div>
     </div>
     <div class="metric-card">
-        <div class="metric-value text-error">{{ metrics.fn }}</div>
+        <div class="metric-value text-warning" id="metric-pending">{{ metrics.pending }}</div>
+        <div class="metric-label">Pending</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-value text-error" id="metric-fn">{{ metrics.fn }}</div>
         <div class="metric-label">False Negatives</div>
     </div>
     <div class="metric-card">
-        <div class="metric-value text-accent">{{ '%.1f' % (metrics.precision * 100) if metrics.precision is not none else 'N/A' }}{% if metrics.precision is not none %}%{% endif %}</div>
+        <div class="metric-value text-accent" id="metric-precision">{{ '%.1f' % (metrics.precision * 100) if metrics.precision is not none else 'N/A' }}{% if metrics.precision is not none %}%{% endif %}</div>
         <div class="metric-label">Precision</div>
     </div>
     <div class="metric-card">
-        <div class="metric-value text-accent">{{ '%.1f' % (metrics.recall * 100) if metrics.recall is not none else 'N/A' }}{% if metrics.recall is not none %}%{% endif %}</div>
+        <div class="metric-value text-accent" id="metric-recall">{{ '%.1f' % (metrics.recall * 100) if metrics.recall is not none else 'N/A' }}{% if metrics.recall is not none %}%{% endif %}</div>
         <div class="metric-label">Recall</div>
     </div>
     <div class="metric-card">
-        <div class="metric-value text-accent">{{ '%.1f' % (metrics.f1 * 100) if metrics.f1 is not none else 'N/A' }}{% if metrics.f1 is not none %}%{% endif %}</div>
+        <div class="metric-value text-accent" id="metric-f1">{{ '%.1f' % (metrics.f1 * 100) if metrics.f1 is not none else 'N/A' }}{% if metrics.f1 is not none %}%{% endif %}</div>
         <div class="metric-label">F1 Score</div>
     </div>
 </div>
 
-<h2 class="page-title mt-3 mb-2">Findings</h2>
+<div class="flex items-center justify-between mt-3 mb-2">
+    <h2 class="page-title">Findings</h2>
+    {% if user and user.role in ['contributor', 'admin'] %}
+    <button class="btn btn-outline btn-sm" id="rematch-btn" title="Re-run automatic matching for all findings">Re-match All</button>
+    {% endif %}
+</div>
 {% if findings %}
 <div class="card">
     <div class="table-wrap">
@@ -67,25 +76,55 @@
                 <tr>
                     <th>Type</th>
                     <th>Method</th>
-                    <th>URL</th>
+                    <th>Location</th>
                     <th>Parameter</th>
                     <th>Status</th>
+                    <th>Matched Vuln</th>
+                    {% if user and user.role in ['contributor', 'admin'] %}
+                        <th></th>
+                    {% endif %}
                 </tr>
             </thead>
             <tbody>
                 {% for finding in findings %}
-                <tr>
+                <tr class="finding-row" data-finding-id="{{ finding.id }}" data-matched-vuln-id="{{ finding.matched_vuln_id or '' }}" data-is-fp="{{ finding.is_false_positive }}">
                     <td>{{ finding.vuln_type }}</td>
                     <td class="font-mono">{{ finding.http_method or '-' }}</td>
-                    <td class="font-mono text-sm">{{ finding.url or '-' }}</td>
+                    <td class="font-mono text-sm">{{ finding.url or finding.filename or '-' }}</td>
                     <td class="font-mono">{{ finding.parameter or '-' }}</td>
-                    <td>
+                    <td class="finding-status">
                         {% if finding.matched_vuln_id %}
                             <span class="badge badge-low">TP</span>
-                        {% else %}
+                        {% elif finding.is_false_positive == 1 %}
                             <span class="badge badge-critical">FP</span>
+                        {% else %}
+                            <span class="badge badge-pending">Pending</span>
                         {% endif %}
                     </td>
+                    <td class="finding-match-cell cell-editable" title="Click to map to a known vulnerability">
+                        {% if finding.matched_vuln_id %}
+                            {% for v in known_vulns if v.id == finding.matched_vuln_id %}
+                                <a href="/apps/{{ app.id }}/vulns/{{ v.id }}" class="text-sm">{{ v.vuln_id }} - {{ v.title }}</a>
+                                {% if vuln_finding_counts.get(finding.matched_vuln_id, 0) > 1 %}
+                                    <span class="badge badge-info text-xs">{{ vuln_finding_counts[finding.matched_vuln_id] }} findings</span>
+                                {% endif %}
+                            {% endfor %}
+                        {% elif finding.is_false_positive == 1 %}
+                            <span class="text-muted text-sm">Marked FP</span>
+                        {% else %}
+                            <span class="text-muted text-sm">Unmapped</span>
+                        {% endif %}
+                    </td>
+                    {% if user and user.role in ['contributor', 'admin'] %}
+                    <td class="finding-action">
+                        <div class="flex gap-1 items-center">
+                            {% if not finding.matched_vuln_id and finding.is_false_positive != 1 %}
+                                <button class="btn btn-outline btn-sm mark-fp-btn" data-finding-id="{{ finding.id }}" title="Mark as False Positive">FP</button>
+                            {% endif %}
+                            <a href="/apps/{{ app.id }}/vulns/new-from-fp?vuln_type={{ finding.vuln_type|urlencode }}&http_method={{ (finding.http_method or '')|urlencode }}&url={{ (finding.url or '')|urlencode }}&parameter={{ (finding.parameter or '')|urlencode }}&filename={{ (finding.filename or '')|urlencode }}" class="btn btn-outline btn-sm" title="Add as known vulnerability">+ Vuln</a>
+                        </div>
+                    </td>
+                    {% endif %}
                 </tr>
                 {% endfor %}
             </tbody>
@@ -102,29 +141,222 @@
 <h2 class="page-title mt-3 mb-2">Missed Vulnerabilities (FN)</h2>
 <div class="card">
     <div class="table-wrap">
-        <table>
+        <table id="missed-vulns-table">
             <thead>
                 <tr>
                     <th>Vuln ID</th>
                     <th>Title</th>
                     <th>Type</th>
                     <th>Severity</th>
-                    <th>URL</th>
+                    <th>Location</th>
                 </tr>
             </thead>
             <tbody>
                 {% for vuln in missed_vulns %}
-                <tr>
+                <tr data-vuln-id="{{ vuln.id }}">
                     <td class="font-mono">{{ vuln.vuln_id }}</td>
                     <td><a href="/apps/{{ app.id }}/vulns/{{ vuln.id }}">{{ vuln.title }}</a></td>
                     <td>{{ vuln.vuln_type }}</td>
                     <td><span class="badge badge-{{ vuln.severity }}">{{ vuln.severity }}</span></td>
-                    <td class="font-mono text-sm">{{ vuln.url or '-' }}</td>
+                    <td class="font-mono text-sm">{{ vuln.url or vuln.filename or '-' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
 </div>
+{% endif %}
+
+{% if user and user.role != 'viewer' %}
+<script>
+(function() {
+    var scanId = {{ scan.id }};
+    var knownVulns = [
+        {id: null, label: '-- Unmapped (Pending) --'},
+        {% for v in known_vulns %}
+        {id: {{ v.id }}, vulnId: '{{ v.vuln_id }}', label: '{{ v.vuln_id }} - {{ v.title|replace("'", "\\'") }}', title: '{{ v.title|replace("'", "\\'") }}'},
+        {% endfor %}
+    ];
+
+    document.querySelectorAll('.finding-match-cell').forEach(function(td) {
+        td.addEventListener('click', function(e) {
+            if (td.querySelector('.inline-input')) return;
+            if (e.target.tagName === 'A') return;
+            startMatchEdit(td);
+        });
+    });
+
+    // Mark FP buttons
+    document.querySelectorAll('.mark-fp-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            var findingId = btn.dataset.findingId;
+            markAsFP(findingId, btn);
+        });
+    });
+
+    function markAsFP(findingId, btn) {
+        fetch('/scans/' + scanId + '/findings/' + findingId + '/mark-fp', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        }).then(function(r) { return r.json(); }).then(function(res) {
+            if (res.ok) {
+                var row = btn.closest('tr');
+                row.dataset.matchedVulnId = '';
+                row.dataset.isFp = '1';
+                row.querySelector('.finding-status').innerHTML = '<span class="badge badge-critical">FP</span>';
+                row.querySelector('.finding-match-cell').innerHTML = '<span class="text-muted text-sm">Marked FP</span>';
+                var actionTd = row.querySelector('.finding-action');
+                if (actionTd) {
+                    actionTd.innerHTML = '<div class="flex gap-1 items-center"><a href="/apps/{{ app.id }}/vulns/new-from-fp?vuln_type=' + encodeURIComponent(row.children[0].textContent) + '&http_method=' + encodeURIComponent(row.children[1].textContent.trim()) + '&url=' + encodeURIComponent(row.children[2].textContent.trim()) + '&parameter=' + encodeURIComponent(row.children[3].textContent.trim()) + '" class="btn btn-outline btn-sm" title="Add as known vulnerability">+ Vuln</a></div>';
+                }
+                updateMetrics();
+            }
+        });
+    }
+
+    function startMatchEdit(td) {
+        var row = td.closest('tr');
+        var findingId = row.dataset.findingId;
+        var currentVulnId = row.dataset.matchedVulnId ? parseInt(row.dataset.matchedVulnId) : null;
+        var origHtml = td.innerHTML;
+
+        var sel = document.createElement('select');
+        sel.className = 'inline-input';
+        knownVulns.forEach(function(v) {
+            var opt = document.createElement('option');
+            opt.value = v.id === null ? '' : v.id;
+            opt.textContent = v.label;
+            if (v.id === currentVulnId) opt.selected = true;
+            sel.appendChild(opt);
+        });
+
+        td.innerHTML = '';
+        td.appendChild(sel);
+        sel.focus();
+
+        sel.addEventListener('change', function() {
+            var newVulnId = sel.value ? parseInt(sel.value) : null;
+            saveMatch(td, row, findingId, newVulnId, origHtml);
+        });
+        sel.addEventListener('blur', function() {
+            setTimeout(function() { if (td.contains(sel)) td.innerHTML = origHtml; }, 150);
+        });
+        sel.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') td.innerHTML = origHtml;
+        });
+    }
+
+    function saveMatch(td, row, findingId, vulnId, origHtml) {
+        fetch('/scans/' + scanId + '/findings/' + findingId + '/match', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({vuln_id: vulnId})
+        }).then(function(r) { return r.json(); }).then(function(res) {
+            if (res.ok) {
+                row.dataset.matchedVulnId = vulnId || '';
+                row.dataset.isFp = res.is_false_positive ? '1' : '0';
+                var statusTd = row.querySelector('.finding-status');
+                var actionTd = row.querySelector('.finding-action');
+
+                if (vulnId) {
+                    var vuln = knownVulns.find(function(v) { return v.id === vulnId; });
+                    td.innerHTML = '<a href="/apps/{{ app.id }}/vulns/' + vulnId + '" class="text-sm">' + (vuln ? vuln.label : 'Matched') + '</a>';
+                    statusTd.innerHTML = '<span class="badge badge-low">TP</span>';
+                    if (actionTd) {
+                        actionTd.innerHTML = '<div class="flex gap-1 items-center"><a href="/apps/{{ app.id }}/vulns/new-from-fp?vuln_type=' + encodeURIComponent(row.children[0].textContent) + '&http_method=' + encodeURIComponent(row.children[1].textContent.trim()) + '&url=' + encodeURIComponent(row.children[2].textContent.trim()) + '&parameter=' + encodeURIComponent(row.children[3].textContent.trim()) + '" class="btn btn-outline btn-sm" title="Add as known vulnerability">+ Vuln</a></div>';
+                    }
+                } else {
+                    td.innerHTML = '<span class="text-muted text-sm">Unmapped</span>';
+                    statusTd.innerHTML = '<span class="badge badge-pending">Pending</span>';
+                    if (actionTd) {
+                        actionTd.innerHTML = '<div class="flex gap-1 items-center"><button class="btn btn-outline btn-sm mark-fp-btn" data-finding-id="' + findingId + '" title="Mark as False Positive">FP</button><a href="/apps/{{ app.id }}/vulns/new-from-fp?vuln_type=' + encodeURIComponent(row.children[0].textContent) + '" class="btn btn-outline btn-sm" title="Add as known vulnerability">+ Vuln</a></div>';
+                        actionTd.querySelector('.mark-fp-btn').addEventListener('click', function(e) {
+                            e.preventDefault();
+                            markAsFP(findingId, actionTd.querySelector('.mark-fp-btn'));
+                        });
+                    }
+                }
+                updateMetrics();
+            } else {
+                td.innerHTML = origHtml;
+            }
+        }).catch(function() { td.innerHTML = origHtml; });
+    }
+
+    function updateMetrics() {
+        var rows = document.querySelectorAll('.finding-row');
+        var fp = 0, pending = 0;
+
+        // Count unique matched vulns for TP
+        var matchedIds = new Set();
+        rows.forEach(function(r) {
+            if (r.dataset.matchedVulnId) {
+                matchedIds.add(parseInt(r.dataset.matchedVulnId));
+            } else if (r.dataset.isFp === '1') {
+                fp++;
+            } else {
+                pending++;
+            }
+        });
+        var tp = matchedIds.size;
+        var fn = 0;
+        knownVulns.forEach(function(v) {
+            if (v.id !== null && !matchedIds.has(v.id)) fn++;
+        });
+
+        // Metrics exclude pending findings
+        var precision = (tp + fp) > 0 ? tp / (tp + fp) : 0;
+        var recall = (tp + fn) > 0 ? tp / (tp + fn) : 0;
+        var f1 = (precision + recall) > 0 ? 2 * precision * recall / (precision + recall) : 0;
+
+        document.getElementById('metric-tp').textContent = tp;
+        document.getElementById('metric-fp').textContent = fp;
+        document.getElementById('metric-pending').textContent = pending;
+        document.getElementById('metric-fn').textContent = fn;
+        document.getElementById('metric-precision').textContent = (precision * 100).toFixed(1) + '%';
+        document.getElementById('metric-recall').textContent = (recall * 100).toFixed(1) + '%';
+        document.getElementById('metric-f1').textContent = (f1 * 100).toFixed(1) + '%';
+
+        // Update missed vulns table
+        var missedTable = document.getElementById('missed-vulns-table');
+        if (missedTable) {
+            var tbody = missedTable.querySelector('tbody');
+            tbody.querySelectorAll('tr').forEach(function(tr) {
+                var vid = parseInt(tr.dataset.vulnId);
+                tr.style.display = matchedIds.has(vid) ? 'none' : '';
+            });
+        }
+    }
+
+    // Re-match All button
+    var rematchBtn = document.getElementById('rematch-btn');
+    if (rematchBtn) {
+        rematchBtn.addEventListener('click', function() {
+            if (!confirm('Re-run automatic matching for all findings? Existing matches and FP marks will be recalculated.')) return;
+            rematchBtn.disabled = true;
+            rematchBtn.textContent = 'Matching...';
+            fetch('/scans/' + scanId + '/rematch', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({})
+            }).then(function(r) { return r.json(); }).then(function(res) {
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    alert('Rematch failed.');
+                    rematchBtn.disabled = false;
+                    rematchBtn.textContent = 'Re-match All';
+                }
+            }).catch(function() {
+                alert('Rematch failed.');
+                rematchBtn.disabled = false;
+                rematchBtn.textContent = 'Re-match All';
+            });
+        });
+    }
+})();
+</script>
 {% endif %}
 {% endblock %}

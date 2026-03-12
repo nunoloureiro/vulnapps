@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Vulnapps - Vulnerability Registry{% endblock %}
+{% block title %}Vulnapps - Benchmark Scanners{% endblock %}
 {% block content %}
 <div class="hero">
-    <h1>Track Scanner <span class="text-accent">Accuracy</span></h1>
-    <p>Register vulnerable applications, document their vulnerabilities, then submit scan results to measure how well your security scanners actually perform.</p>
+    <h1>Benchmark Scanners against<br><span class="text-accent">Vulnerable Apps</span></h1>
+    <p>Register known vulnerable applications and corresponding vulnerabilities, then submit scan results from different scanners to evaluate their accuracy.</p>
     <div class="hero-actions">
         <a href="/apps" class="btn btn-primary">Browse Apps</a>
         {% if not user %}

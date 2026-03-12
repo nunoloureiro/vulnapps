@@ -34,11 +34,40 @@ async def home(request: Request):
     return templates.TemplateResponse("home.html", {"request": request, "user": request.state.user})
 
 
-from app.routers import auth_routes, apps, vulns, scans, admin, api  # noqa: E402
+@app.get("/users/{user_id}", response_class=HTMLResponse)
+async def user_profile(request: Request, user_id: int):
+    db = await get_connection()
+    try:
+        cursor = await db.execute(
+            "SELECT id, name, role, created_at FROM users WHERE id = ?", (user_id,)
+        )
+        profile = await cursor.fetchone()
+        if not profile:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="User not found")
+
+        cursor = await db.execute(
+            """SELECT apps.id, apps.name, apps.version,
+                      (SELECT COUNT(*) FROM vulnerabilities WHERE app_id=apps.id) as vuln_count
+               FROM apps WHERE apps.created_by = ? ORDER BY apps.created_at DESC""",
+            (user_id,),
+        )
+        user_apps = await cursor.fetchall()
+    finally:
+        await db.close()
+
+    return templates.TemplateResponse(
+        "profile.html",
+        {"request": request, "user": request.state.user, "profile": profile, "user_apps": user_apps},
+    )
+
+
+from app.routers import auth_routes, apps, vulns, scans, admin, api, teams  # noqa: E402
 
 app.include_router(auth_routes.router)
 app.include_router(apps.router)
 app.include_router(vulns.router)
 app.include_router(scans.router)
 app.include_router(admin.router)
+app.include_router(teams.router)
 app.include_router(api.router)

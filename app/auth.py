@@ -13,10 +13,10 @@ def verify_password(password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(password.encode(), password_hash.encode())
 
 
-def create_token(user_id: int, username: str, role: str) -> str:
+def create_token(user_id: int, name: str, role: str) -> str:
     payload = {
-        "sub": user_id,
-        "username": username,
+        "sub": str(user_id),
+        "name": name,
         "role": role,
         "exp": datetime.now(timezone.utc) + timedelta(hours=TOKEN_EXPIRY_HOURS),
     }
@@ -25,6 +25,8 @@ def create_token(user_id: int, username: str, role: str) -> str:
 
 def decode_token(token: str) -> dict | None:
     try:
-        return jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-    except jwt.PyJWTError:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        payload["sub"] = int(payload["sub"])
+        return payload
+    except (jwt.PyJWTError, ValueError, KeyError):
         return None

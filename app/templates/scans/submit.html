@@ -7,7 +7,7 @@
 </div>
 
 <div class="card">
-    <form method="post" action="/apps/{{ app.id }}/scans" id="scan-form">
+    <form method="post" action="/apps/{{ app.id }}/scans" id="scan-form" enctype="multipart/form-data">
         <div class="form-row">
             <div class="form-group">
                 <label class="form-label" for="scanner_name">Scanner Name</label>
@@ -39,14 +39,28 @@
             <textarea id="notes" name="notes" class="form-textarea"></textarea>
         </div>
 
-        <h3 class="card-title mt-3 mb-2">Findings</h3>
+        <h3 class="card-title mt-3 mb-2">Upload Findings File</h3>
+        <div class="form-group">
+            <input type="file" name="scan_file" accept=".json,.csv" class="form-input">
+            <p class="text-sm text-muted mt-1">
+                Upload a JSON or CSV file with findings. Download examples:
+                <a href="/scans/example/json" class="text-accent">JSON</a> |
+                <a href="/scans/example/csv" class="text-accent">CSV</a>
+            </p>
+            <p class="text-xs text-muted mt-1">
+                Use <strong>url</strong>, <strong>http_method</strong>, <strong>parameter</strong> for DAST findings, or <strong>filename</strong> for SAST findings.
+                If a file is uploaded, manual findings below are ignored.
+            </p>
+        </div>
+
+        <h3 class="card-title mt-3 mb-2">Or Add Findings Manually</h3>
 
         <div id="findings-container">
             <div class="finding-row card mb-2" style="padding: 1rem;" data-index="0">
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">Vulnerability Type</label>
-                        <input type="text" name="findings[0][vuln_type]" class="form-input" required>
+                        <input type="text" name="findings[0][vuln_type]" class="form-input" placeholder="e.g. XSS, SQLi">
                     </div>
                     <div class="form-group">
                         <label class="form-label">HTTP Method</label>
@@ -63,13 +77,17 @@
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label class="form-label">URL</label>
-                        <input type="text" name="findings[0][url]" class="form-input">
+                        <label class="form-label">URL <span class="text-muted text-xs">(DAST)</span></label>
+                        <input type="text" name="findings[0][url]" class="form-input" placeholder="/path/to/endpoint">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Parameter</label>
+                        <label class="form-label">Parameter <span class="text-muted text-xs">(DAST)</span></label>
                         <input type="text" name="findings[0][parameter]" class="form-input">
                     </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Filename <span class="text-muted text-xs">(SAST)</span></label>
+                    <input type="text" name="findings[0][filename]" class="form-input" placeholder="src/path/to/file.py">
                 </div>
                 <button type="button" class="btn btn-danger btn-sm remove-finding">Remove</button>
             </div>
@@ -98,7 +116,7 @@
             '<div class="form-row">' +
                 '<div class="form-group">' +
                     '<label class="form-label">Vulnerability Type</label>' +
-                    '<input type="text" name="findings[' + index + '][vuln_type]" class="form-input" required>' +
+                    '<input type="text" name="findings[' + index + '][vuln_type]" class="form-input" placeholder="e.g. XSS, SQLi">' +
                 '</div>' +
                 '<div class="form-group">' +
                     '<label class="form-label">HTTP Method</label>' +
@@ -115,13 +133,17 @@
             '</div>' +
             '<div class="form-row">' +
                 '<div class="form-group">' +
-                    '<label class="form-label">URL</label>' +
-                    '<input type="text" name="findings[' + index + '][url]" class="form-input">' +
+                    '<label class="form-label">URL <span class="text-muted text-xs">(DAST)</span></label>' +
+                    '<input type="text" name="findings[' + index + '][url]" class="form-input" placeholder="/path/to/endpoint">' +
                 '</div>' +
                 '<div class="form-group">' +
-                    '<label class="form-label">Parameter</label>' +
+                    '<label class="form-label">Parameter <span class="text-muted text-xs">(DAST)</span></label>' +
                     '<input type="text" name="findings[' + index + '][parameter]" class="form-input">' +
                 '</div>' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label class="form-label">Filename <span class="text-muted text-xs">(SAST)</span></label>' +
+                '<input type="text" name="findings[' + index + '][filename]" class="form-input" placeholder="src/path/to/file.py">' +
             '</div>' +
             '<button type="button" class="btn btn-danger btn-sm remove-finding">Remove</button>';
         container.appendChild(row);

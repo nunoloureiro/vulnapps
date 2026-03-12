@@ -12,7 +12,7 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="version">Version</label>
-                    <input type="text" id="version" name="version" class="form-input" value="{{ app.version if app else '' }}" required>
+                    <input type="text" id="version" name="version" class="form-input" value="{{ app.version if app else '' }}" placeholder="e.g. 1.0">
                 </div>
             </div>
             <div class="form-group">
@@ -28,6 +28,39 @@
                 <input type="text" id="tech_stack" name="tech_stack" class="form-input" value="{{ tech_stack }}" placeholder="e.g. PHP, Next.js, SQLite">
                 <span class="text-muted text-xs">Comma-separated list of technologies</span>
             </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label" for="visibility">Visibility</label>
+                    <select id="visibility" name="visibility" class="form-select">
+                        {% for v in ['public', 'team', 'private'] %}
+                            <option value="{{ v }}" {{ 'selected' if app and app.visibility == v else ('selected' if not app and v == 'public' else '') }}>{{ v|capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" id="team-group" style="display: none;">
+                    <label class="form-label" for="team_id">Team</label>
+                    <select id="team_id" name="team_id" class="form-select">
+                        <option value="">Select team</option>
+                        {% for t in teams %}
+                            <option value="{{ t.id }}" {{ 'selected' if app and app.team_id == t.id else '' }}>{{ t.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <script>
+            (function() {
+                var vis = document.getElementById('visibility');
+                var tg = document.getElementById('team-group');
+                var teamSel = document.getElementById('team_id');
+                function toggle() {
+                    var isTeam = vis.value === 'team';
+                    tg.style.display = isTeam ? '' : 'none';
+                    teamSel.required = isTeam;
+                }
+                vis.addEventListener('change', toggle);
+                toggle();
+            })();
+            </script>
             <button type="submit" class="btn btn-primary" style="width:100%">{{ 'Update App' if app else 'Create App' }}</button>
         </form>
     </div>

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set v = vuln or prefill or none %}
 {% block title %}{{ 'Edit Vulnerability' if vuln else 'Add Vulnerability' }} - Vulnapps{% endblock %}
 {% block content %}
 <div class="page-header">
@@ -11,11 +12,11 @@
         <div class="form-row">
             <div class="form-group">
                 <label class="form-label" for="vuln_id">Vuln ID</label>
-                <input type="text" id="vuln_id" name="vuln_id" class="form-input" value="{{ vuln.vuln_id if vuln else '' }}" required>
+                <input type="text" id="vuln_id" name="vuln_id" class="form-input" value="{{ v.vuln_id if v else '' }}" required>
             </div>
             <div class="form-group">
                 <label class="form-label" for="title">Title</label>
-                <input type="text" id="title" name="title" class="form-input" value="{{ vuln.title if vuln else '' }}" required>
+                <input type="text" id="title" name="title" class="form-input" value="{{ v.title if v else '' }}" required>
             </div>
         </div>
 
@@ -25,13 +26,13 @@
                 <select id="severity" name="severity" class="form-select" required>
                     <option value="">Select severity</option>
                     {% for s in ['critical', 'high', 'medium', 'low', 'info'] %}
-                        <option value="{{ s }}" {{ 'selected' if vuln and vuln.severity == s else '' }}>{{ s|capitalize }}</option>
+                        <option value="{{ s }}" {{ 'selected' if v and v.severity == s else '' }}>{{ s|capitalize }}</option>
                     {% endfor %}
                 </select>
             </div>
             <div class="form-group">
                 <label class="form-label" for="vuln_type">Vulnerability Type</label>
-                <input type="text" id="vuln_type" name="vuln_type" class="form-input" value="{{ vuln.vuln_type if vuln else '' }}" required>
+                <input type="text" id="vuln_type" name="vuln_type" class="form-input" value="{{ v.vuln_type if v else '' }}" required>
             </div>
         </div>
 
@@ -41,39 +42,50 @@
                 <select id="http_method" name="http_method" class="form-select">
                     <option value="">Select method</option>
                     {% for m in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'] %}
-                        <option value="{{ m }}" {{ 'selected' if vuln and vuln.http_method == m else '' }}>{{ m }}</option>
+                        <option value="{{ m }}" {{ 'selected' if v and v.http_method == m else '' }}>{{ m }}</option>
                     {% endfor %}
                 </select>
             </div>
             <div class="form-group">
                 <label class="form-label" for="url">URL</label>
-                <input type="text" id="url" name="url" class="form-input" value="{{ vuln.url if vuln else '' }}">
+                <input type="text" id="url" name="url" class="form-input" value="{{ v.url if v else '' }}">
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label" for="parameter">Parameter <span class="text-muted text-xs">(DAST)</span></label>
+                <input type="text" id="parameter" name="parameter" class="form-input" value="{{ v.parameter if v else '' }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="filename">Filename <span class="text-muted text-xs">(SAST)</span></label>
+                <input type="text" id="filename" name="filename" class="form-input" value="{{ v.filename if v else '' }}" placeholder="src/path/to/file.py">
             </div>
         </div>
 
         <div class="form-group">
-            <label class="form-label" for="parameter">Parameter</label>
-            <input type="text" id="parameter" name="parameter" class="form-input" value="{{ vuln.parameter if vuln else '' }}">
+            <label class="form-label" for="line_number">Line Number</label>
+            <input type="number" id="line_number" name="line_number" class="form-input" value="{{ v.line_number if v and v.line_number else '' }}" style="max-width: 150px;">
         </div>
 
         <div class="form-group">
             <label class="form-label" for="description">Description</label>
-            <textarea id="description" name="description" class="form-textarea">{{ vuln.description if vuln else '' }}</textarea>
+            <textarea id="description" name="description" class="form-textarea">{{ v.description if v else '' }}</textarea>
         </div>
 
         <div class="form-group">
             <label class="form-label" for="code_location">Code Location</label>
-            <input type="text" id="code_location" name="code_location" class="form-input" value="{{ vuln.code_location if vuln else '' }}">
+            <input type="text" id="code_location" name="code_location" class="form-input" value="{{ v.code_location if v else '' }}">
         </div>
 
         <div class="form-group">
             <label class="form-label" for="poc">Proof of Concept</label>
-            <textarea id="poc" name="poc" class="form-textarea">{{ vuln.poc if vuln else '' }}</textarea>
+            <textarea id="poc" name="poc" class="form-textarea">{{ v.poc if v else '' }}</textarea>
         </div>
 
         <div class="form-group">
             <label class="form-label" for="remediation">Remediation</label>
-            <textarea id="remediation" name="remediation" class="form-textarea">{{ vuln.remediation if vuln else '' }}</textarea>
+            <textarea id="remediation" name="remediation" class="form-textarea">{{ v.remediation if v else '' }}</textarea>
         </div>
 
         <button type="submit" class="btn btn-primary">{{ 'Update Vulnerability' if vuln else 'Add Vulnerability' }}</button>

@@ -30,6 +30,14 @@ async def require_user(request: Request) -> dict:
     return user
 
 
+async def require_active_user(request: Request) -> dict:
+    """Rejects viewers — requires user, contributor, or admin."""
+    user = await require_user(request)
+    if user["role"] == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers have read-only access")
+    return user
+
+
 async def require_contributor(request: Request) -> dict:
     user = await require_user(request)
     if user["role"] not in ("contributor", "admin"):

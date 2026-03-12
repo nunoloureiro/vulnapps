@@ -13,8 +13,19 @@ async def get_connection() -> aiosqlite.Connection:
 
 
 async def run_migrations(db: aiosqlite.Connection):
+    # Create migrations tracking table
+    await db.execute(
+        "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    )
+    await db.commit()
+
     migration_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
     for migration_file in migration_files:
+        name = migration_file.name
+        cursor = await db.execute("SELECT 1 FROM _migrations WHERE name = ?", (name,))
+        if await cursor.fetchone():
+            continue
         sql = migration_file.read_text()
         await db.executescript(sql)
-    await db.commit()
+        await db.execute("INSERT INTO _migrations (name) VALUES (?)", (name,))
+        await db.commit()

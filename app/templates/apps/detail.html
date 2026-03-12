@@ -2,13 +2,14 @@
 {% block title %}{{ app.name }} - Vulnapps{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h1 class="page-title">{{ app.name }} <span class="text-muted text-sm">v{{ app.version }}</span></h1>
-    <div>
+    <h1 class="page-title">{{ app.name }}{% if app.version %} <span class="text-muted text-sm">v{{ app.version }}</span>{% endif %}</h1>
+    <div class="flex items-center gap-1">
         {% if user and user.role in ['contributor', 'admin'] %}
             <a href="/apps/{{ app.id }}/edit" class="btn btn-outline">Edit App</a>
             <a href="/apps/{{ app.id }}/vulns/new" class="btn btn-primary">Add Vulnerability</a>
+            <button type="button" class="btn btn-outline" onclick="document.getElementById('import-section').style.display = document.getElementById('import-section').style.display === 'none' ? '' : 'none'">Import Vulns</button>
         {% endif %}
-        {% if user %}
+        {% if user and user.role != 'viewer' %}
             <a href="/apps/{{ app.id }}/scans" class="btn btn-outline">Submit Scan</a>
         {% endif %}
         {% if scan_count >= 2 %}
@@ -16,6 +17,19 @@
         {% endif %}
     </div>
 </div>
+
+{% if user and user.role in ['contributor', 'admin'] %}
+<div class="card mb-2" id="import-section" style="display: none;">
+    <h3 class="card-title mb-2">Import Vulnerabilities</h3>
+    <p class="text-sm text-secondary mb-2">Upload a JSON or CSV file with vulnerabilities. Download examples: <a href="/apps/vulns/example/json">JSON</a> | <a href="/apps/vulns/example/csv">CSV</a></p>
+    <form method="post" action="/apps/{{ app.id }}/vulns/import" enctype="multipart/form-data">
+        <div class="flex items-center gap-1">
+            <input type="file" name="vuln_file" accept=".json,.csv" class="form-input" style="max-width: 400px;" required>
+            <button type="submit" class="btn btn-primary">Upload</button>
+        </div>
+    </form>
+</div>
+{% endif %}
 
 <div class="card mb-2">
     <div class="detail-grid">
@@ -43,10 +57,13 @@
         </div>
 
         <div class="detail-label">Created by</div>
-        <div class="detail-value">{{ app.creator_name or app.created_by }}</div>
+        <div class="detail-value"><a href="/users/{{ app.created_by }}">{{ app.creator_name or app.created_by }}</a></div>
+
+        <div class="detail-label">Visibility</div>
+        <div class="detail-value"><span class="badge badge-{{ 'info' if app.visibility == 'public' else ('medium' if app.visibility == 'team' else 'low') }}">{{ app.visibility }}</span></div>
 
         <div class="detail-label">Scans</div>
-        <div class="detail-value"><a href="/scans">{{ scan_count }} scan{{ '' if scan_count == 1 else 's' }}</a></div>
+        <div class="detail-value"><a href="/scans?app_id={{ app.id }}">{{ scan_count }} scan{{ '' if scan_count == 1 else 's' }}</a></div>
     </div>
 </div>
 
@@ -70,24 +87,42 @@
 {% if vulns %}
     <div class="card">
         <div class="table-wrap">
-            <table>
+            <table id="vuln-table">
                 <thead>
                     <tr>
-                        <th>ID</th>
-                        <th>Title</th>
-                        <th>Severity</th>
-                        <th>Type</th>
-                        <th>URL</th>
+                        <th class="sortable" data-col="0">ID</th>
+                        <th class="sortable" data-col="1">Title</th>
+                        <th class="sortable" data-col="2">Severity</th>
+                        <th class="sortable" data-col="3">Type</th>
+                        <th class="sortable" data-col="4">Location</th>
+                        {% if user and user.role in ['contributor', 'admin'] %}
+                            <th style="width: 70px;"></th>
+                        {% endif %}
                     </tr>
                 </thead>
                 <tbody>
                     {% for vuln in vulns %}
-                        <tr>
-                            <td class="font-mono text-sm">{{ vuln.vuln_id }}</td>
-                            <td><a href="/apps/{{ app.id }}/vulns/{{ vuln.id }}">{{ vuln.title }}</a></td>
-                            <td><span class="badge badge-{{ vuln.severity }}">{{ vuln.severity }}</span></td>
-                            <td>{{ vuln.vuln_type }}</td>
-                            <td class="font-mono text-sm">{{ vuln.url or '-' }}</td>
+                        {% set location = vuln.url or ((vuln.filename ~ ':' ~ vuln.line_number) if vuln.filename and vuln.line_number else vuln.filename) or '' %}
+                        <tr class="vuln-row" data-id="{{ vuln.id }}" data-app-id="{{ app.id }}">
+                            <td class="cell-editable font-mono text-sm" data-field="vuln_id" data-value="{{ vuln.vuln_id }}">{{ vuln.vuln_id }}</td>
+                            <td class="cell-editable" data-field="title" data-value="{{ vuln.title }}"><a href="/apps/{{ app.id }}/vulns/{{ vuln.id }}">{{ vuln.title }}</a></td>
+                            <td class="cell-editable" data-field="severity" data-type="select" data-value="{{ vuln.severity }}" data-sort="{{ {'critical':0,'high':1,'medium':2,'low':3,'info':4}[vuln.severity] }}"><span class="badge badge-{{ vuln.severity }}">{{ vuln.severity }}</span></td>
+                            <td class="cell-editable" data-field="vuln_type" data-value="{{ vuln.vuln_type or '' }}">{{ vuln.vuln_type or '' }}</td>
+                            <td class="font-mono text-sm">{{ location }}</td>
+                            {% if user and user.role in ['contributor', 'admin'] %}
+                            <td>
+                                <div class="flex gap-1">
+                                    <a href="/apps/{{ app.id }}/vulns/{{ vuln.id }}/edit" class="btn-icon" title="Edit all fields">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.85 0 114 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                                    </a>
+                                    <form method="post" action="/apps/{{ app.id }}/vulns/{{ vuln.id }}/delete" onsubmit="return confirm('Delete this vulnerability?');" style="display:inline;">
+                                        <button type="submit" class="btn-icon btn-icon-danger" title="Delete">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                        </button>
+                                    </form>
+                                </div>
+                            </td>
+                            {% endif %}
                         </tr>
                     {% endfor %}
                 </tbody>
@@ -99,4 +134,124 @@
         <p>No vulnerabilities documented yet.</p>
     </div>
 {% endif %}
+
+<script>
+// Column sorting
+(function() {
+    var table = document.getElementById('vuln-table');
+    if (!table) return;
+    var headers = table.querySelectorAll('th.sortable');
+    var tbody = table.querySelector('tbody');
+    var currentCol = -1, ascending = true;
+
+    headers.forEach(function(th) {
+        th.style.cursor = 'pointer';
+        th.addEventListener('click', function() {
+            var col = parseInt(th.dataset.col);
+            if (currentCol === col) { ascending = !ascending; } else { currentCol = col; ascending = true; }
+
+            // Update header indicators
+            headers.forEach(function(h) { h.classList.remove('sort-asc', 'sort-desc'); });
+            th.classList.add(ascending ? 'sort-asc' : 'sort-desc');
+
+            var rows = Array.from(tbody.querySelectorAll('tr'));
+            rows.sort(function(a, b) {
+                var cellA = a.children[col], cellB = b.children[col];
+                var valA = cellA.dataset.sort !== undefined ? cellA.dataset.sort : (cellA.textContent || '').trim().toLowerCase();
+                var valB = cellB.dataset.sort !== undefined ? cellB.dataset.sort : (cellB.textContent || '').trim().toLowerCase();
+                if (valA < valB) return ascending ? -1 : 1;
+                if (valA > valB) return ascending ? 1 : -1;
+                return 0;
+            });
+            rows.forEach(function(r) { tbody.appendChild(r); });
+        });
+    });
+})();
+
+{% if user and user.role in ['contributor', 'admin'] %}
+// Inline editing
+document.querySelectorAll('.cell-editable').forEach(function(td) {
+    td.addEventListener('click', function(e) {
+        if (td.querySelector('.inline-input')) return;
+        if (e.target.tagName === 'A') return;
+        startCellEdit(td);
+    });
+});
+
+function startCellEdit(td) {
+    var row = td.closest('tr');
+    var field = td.dataset.field;
+    var origValue = td.dataset.value;
+    var origHtml = td.innerHTML;
+
+    if (td.dataset.type === 'select') {
+        var sel = document.createElement('select');
+        sel.className = 'inline-input';
+        ['critical','high','medium','low','info'].forEach(function(s) {
+            var opt = document.createElement('option');
+            opt.value = s; opt.textContent = s;
+            if (s === origValue) opt.selected = true;
+            sel.appendChild(opt);
+        });
+        td.innerHTML = '';
+        td.appendChild(sel);
+        sel.focus();
+        sel.addEventListener('change', function() { saveCell(td, row, field, sel.value, origValue, origHtml); });
+        sel.addEventListener('blur', function() {
+            setTimeout(function() { if (td.contains(sel)) cancelCell(td, origHtml); }, 150);
+        });
+        sel.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') cancelCell(td, origHtml);
+        });
+    } else {
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'inline-input';
+        input.value = origValue;
+        td.innerHTML = '';
+        td.appendChild(input);
+        input.focus();
+        input.select();
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); saveCell(td, row, field, input.value, origValue, origHtml); }
+            if (e.key === 'Escape') cancelCell(td, origHtml);
+        });
+        input.addEventListener('blur', function() {
+            setTimeout(function() { if (td.contains(input)) saveCell(td, row, field, input.value, origValue, origHtml); }, 150);
+        });
+    }
+}
+
+function cancelCell(td, origHtml) {
+    td.innerHTML = origHtml;
+}
+
+function saveCell(td, row, field, newValue, origValue, origHtml) {
+    if (newValue === origValue) { cancelCell(td, origHtml); return; }
+
+    var vulnId = row.dataset.id;
+    var appId = row.dataset.appId;
+
+    fetch('/apps/' + appId + '/vulns/' + vulnId + '/inline', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({[field]: newValue})
+    }).then(function(r) { return r.json(); }).then(function(res) {
+        if (res.ok) {
+            td.dataset.value = newValue;
+            if (field === 'title') {
+                td.innerHTML = '<a href="/apps/' + appId + '/vulns/' + vulnId + '">' + newValue + '</a>';
+            } else if (field === 'severity') {
+                td.innerHTML = '<span class="badge badge-' + newValue + '">' + newValue + '</span>';
+                td.dataset.sort = {critical:0,high:1,medium:2,low:3,info:4}[newValue];
+            } else {
+                td.textContent = newValue;
+            }
+        } else {
+            cancelCell(td, origHtml);
+        }
+    }).catch(function() { cancelCell(td, origHtml); });
+}
+{% endif %}
+</script>
 {% endblock %}

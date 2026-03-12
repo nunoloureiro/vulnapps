@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Teams - Vulnapps{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Teams</h1>
+    {% if user and user.role != 'viewer' %}
+        <a href="/teams/new" class="btn btn-primary">Create Team</a>
+    {% endif %}
+</div>
+
+{% if teams %}
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Members</th>
+                    <th>Your Role</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in teams %}
+                <tr>
+                    <td><a href="/teams/{{ t.id }}">{{ t.name }}</a></td>
+                    <td>{{ t.member_count }}</td>
+                    <td>
+                        {% if t.my_role %}
+                            <span class="badge badge-{{ t.my_role }}">{{ t.my_role }}</span>
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No teams yet.</p>
+</div>
+{% endif %}
+{% endblock %}

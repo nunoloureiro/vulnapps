@@ -10,29 +10,35 @@
         <table>
             <thead>
                 <tr>
-                    <th>Username</th>
+                    <th>Name</th>
                     <th>Email</th>
                     <th>Role</th>
                     <th>Created</th>
-                    <th>Actions</th>
+                    <th>Last Login</th>
+                    <th style="width: 70px;"></th>
                 </tr>
             </thead>
             <tbody>
                 {% for u in users %}
-                <tr>
-                    <td>{{ u.username }}</td>
-                    <td class="text-secondary">{{ u.email }}</td>
-                    <td><span class="badge badge-{{ u.role }}">{{ u.role }}</span></td>
-                    <td>{{ u.created_at }}</td>
+                <tr class="user-row" data-id="{{ u.id }}">
+                    <td class="cell-editable" data-field="name" data-value="{{ u.name }}"><a href="/users/{{ u.id }}">{{ u.name }}</a></td>
+                    <td class="cell-editable text-secondary" data-field="email" data-value="{{ u.email }}">{{ u.email }}</td>
+                    {% if u.role == 'admin' %}
+                        <td><span class="badge badge-admin">admin</span></td>
+                    {% else %}
+                        <td class="cell-editable" data-field="role" data-type="select" data-value="{{ u.role }}"><span class="badge badge-{{ u.role }}">{{ u.role }}</span></td>
+                    {% endif %}
+                    <td class="text-muted text-sm">{{ u.created_at[:10] }}</td>
+                    <td class="text-muted text-sm">{{ u.last_login[:16]|replace('T', ' ') if u.last_login else 'Never' }}</td>
                     <td>
                         {% if u.role != 'admin' %}
-                        <form method="post" action="/admin/users/{{ u.id }}/role" class="flex items-center gap-1">
-                            <select name="role" class="form-select" style="width: auto; min-width: 120px;">
-                                <option value="user" {{ 'selected' if u.role == 'user' else '' }}>User</option>
-                                <option value="contributor" {{ 'selected' if u.role == 'contributor' else '' }}>Contributor</option>
-                            </select>
-                            <button type="submit" class="btn btn-primary btn-sm">Update</button>
-                        </form>
+                        <div class="flex gap-1">
+                            <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete user {{ u.name }}?');" style="display:inline;">
+                                <button type="submit" class="btn-icon btn-icon-danger" title="Delete">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                </button>
+                            </form>
+                        </div>
                         {% endif %}
                     </td>
                 </tr>
@@ -41,4 +47,87 @@
         </table>
     </div>
 </div>
+
+<script>
+document.querySelectorAll('.user-row .cell-editable').forEach(td => {
+    td.addEventListener('click', e => {
+        if (td.querySelector('.inline-input')) return;
+        if (e.target.tagName === 'A') return;
+        startCellEdit(td);
+    });
+});
+
+function startCellEdit(td) {
+    const row = td.closest('tr');
+    const field = td.dataset.field;
+    const origValue = td.dataset.value;
+    const origHtml = td.innerHTML;
+
+    if (td.dataset.type === 'select') {
+        const sel = document.createElement('select');
+        sel.className = 'inline-input';
+        ['viewer','user','contributor'].forEach(r => {
+            const opt = document.createElement('option');
+            opt.value = r; opt.textContent = r;
+            if (r === origValue) opt.selected = true;
+            sel.appendChild(opt);
+        });
+        td.innerHTML = '';
+        td.appendChild(sel);
+        sel.focus();
+        sel.addEventListener('change', () => saveCell(td, row, field, sel.value, origValue, origHtml));
+        sel.addEventListener('blur', () => {
+            setTimeout(() => { if (td.contains(sel)) cancelCell(td, origHtml); }, 150);
+        });
+        sel.addEventListener('keydown', e => {
+            if (e.key === 'Escape') cancelCell(td, origHtml);
+        });
+    } else {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'inline-input';
+        input.value = origValue;
+        td.innerHTML = '';
+        td.appendChild(input);
+        input.focus();
+        input.select();
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); saveCell(td, row, field, input.value, origValue, origHtml); }
+            if (e.key === 'Escape') cancelCell(td, origHtml);
+        });
+        input.addEventListener('blur', () => {
+            setTimeout(() => { if (td.contains(input)) saveCell(td, row, field, input.value, origValue, origHtml); }, 150);
+        });
+    }
+}
+
+function cancelCell(td, origHtml) {
+    td.innerHTML = origHtml;
+}
+
+function saveCell(td, row, field, newValue, origValue, origHtml) {
+    if (newValue === origValue) { cancelCell(td, origHtml); return; }
+
+    const userId = row.dataset.id;
+
+    fetch(`/admin/users/${userId}/inline`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({[field]: newValue})
+    }).then(r => r.json()).then(res => {
+        if (res.ok) {
+            td.dataset.value = newValue;
+            if (field === 'role') {
+                td.innerHTML = `<span class="badge badge-${newValue}">${newValue}</span>`;
+            } else if (field === 'name') {
+                td.innerHTML = `<a href="/users/${userId}">${newValue}</a>`;
+            } else {
+                td.textContent = newValue;
+            }
+        } else {
+            cancelCell(td, origHtml);
+        }
+    }).catch(() => cancelCell(td, origHtml));
+}
+</script>
 {% endblock %}

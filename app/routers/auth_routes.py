@@ -16,26 +16,31 @@ async def login_form(request: Request):
 @router.post("/login")
 async def login(request: Request):
     form = await request.form()
-    username = form.get("username")
+    email = form.get("email")
     password = form.get("password")
 
     db = await get_connection()
     try:
-        cursor = await db.execute("SELECT * FROM users WHERE username = ?", (username,))
+        cursor = await db.execute("SELECT * FROM users WHERE email = ?", (email,))
         user = await cursor.fetchone()
+
+        if not user or not verify_password(password, user["password_hash"]):
+            return templates.TemplateResponse(
+                "auth/login.html",
+                {"request": request, "user": request.state.user, "error": "Invalid credentials"},
+                status_code=400,
+            )
+
+        await db.execute(
+            "UPDATE users SET last_login = datetime('now') WHERE id = ?", (user["id"],)
+        )
+        await db.commit()
     finally:
         await db.close()
 
-    if not user or not verify_password(password, user["password_hash"]):
-        return templates.TemplateResponse(
-            "auth/login.html",
-            {"request": request, "user": request.state.user, "error": "Invalid credentials"},
-            status_code=400,
-        )
-
-    token = create_token(user["id"], user["username"], user["role"])
+    token = create_token(user["id"], user["name"], user["role"])
     response = RedirectResponse(url="/", status_code=303)
-    response.set_cookie("token", token, httponly=True)
+    response.set_cookie("token", token, httponly=True, samesite="lax")
     return response
 
 
@@ -47,7 +52,7 @@ async def register_form(request: Request):
 @router.post("/register")
 async def register(request: Request):
     form = await request.form()
-    username = form.get("username")
+    name = form.get("name")
     email = form.get("email")
     password = form.get("password")
 
@@ -61,11 +66,11 @@ async def register(request: Request):
         role = "admin" if count == 0 else "user"
 
         await db.execute(
-            "INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)",
-            (username, email, hashed, role),
+            "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)",
+            (name, email, hashed, role),
         )
         await db.commit()
-        cursor = await db.execute("SELECT * FROM users WHERE username = ?", (username,))
+        cursor = await db.execute("SELECT * FROM users WHERE email = ?", (email,))
         user = await cursor.fetchone()
 
         # Seed TaintedPort app when first user (admin) registers
@@ -74,9 +79,9 @@ async def register(request: Request):
     finally:
         await db.close()
 
-    token = create_token(user["id"], user["username"], user["role"])
+    token = create_token(user["id"], user["name"], user["role"])
     response = RedirectResponse(url="/", status_code=303)
-    response.set_cookie("token", token, httponly=True)
+    response.set_cookie("token", token, httponly=True, samesite="lax")
     return response
 
 

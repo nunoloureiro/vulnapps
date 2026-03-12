@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}{{ team.name }} - Vulnapps{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">{{ team.name }}</h1>
+    <div class="flex gap-1">
+        {% if is_team_admin %}
+            <form method="post" action="/teams/{{ team.id }}/delete" onsubmit="return confirm('Delete this team?');" style="display:inline;">
+                <button type="submit" class="btn btn-danger">Delete Team</button>
+            </form>
+        {% endif %}
+        <a href="/teams" class="btn btn-outline">Back to Teams</a>
+    </div>
+</div>
+
+<div class="card mb-2">
+    <div class="detail-grid">
+        <span class="detail-label">Created</span>
+        <span class="detail-value">{{ team.created_at[:10] }}</span>
+
+        <span class="detail-label">Members</span>
+        <span class="detail-value">{{ members|length }}</span>
+    </div>
+</div>
+
+{% if is_team_admin %}
+<div class="card mb-2">
+    <h3 class="card-title mb-2">Add Member</h3>
+    <form method="post" action="/teams/{{ team.id }}/members" class="flex gap-1 items-end">
+        <div class="form-group" style="flex:1; margin-bottom:0;">
+            <label class="form-label" for="email">Email</label>
+            <input type="email" id="email" name="email" class="form-input" placeholder="user@example.com" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Add</button>
+    </form>
+</div>
+{% endif %}
+
+<h2 class="page-title mt-3 mb-2">Members</h2>
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    {% if is_team_admin %}
+                        <th style="width: 150px;">Actions</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in members %}
+                <tr>
+                    <td>{{ m.name }}</td>
+                    <td class="text-secondary">{{ m.email }}</td>
+                    <td><span class="badge badge-{{ m.team_role }}">{{ m.team_role }}</span></td>
+                    {% if is_team_admin %}
+                    <td>
+                        <div class="flex gap-1 items-center">
+                            <form method="post" action="/teams/{{ team.id }}/members/{{ m.id }}/role" style="display:inline;">
+                                {% if m.team_role == 'member' %}
+                                    <input type="hidden" name="role" value="admin">
+                                    <button type="submit" class="btn btn-outline btn-sm" title="Promote to admin">Promote</button>
+                                {% else %}
+                                    <input type="hidden" name="role" value="member">
+                                    <button type="submit" class="btn btn-outline btn-sm" title="Demote to member">Demote</button>
+                                {% endif %}
+                            </form>
+                            <form method="post" action="/teams/{{ team.id }}/members/{{ m.id }}/remove" onsubmit="return confirm('Remove {{ m.name }} from team?');" style="display:inline;">
+                                <button type="submit" class="btn-icon btn-icon-danger" title="Remove">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
