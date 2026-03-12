@@ -2,6 +2,9 @@
 -- Account roles: user, admin (viewer/contributor merged into user)
 -- Team roles: admin, contributor, view (member becomes contributor)
 
+-- Disable FK checks during table recreation
+PRAGMA foreign_keys=OFF;
+
 -- Step 1: Collapse account roles
 UPDATE users SET role = 'user' WHERE role IN ('viewer', 'contributor');
 
@@ -45,3 +48,6 @@ ALTER TABLE team_members_new RENAME TO team_members;
 -- Step 5: Recreate indexes
 CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id);
 CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id);
+
+-- Re-enable FK checks
+PRAGMA foreign_keys=ON;
