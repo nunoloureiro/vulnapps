@@ -39,7 +39,7 @@ def _can_edit_app(user, app) -> bool:
 
 
 @router.get("", response_class=HTMLResponse)
-async def list_apps(request: Request, q: str = "", visibility: str = "", team_id: int = None):
+async def list_apps(request: Request, q: str = "", filter: str = ""):
     user = request.state.user
     db = await get_connection()
     try:
@@ -47,13 +47,19 @@ async def list_apps(request: Request, q: str = "", visibility: str = "", team_id
         extra_filters = ""
         extra_params = []
 
-        if visibility in ("public", "team", "private"):
-            extra_filters += " AND apps.visibility = ?"
-            extra_params.append(visibility)
-
-        if team_id and user:
-            extra_filters += " AND apps.team_id = ?"
-            extra_params.append(team_id)
+        if filter == "public":
+            extra_filters += " AND apps.visibility = 'public'"
+        elif filter == "private":
+            extra_filters += " AND apps.visibility = 'private'"
+        elif filter == "teams":
+            extra_filters += " AND apps.visibility = 'team'"
+        elif filter and filter.startswith("team:") and user:
+            try:
+                tid = int(filter[5:])
+                extra_filters += " AND apps.team_id = ?"
+                extra_params.append(tid)
+            except ValueError:
+                pass
 
         if q:
             extra_filters += " AND apps.name LIKE ?"
@@ -96,8 +102,7 @@ async def list_apps(request: Request, q: str = "", visibility: str = "", team_id
             "user": request.state.user,
             "apps": apps_with_tech,
             "q": q,
-            "visibility": visibility,
-            "team_id": team_id,
+            "filter": filter,
             "user_teams": user_teams,
         }
     )

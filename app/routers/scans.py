@@ -51,7 +51,7 @@ async def example_csv():
 
 
 @router.get("/scans", response_class=HTMLResponse)
-async def list_scans(request: Request, app_id: int = None, visibility: str = "", team_id: int = None):
+async def list_scans(request: Request, app_id: int = None, filter: str = ""):
     user = request.state.user
 
     db = await get_connection()
@@ -66,13 +66,19 @@ async def list_scans(request: Request, app_id: int = None, visibility: str = "",
             cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))
             app = await cursor.fetchone()
 
-        if visibility in ("public", "team", "private"):
-            extra_filters += " AND apps.visibility = ?"
-            extra_params.append(visibility)
-
-        if team_id and user:
-            extra_filters += " AND apps.team_id = ?"
-            extra_params.append(team_id)
+        if filter == "public":
+            extra_filters += " AND apps.visibility = 'public'"
+        elif filter == "private":
+            extra_filters += " AND apps.visibility = 'private'"
+        elif filter == "teams":
+            extra_filters += " AND apps.visibility = 'team'"
+        elif filter and filter.startswith("team:") and user:
+            try:
+                tid = int(filter[5:])
+                extra_filters += " AND apps.team_id = ?"
+                extra_params.append(tid)
+            except ValueError:
+                pass
 
         vis_clause, vis_params = scan_visibility_filter(user)
         cursor = await db.execute(
@@ -108,8 +114,7 @@ async def list_scans(request: Request, app_id: int = None, visibility: str = "",
             "user": request.state.user,
             "scans": scans,
             "app": app,
-            "visibility": visibility,
-            "team_id": team_id,
+            "filter": filter,
             "user_teams": user_teams,
         }
     )

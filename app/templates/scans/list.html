@@ -8,20 +8,17 @@
             <a href="/apps/{{ app.id }}" class="btn btn-outline">Back to App</a>
         {% elif user %}
             <form method="get" action="/scans" class="flex gap-1 items-center">
-                <select name="visibility" class="form-select" style="width: auto; padding: 0.35rem 0.5rem; font-size: 0.85rem;" onchange="this.form.submit()">
-                    <option value="">All visibility</option>
-                    <option value="public" {{ 'selected' if visibility == 'public' else '' }}>Public</option>
-                    <option value="team" {{ 'selected' if visibility == 'team' else '' }}>Team</option>
-                    <option value="private" {{ 'selected' if visibility == 'private' else '' }}>Private</option>
-                </select>
-                {% if user_teams %}
-                <select name="team_id" class="form-select" style="width: auto; padding: 0.35rem 0.5rem; font-size: 0.85rem;" onchange="this.form.submit()">
-                    <option value="">All teams</option>
+                <select name="filter" class="form-select" style="width: auto; padding: 0.35rem 0.5rem; font-size: 0.85rem;" onchange="this.form.submit()">
+                    <option value="">All</option>
+                    <option value="public" {{ 'selected' if filter == 'public' else '' }}>Public</option>
+                    <option value="private" {{ 'selected' if filter == 'private' else '' }}>Private</option>
+                    {% if user_teams %}
+                    <option value="teams" {{ 'selected' if filter == 'teams' else '' }}>My Teams</option>
                     {% for t in user_teams %}
-                        <option value="{{ t.id }}" {{ 'selected' if team_id == t.id else '' }}>{{ t.name }}</option>
+                        <option value="team:{{ t.id }}" {{ 'selected' if filter == 'team:' ~ t.id|string else '' }}>{{ t.name }}</option>
                     {% endfor %}
+                    {% endif %}
                 </select>
-                {% endif %}
             </form>
         {% endif %}
     </div>
