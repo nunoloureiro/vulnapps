@@ -31,7 +31,7 @@ def scan_visibility_filter(user: Optional[dict]) -> Tuple[str, List]:
         return "1=1", []
 
     return (
-        "(scans.is_public=1"
+        "((scans.is_public=1 AND apps.visibility = 'public')"
         " OR scans.submitted_by=?"
         " OR (apps.visibility = 'team' AND apps.team_id IN"
         "     (SELECT team_id FROM team_members WHERE user_id = ?)))",
