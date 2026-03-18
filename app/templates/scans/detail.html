@@ -35,26 +35,32 @@
     <div class="metric-card">
         <div class="metric-value text-success" id="metric-tp">{{ metrics.tp }}</div>
         <div class="metric-label">True Positives</div>
+        <span class="info-tip"><span class="info-icon">i</span><span class="info-text">Known vulnerabilities detected by the scanner (unique matched vulns)</span></span>
     </div>
     <div class="metric-card">
         <div class="metric-value text-error" id="metric-fp">{{ metrics.fp }}</div>
         <div class="metric-label">False Positives</div>
+        <span class="info-tip"><span class="info-icon">i</span><span class="info-text">Findings that don't correspond to any known vulnerability</span></span>
     </div>
     <div class="metric-card">
         <div class="metric-value text-error" id="metric-fn">{{ metrics.fn }}</div>
         <div class="metric-label">False Negatives</div>
+        <span class="info-tip"><span class="info-icon">i</span><span class="info-text">Known vulnerabilities the scanner failed to detect</span></span>
     </div>
     <div class="metric-card">
         <div class="metric-value text-accent" id="metric-precision">{{ '%.1f' % (metrics.precision * 100) if metrics.precision is not none else 'N/A' }}{% if metrics.precision is not none %}%{% endif %}</div>
         <div class="metric-label">Precision</div>
+        <span class="info-tip"><span class="info-icon">i</span><span class="info-text">TP / (TP + FP) — How many of the scanner's findings are real vulnerabilities</span></span>
     </div>
     <div class="metric-card">
         <div class="metric-value text-accent" id="metric-recall">{{ '%.1f' % (metrics.recall * 100) if metrics.recall is not none else 'N/A' }}{% if metrics.recall is not none %}%{% endif %}</div>
         <div class="metric-label">Recall</div>
+        <span class="info-tip"><span class="info-icon">i</span><span class="info-text">TP / (TP + FN) — How many of the known vulnerabilities were found by the scanner</span></span>
     </div>
     <div class="metric-card">
-        <div class="metric-value text-accent" id="metric-f1">{{ '%.1f' % (metrics.f1 * 100) if metrics.f1 is not none else 'N/A' }}{% if metrics.f1 is not none %}%{% endif %}</div>
+        <div class="metric-value text-accent" id="metric-f1">{{ '%.1f' % (metrics.f1 * 100) if metrics.f1 is not none else 'N/A' }}{% if metrics.precision is not none %}%{% endif %}</div>
         <div class="metric-label">F1 Score</div>
+        <span class="info-tip"><span class="info-icon">i</span><span class="info-text">Harmonic mean of Precision and Recall — Overall scanner accuracy</span></span>
     </div>
 </div>
 
@@ -102,7 +108,7 @@
                             {% for v in known_vulns if v.id == finding.matched_vuln_id %}
                                 <a href="/apps/{{ app.id }}/vulns/{{ v.id }}" class="text-sm">{{ v.vuln_id }} - {{ v.title }}</a>
                                 {% if vuln_finding_counts.get(finding.matched_vuln_id, 0) > 1 %}
-                                    <span class="badge badge-info text-xs">{{ vuln_finding_counts[finding.matched_vuln_id] }} findings</span>
+                                    <span class="badge badge-info text-xs" title="{{ vuln_finding_details.get(finding.matched_vuln_id, [])|join('&#10;') }}">{{ vuln_finding_counts[finding.matched_vuln_id] }} findings</span>
                                 {% endif %}
                             {% endfor %}
                         {% elif finding.is_false_positive == 1 %}
@@ -113,11 +119,13 @@
                     </td>
                     {% if can_edit_scan %}
                     <td class="finding-action">
-                        <div class="flex gap-1 items-center">
+                        <div class="finding-actions">
                             {% if not finding.matched_vuln_id and finding.is_false_positive != 1 %}
                                 <button class="btn btn-outline btn-sm mark-fp-btn" data-finding-id="{{ finding.id }}" title="Mark as False Positive">FP</button>
                             {% endif %}
+                            {% if not finding.matched_vuln_id %}
                             <a href="/apps/{{ app.id }}/vulns/new-from-fp?vuln_type={{ finding.vuln_type|urlencode }}&http_method={{ (finding.http_method or '')|urlencode }}&url={{ (finding.url or '')|urlencode }}&parameter={{ (finding.parameter or '')|urlencode }}&filename={{ (finding.filename or '')|urlencode }}" class="btn btn-outline btn-sm" title="Add as known vulnerability">+ Vuln</a>
+                            {% endif %}
                         </div>
                     </td>
                     {% endif %}
@@ -205,7 +213,7 @@
                 row.querySelector('.finding-match-cell').innerHTML = '<span class="text-muted text-sm">Marked FP</span>';
                 var actionTd = row.querySelector('.finding-action');
                 if (actionTd) {
-                    actionTd.innerHTML = '<div class="flex gap-1 items-center"><a href="/apps/{{ app.id }}/vulns/new-from-fp?vuln_type=' + encodeURIComponent(row.children[0].textContent) + '&http_method=' + encodeURIComponent(row.children[1].textContent.trim()) + '&url=' + encodeURIComponent(row.children[2].textContent.trim()) + '&parameter=' + encodeURIComponent(row.children[3].textContent.trim()) + '" class="btn btn-outline btn-sm" title="Add as known vulnerability">+ Vuln</a></div>';
+                    actionTd.innerHTML = '<div class="finding-actions"><a href="/apps/{{ app.id }}/vulns/new-from-fp?vuln_type=' + encodeURIComponent(row.children[0].textContent) + '&http_method=' + encodeURIComponent(row.children[1].textContent.trim()) + '&url=' + encodeURIComponent(row.children[2].textContent.trim()) + '&parameter=' + encodeURIComponent(row.children[3].textContent.trim()) + '" class="btn btn-outline btn-sm" title="Add as known vulnerability">+ Vuln</a></div>';
                 }
                 updateMetrics();
             }
@@ -261,13 +269,13 @@
                     td.innerHTML = '<a href="/apps/{{ app.id }}/vulns/' + vulnId + '" class="text-sm">' + (vuln ? vuln.label : 'Matched') + '</a>';
                     statusTd.innerHTML = '<span class="badge badge-low">TP</span>';
                     if (actionTd) {
-                        actionTd.innerHTML = '<div class="flex gap-1 items-center"><a href="/apps/{{ app.id }}/vulns/new-from-fp?vuln_type=' + encodeURIComponent(row.children[0].textContent) + '&http_method=' + encodeURIComponent(row.children[1].textContent.trim()) + '&url=' + encodeURIComponent(row.children[2].textContent.trim()) + '&parameter=' + encodeURIComponent(row.children[3].textContent.trim()) + '" class="btn btn-outline btn-sm" title="Add as known vulnerability">+ Vuln</a></div>';
+                        actionTd.innerHTML = '';
                     }
                 } else {
                     td.innerHTML = '<span class="text-muted text-sm">Unmapped</span>';
                     statusTd.innerHTML = '<span class="badge badge-pending">Pending</span>';
                     if (actionTd) {
-                        actionTd.innerHTML = '<div class="flex gap-1 items-center"><button class="btn btn-outline btn-sm mark-fp-btn" data-finding-id="' + findingId + '" title="Mark as False Positive">FP</button><a href="/apps/{{ app.id }}/vulns/new-from-fp?vuln_type=' + encodeURIComponent(row.children[0].textContent) + '" class="btn btn-outline btn-sm" title="Add as known vulnerability">+ Vuln</a></div>';
+                        actionTd.innerHTML = '<div class="finding-actions"><button class="btn btn-outline btn-sm mark-fp-btn" data-finding-id="' + findingId + '" title="Mark as False Positive">FP</button><a href="/apps/{{ app.id }}/vulns/new-from-fp?vuln_type=' + encodeURIComponent(row.children[0].textContent) + '" class="btn btn-outline btn-sm" title="Add as known vulnerability">+ Vuln</a></div>';
                         actionTd.querySelector('.mark-fp-btn').addEventListener('click', function(e) {
                             e.preventDefault();
                             markAsFP(findingId, actionTd.querySelector('.mark-fp-btn'));

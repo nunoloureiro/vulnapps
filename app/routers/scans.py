@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import csv
 import io
 import json
@@ -506,6 +508,17 @@ async def scan_detail(request: Request, scan_id: int):
         # Count findings per matched vuln for duplicate indicator
         vuln_finding_counts = Counter(f["matched_vuln_id"] for f in findings if f["matched_vuln_id"] is not None)
 
+        # Build list of finding descriptions per matched vuln (for tooltips)
+        vuln_finding_details: dict[int, list[str]] = {}
+        for f in findings:
+            vid = f["matched_vuln_id"]
+            if vid is not None:
+                label = f["vuln_type"] or ""
+                loc = f["url"] or f["filename"] or ""
+                if loc:
+                    label = f"{label}: {loc}"
+                vuln_finding_details.setdefault(vid, []).append(label)
+
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0
         f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
@@ -546,6 +559,7 @@ async def scan_detail(request: Request, scan_id: int):
             "missed_vulns": missed_vulns,
             "known_vulns": all_vulns,
             "vuln_finding_counts": dict(vuln_finding_counts),
+            "vuln_finding_details": vuln_finding_details,
             "can_edit_scan": can_edit_scan,
         },
     )
