@@ -108,7 +108,7 @@
                             {% for v in known_vulns if v.id == finding.matched_vuln_id %}
                                 <a href="/apps/{{ app.id }}/vulns/{{ v.id }}" class="text-sm">{{ v.vuln_id }} - {{ v.title }}</a>
                                 {% if vuln_finding_counts.get(finding.matched_vuln_id, 0) > 1 %}
-                                    <span class="info-tip"><span class="badge badge-info text-xs" style="cursor: help">{{ vuln_finding_counts[finding.matched_vuln_id] }} findings</span><span class="info-text info-text-left">{% for d in vuln_finding_details.get(finding.matched_vuln_id, []) %}{{ d }}{{ "<br>" if not loop.last }}{% endfor %}</span></span>
+                                    <span class="info-tip"><span class="badge badge-info text-xs" style="cursor: help">{{ vuln_finding_counts[finding.matched_vuln_id] }} findings</span><span class="info-text info-text-below info-text-left">{% for d in vuln_finding_details.get(finding.matched_vuln_id, []) %}<span class="info-line">{{ d }}</span>{% endfor %}</span></span>
                                 {% endif %}
                             {% endfor %}
                         {% elif finding.is_false_positive == 1 %}
