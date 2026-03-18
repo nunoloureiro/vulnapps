@@ -305,6 +305,7 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
     transition: opacity 0.15s;
 }
 .info-tip:hover .info-text { visibility: visible; opacity: 1; }
+.info-text-left { left: 0; transform: none; width: 280px; text-align: left; }
 .text-success { color: var(--success); }
 .text-error { color: var(--error); }
 .text-warning { color: var(--warning); }
