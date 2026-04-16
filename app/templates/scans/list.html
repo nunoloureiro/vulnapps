@@ -9,53 +9,57 @@
 </div>
 
 {% if user %}
-<div class="card mb-2" style="padding: 0.75rem 1rem;">
-    <form method="get" action="/scans" class="filter-bar">
-        {% if app %}
-            <input type="hidden" name="app_id" value="{{ app.id }}">
+<form method="get" action="/scans" class="filter-bar mb-2">
+    {% if app %}
+        <input type="hidden" name="app_id" value="{{ app.id }}">
+    {% endif %}
+
+    <select name="latest" class="form-select" onchange="this.form.submit()">
+        <option value="">All scans</option>
+        <option value="1" {{ 'selected' if latest }}>Latest per scanner</option>
+    </select>
+
+    <select name="scanner" class="form-select" onchange="this.form.submit()">
+        <option value="">All scanners</option>
+        {% for s in scanners %}
+            <option value="{{ s }}" {{ 'selected' if scanner == s }}>{{ s }}</option>
+        {% endfor %}
+    </select>
+
+    <select name="authenticated" class="form-select" onchange="this.form.submit()">
+        <option value="">All auth</option>
+        <option value="1" {{ 'selected' if authenticated == '1' }}>Authenticated</option>
+        <option value="0" {{ 'selected' if authenticated == '0' }}>Unauthenticated</option>
+    </select>
+
+    {% if not app %}
+    <select name="app_id" class="form-select" onchange="this.form.submit()">
+        <option value="">All apps</option>
+        {% for a in apps_list %}
+            <option value="{{ a.id }}" {{ 'selected' if app_id == a.id }}>{{ a.name }}{% if a.version %} v{{ a.version }}{% endif %}</option>
+        {% endfor %}
+    </select>
+
+    <select name="filter" class="form-select" onchange="this.form.submit()">
+        <option value="">All visibility</option>
+        <option value="public" {{ 'selected' if filter == 'public' }}>Public</option>
+        <option value="private" {{ 'selected' if filter == 'private' }}>Private</option>
+        {% if user_teams %}
+        <option value="teams" {{ 'selected' if filter == 'teams' }}>My Teams</option>
+        {% for t in user_teams %}
+            <option value="team:{{ t.id }}" {{ 'selected' if filter == 'team:' ~ t.id|string }}>{{ t.name }}</option>
+        {% endfor %}
         {% endif %}
+    </select>
+    {% endif %}
 
-        <select name="latest" class="form-select" onchange="this.form.submit()">
-            <option value="">All scans</option>
-            <option value="1" {{ 'selected' if latest }}>Latest per scanner</option>
-        </select>
+    <input type="text" name="q" value="{{ q }}" placeholder="Search..."
+           class="form-input" style="width: 140px;">
 
-        <select name="scanner" class="form-select" onchange="this.form.submit()">
-            <option value="">All scanners</option>
-            {% for s in scanners %}
-                <option value="{{ s }}" {{ 'selected' if scanner == s }}>{{ s }}</option>
-            {% endfor %}
-        </select>
-
-        {% if not app %}
-        <select name="app_id" class="form-select" onchange="this.form.submit()">
-            <option value="">All apps</option>
-            {% for a in apps_list %}
-                <option value="{{ a.id }}" {{ 'selected' if app_id == a.id }}>{{ a.name }}{% if a.version %} v{{ a.version }}{% endif %}</option>
-            {% endfor %}
-        </select>
-
-        <select name="filter" class="form-select" onchange="this.form.submit()">
-            <option value="">All visibility</option>
-            <option value="public" {{ 'selected' if filter == 'public' }}>Public</option>
-            <option value="private" {{ 'selected' if filter == 'private' }}>Private</option>
-            {% if user_teams %}
-            <option value="teams" {{ 'selected' if filter == 'teams' }}>My Teams</option>
-            {% for t in user_teams %}
-                <option value="team:{{ t.id }}" {{ 'selected' if filter == 'team:' ~ t.id|string }}>{{ t.name }}</option>
-            {% endfor %}
-            {% endif %}
-        </select>
-        {% endif %}
-
-        <input type="text" name="q" value="{{ q }}" placeholder="Search..."
-               class="form-input" style="width: 160px;">
-
-        {% if latest or scanner or filter or q %}
-            <a href="/scans{% if app %}?app_id={{ app.id }}{% endif %}" class="btn btn-outline btn-sm">Clear</a>
-        {% endif %}
-    </form>
-</div>
+    {% if latest or scanner or authenticated or filter or q %}
+        <a href="/scans{% if app %}?app_id={{ app.id }}{% endif %}" class="btn btn-outline btn-sm" style="height: 30px; padding: 0 0.5rem; font-size: 0.8rem; line-height: 28px;">Clear</a>
+    {% endif %}
+</form>
 {% endif %}
 
 {% if scans %}
@@ -111,7 +115,7 @@
 {% else %}
 <div class="empty-state">
     <h3>No scans found</h3>
-    <p>{% if latest or scanner or app_id or filter or q %}No scans match the current filters.{% else %}No scan results have been submitted yet.{% endif %}</p>
+    <p>{% if latest or scanner or authenticated or app_id or filter or q %}No scans match the current filters.{% else %}No scan results have been submitted yet.{% endif %}</p>
 </div>
 {% endif %}
 {% endblock %}

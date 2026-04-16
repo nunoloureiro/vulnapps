@@ -54,7 +54,8 @@ async def example_csv():
 
 @router.get("/scans", response_class=HTMLResponse)
 async def list_scans(request: Request, app_id: str = "", filter: str = "",
-                     scanner: str = "", latest: str = "", q: str = ""):
+                     scanner: str = "", latest: str = "", q: str = "",
+                     authenticated: str = ""):
     user = request.state.user
     # Convert app_id from string to int (form submits empty string when unselected)
     app_id = int(app_id) if app_id and app_id.isdigit() else None
@@ -88,6 +89,11 @@ async def list_scans(request: Request, app_id: str = "", filter: str = "",
         if scanner:
             extra_filters += " AND scans.scanner_name = ?"
             extra_params.append(scanner)
+
+        if authenticated == "1":
+            extra_filters += " AND scans.authenticated = 1"
+        elif authenticated == "0":
+            extra_filters += " AND scans.authenticated = 0"
 
         if q:
             extra_filters += " AND (apps.name LIKE ? OR scans.scanner_name LIKE ? OR users.name LIKE ?)"
@@ -136,8 +142,8 @@ async def list_scans(request: Request, app_id: str = "", filter: str = "",
         # Get distinct apps for filter dropdown
         cursor = await db.execute(
             f"""SELECT DISTINCT apps.id, apps.name, apps.version
-               FROM scans LEFT JOIN apps ON scans.app_id=apps.id
-               WHERE {vis_clause}
+               FROM scans JOIN apps ON scans.app_id=apps.id
+               WHERE apps.name IS NOT NULL AND {vis_clause}
                ORDER BY apps.name, apps.version""",
             vis_params,
         )
@@ -170,6 +176,7 @@ async def list_scans(request: Request, app_id: str = "", filter: str = "",
             "scanner": scanner,
             "q": q,
             "app_id": app_id,
+            "authenticated": authenticated,
         }
     )
 
