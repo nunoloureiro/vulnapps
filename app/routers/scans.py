@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import datetime
 
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import RedirectResponse, HTMLResponse, Response
+from fastapi.responses import RedirectResponse, HTMLResponse, Response, JSONResponse
 from app.templating import templates
 from app.database import get_connection
 from app.dependencies import require_user, require_scan_write, get_team_role
@@ -55,7 +55,7 @@ async def example_csv():
 @router.get("/scans", response_class=HTMLResponse)
 async def list_scans(request: Request, app_id: str = "", filter: str = "",
                      scanner: str = "", latest: str = "", q: str = "",
-                     authenticated: str = ""):
+                     authenticated: str = "", label: str = ""):
     user = request.state.user
     # Convert app_id from string to int (form submits empty string when unselected)
     app_id = int(app_id) if app_id and app_id.isdigit() else None
@@ -95,6 +95,10 @@ async def list_scans(request: Request, app_id: str = "", filter: str = "",
         elif authenticated == "0":
             extra_filters += " AND scans.authenticated = 0"
 
+        if label:
+            extra_filters += " AND scans.id IN (SELECT scan_id FROM scan_labels JOIN labels ON scan_labels.label_id = labels.id WHERE labels.name = ?)"
+            extra_params.append(label)
+
         if q:
             extra_filters += " AND (apps.name LIKE ? OR scans.scanner_name LIKE ? OR users.name LIKE ?)"
             q_like = f"%{q}%"
@@ -126,6 +130,27 @@ async def list_scans(request: Request, app_id: str = "", filter: str = "",
 
         cursor = await db.execute(sql, vis_params + extra_params)
         scans = await cursor.fetchall()
+
+        # Batch-fetch labels for all returned scans
+        scan_labels_map = {}
+        scan_ids = [s["id"] for s in scans]
+        if scan_ids:
+            placeholders = ",".join("?" * len(scan_ids))
+            cursor = await db.execute(
+                f"""SELECT sl.scan_id, l.id, l.name, l.color
+                    FROM scan_labels sl JOIN labels l ON sl.label_id = l.id
+                    WHERE sl.scan_id IN ({placeholders})
+                    ORDER BY l.name""",
+                scan_ids,
+            )
+            for row in await cursor.fetchall():
+                scan_labels_map.setdefault(row["scan_id"], []).append(
+                    {"id": row["id"], "name": row["name"], "color": row["color"]}
+                )
+
+        # Get all label names for filter dropdown
+        cursor = await db.execute("SELECT DISTINCT name FROM labels ORDER BY name")
+        all_labels = [row["name"] for row in await cursor.fetchall()]
 
         # Get distinct scanner names for filter dropdown (scoped to app if filtered)
         scanner_filter = " AND scans.app_id = ?" if app_id else ""
@@ -177,6 +202,9 @@ async def list_scans(request: Request, app_id: str = "", filter: str = "",
             "q": q,
             "app_id": app_id,
             "authenticated": authenticated,
+            "label": label,
+            "all_labels": all_labels,
+            "scan_labels_map": scan_labels_map,
         }
     )
 
@@ -307,6 +335,21 @@ async def submit_scan(request: Request, app_id: int):
                  f.get("parameter", ""), f.get("filename", ""), matched_vuln_id, is_false_positive),
             )
 
+        # Process labels (comma-separated)
+        labels_str = form.get("labels", "")
+        if labels_str:
+            for label_name in [l.strip() for l in labels_str.split(",") if l.strip()]:
+                await db.execute(
+                    "INSERT OR IGNORE INTO labels (name, color) VALUES (?, ?)",
+                    (label_name, "#f97316"),
+                )
+                cursor = await db.execute("SELECT id FROM labels WHERE name = ?", (label_name,))
+                label_row = await cursor.fetchone()
+                await db.execute(
+                    "INSERT OR IGNORE INTO scan_labels (scan_id, label_id) VALUES (?, ?)",
+                    (scan_id, label_row["id"]),
+                )
+
         await db.commit()
     finally:
         await db.close()
@@ -328,6 +371,7 @@ async def delete_scan(request: Request, scan_id: int):
 
         await require_scan_write(request, db, scan, app)
 
+        await db.execute("DELETE FROM scan_labels WHERE scan_id = ?", (scan_id,))
         await db.execute("DELETE FROM scan_findings WHERE scan_id = ?", (scan_id,))
         await db.execute("DELETE FROM scans WHERE id = ?", (scan_id,))
         await db.commit()
@@ -600,6 +644,19 @@ async def scan_detail(request: Request, scan_id: int):
                 team_role = await get_team_role(db, user["sub"], app["team_id"])
                 if team_role in ("admin", "contributor"):
                     can_edit_scan = True
+
+        # Fetch labels for this scan
+        cursor = await db.execute(
+            """SELECT l.id, l.name, l.color FROM labels l
+               JOIN scan_labels sl ON sl.label_id = l.id
+               WHERE sl.scan_id = ? ORDER BY l.name""",
+            (scan_id,),
+        )
+        scan_label_list = [dict(row) for row in await cursor.fetchall()]
+
+        # All labels for autocomplete
+        cursor = await db.execute("SELECT id, name, color FROM labels ORDER BY name")
+        all_labels = [dict(row) for row in await cursor.fetchall()]
     finally:
         await db.close()
 
@@ -616,6 +673,8 @@ async def scan_detail(request: Request, scan_id: int):
             "vuln_finding_counts": dict(vuln_finding_counts),
             "vuln_finding_details": vuln_finding_details,
             "can_edit_scan": can_edit_scan,
+            "scan_labels": scan_label_list,
+            "all_labels_json": json.dumps(all_labels),
         },
     )
 
@@ -719,6 +778,83 @@ async def mark_finding_fp(request: Request, scan_id: int, finding_id: int):
         await db.execute(
             "UPDATE scan_findings SET matched_vuln_id = NULL, is_false_positive = 1 WHERE id = ? AND scan_id = ?",
             (finding_id, scan_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    return {"ok": True}
+
+
+# ── Label management ─────────────────────────────────────────
+
+
+@router.get("/labels/autocomplete")
+async def labels_autocomplete():
+    db = await get_connection()
+    try:
+        cursor = await db.execute("SELECT id, name, color FROM labels ORDER BY name")
+        labels = [dict(row) for row in await cursor.fetchall()]
+    finally:
+        await db.close()
+    return {"labels": labels}
+
+
+@router.post("/scans/{scan_id}/labels")
+async def add_label_to_scan(request: Request, scan_id: int):
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    color = body.get("color", "#f97316").strip()
+    if not name:
+        return JSONResponse({"detail": "Label name required"}, status_code=400)
+
+    db = await get_connection()
+    try:
+        cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
+        scan = await cursor.fetchone()
+        if not scan:
+            raise HTTPException(status_code=404, detail="Scan not found")
+
+        cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (scan["app_id"],))
+        app = await cursor.fetchone()
+        await require_scan_write(request, db, scan, app)
+
+        # Upsert label
+        await db.execute(
+            "INSERT OR IGNORE INTO labels (name, color) VALUES (?, ?)",
+            (name, color),
+        )
+        cursor = await db.execute("SELECT id, name, color FROM labels WHERE name = ?", (name,))
+        label = dict(await cursor.fetchone())
+
+        # Link to scan
+        await db.execute(
+            "INSERT OR IGNORE INTO scan_labels (scan_id, label_id) VALUES (?, ?)",
+            (scan_id, label["id"]),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    return {"ok": True, "label": label}
+
+
+@router.delete("/scans/{scan_id}/labels/{label_id}")
+async def remove_label_from_scan(request: Request, scan_id: int, label_id: int):
+    db = await get_connection()
+    try:
+        cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
+        scan = await cursor.fetchone()
+        if not scan:
+            raise HTTPException(status_code=404, detail="Scan not found")
+
+        cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (scan["app_id"],))
+        app = await cursor.fetchone()
+        await require_scan_write(request, db, scan, app)
+
+        await db.execute(
+            "DELETE FROM scan_labels WHERE scan_id = ? AND label_id = ?",
+            (scan_id, label_id),
         )
         await db.commit()
     finally:

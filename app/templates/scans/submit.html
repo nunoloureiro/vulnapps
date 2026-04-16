@@ -41,6 +41,12 @@
             <textarea id="notes" name="notes" class="form-textarea"></textarea>
         </div>
 
+        <div class="form-group">
+            <label class="form-label" for="labels">Labels <span class="text-muted text-xs">(optional)</span></label>
+            <input type="text" id="labels" name="labels" class="form-input" placeholder="e.g. baseline, quarterly, regression">
+            <p class="text-sm text-muted mt-1">Comma-separated. New labels are created automatically.</p>
+        </div>
+
         <h3 class="card-title mt-3 mb-2">Upload Findings File</h3>
         <div class="form-group">
             <input type="file" name="scan_file" accept=".json,.csv" class="form-input">

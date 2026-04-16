@@ -23,6 +23,26 @@
         <span class="detail-label">Submitted By</span>
         <span class="detail-value text-secondary">{{ scan.submitter_name or scan.submitted_by }}</span>
 
+        <span class="detail-label">Labels</span>
+        <span class="detail-value">
+            <div class="label-manager" id="label-manager">
+                <div class="scan-labels-cell" id="label-list">
+                    {% for lbl in scan_labels %}
+                        <span class="label-badge" data-label-id="{{ lbl.id }}" style="background: {{ lbl.color }}1a; color: {{ lbl.color }}; border: 1px solid {{ lbl.color }}40;">
+                            {{ lbl.name }}
+                            {% if can_edit_scan %}
+                                <button class="label-remove" data-label-id="{{ lbl.id }}">&times;</button>
+                            {% endif %}
+                        </span>
+                    {% endfor %}
+                    {% if can_edit_scan %}
+                        <button class="btn btn-outline btn-sm" id="add-label-btn" style="height: 22px; padding: 0 0.4rem; font-size: 0.7rem; line-height: 20px;">+ Label</button>
+                    {% endif %}
+                </div>
+                <div id="label-dropdown" style="display:none;"></div>
+            </div>
+        </span>
+
         {% if scan.notes %}
         <span class="detail-label">Notes</span>
         <span class="detail-value">{{ scan.notes }}</span>
@@ -169,6 +189,129 @@
         </table>
     </div>
 </div>
+{% endif %}
+
+{% if can_edit_scan %}
+<script>
+(function() {
+    var SCAN_ID = {{ scan.id }};
+    var COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#06b6d4','#3b82f6','#8b5cf6','#ec4899','#a1a1aa','#f59e0b'];
+    var allLabels = {{ all_labels_json|safe }};
+    var labelList = document.getElementById('label-list');
+    var addBtn = document.getElementById('add-label-btn');
+    var dropdown = document.getElementById('label-dropdown');
+
+    function badgeHtml(lbl, canRemove) {
+        return '<span class="label-badge" data-label-id="' + lbl.id + '" style="background:' + lbl.color + '1a;color:' + lbl.color + ';border:1px solid ' + lbl.color + '40;">' +
+            lbl.name + (canRemove ? ' <button class="label-remove" data-label-id="' + lbl.id + '">&times;</button>' : '') + '</span>';
+    }
+
+    function hideDropdown() { dropdown.style.display = 'none'; dropdown.innerHTML = ''; }
+
+    function showDropdown(filter) {
+        var currentIds = [];
+        labelList.querySelectorAll('.label-badge').forEach(function(b) { currentIds.push(parseInt(b.dataset.labelId)); });
+        var matches = allLabels.filter(function(l) {
+            return currentIds.indexOf(l.id) === -1 && (!filter || l.name.toLowerCase().indexOf(filter.toLowerCase()) >= 0);
+        });
+
+        var html = '<div class="label-autocomplete">';
+        html += '<div style="padding:0.4rem 0.75rem;"><input type="text" id="label-search" class="form-input" style="padding:0.25rem 0.4rem;font-size:0.8rem;width:100%;" placeholder="Type label name..." value="' + (filter || '') + '"></div>';
+        matches.forEach(function(l) {
+            html += '<div class="label-autocomplete-item" data-id="' + l.id + '" data-name="' + l.name + '" data-color="' + l.color + '">' +
+                '<span class="color-swatch" style="background:' + l.color + ';"></span>' + l.name + '</div>';
+        });
+        if (filter && !allLabels.some(function(l) { return l.name.toLowerCase() === filter.toLowerCase(); })) {
+            html += '<div class="label-autocomplete-create"><div style="margin-bottom:0.25rem;">Create "<strong>' + filter + '</strong>"</div><div class="color-picker-row" id="color-picker">';
+            COLORS.forEach(function(c, i) {
+                html += '<span class="color-swatch' + (i === 1 ? ' selected' : '') + '" data-color="' + c + '" style="background:' + c + ';"></span>';
+            });
+            html += '</div><button class="btn btn-primary btn-sm mt-1" id="create-label-btn" data-name="' + filter + '" data-color="' + COLORS[1] + '" style="margin-top:0.375rem;">Create</button></div>';
+        }
+        html += '</div>';
+        dropdown.innerHTML = html;
+        dropdown.style.display = 'block';
+
+        var searchInput = document.getElementById('label-search');
+        if (searchInput) {
+            searchInput.focus();
+            searchInput.addEventListener('input', function() { showDropdown(searchInput.value); });
+            searchInput.addEventListener('keydown', function(e) { if (e.key === 'Escape') hideDropdown(); });
+        }
+
+        dropdown.querySelectorAll('.label-autocomplete-item').forEach(function(item) {
+            item.addEventListener('click', function() {
+                addLabel({id: parseInt(item.dataset.id), name: item.dataset.name, color: item.dataset.color});
+            });
+        });
+
+        var picker = document.getElementById('color-picker');
+        if (picker) {
+            picker.querySelectorAll('.color-swatch').forEach(function(sw) {
+                sw.addEventListener('click', function() {
+                    picker.querySelectorAll('.color-swatch').forEach(function(s) { s.classList.remove('selected'); });
+                    sw.classList.add('selected');
+                    var createBtn = document.getElementById('create-label-btn');
+                    if (createBtn) createBtn.dataset.color = sw.dataset.color;
+                });
+            });
+        }
+        var createBtn = document.getElementById('create-label-btn');
+        if (createBtn) {
+            createBtn.addEventListener('click', function() {
+                addLabel({name: createBtn.dataset.name, color: createBtn.dataset.color});
+            });
+        }
+    }
+
+    function addLabel(lbl) {
+        hideDropdown();
+        fetch('/scans/' + SCAN_ID + '/labels', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: lbl.name, color: lbl.color})
+        }).then(function(r) { return r.json(); }).then(function(res) {
+            if (res.ok) {
+                var badge = document.createElement('span');
+                badge.innerHTML = badgeHtml(res.label, true);
+                badge = badge.firstChild;
+                labelList.insertBefore(badge, addBtn);
+                badge.querySelector('.label-remove').addEventListener('click', function() { removeLabel(res.label.id, badge); });
+                if (!allLabels.some(function(l) { return l.id === res.label.id; })) {
+                    allLabels.push(res.label);
+                    allLabels.sort(function(a, b) { return a.name.localeCompare(b.name); });
+                }
+            }
+        });
+    }
+
+    function removeLabel(labelId, badge) {
+        fetch('/scans/' + SCAN_ID + '/labels/' + labelId, { method: 'DELETE' })
+        .then(function(r) { return r.json(); }).then(function(res) {
+            if (res.ok) badge.remove();
+        });
+    }
+
+    if (addBtn) {
+        addBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (dropdown.style.display === 'block') { hideDropdown(); return; }
+            showDropdown('');
+        });
+    }
+
+    labelList.querySelectorAll('.label-remove').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var badge = btn.closest('.label-badge');
+            removeLabel(parseInt(btn.dataset.labelId), badge);
+        });
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!dropdown.contains(e.target) && e.target !== addBtn) hideDropdown();
+    });
+})();
+</script>
 {% endif %}
 
 {% if can_edit_scan %}

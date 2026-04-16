@@ -32,6 +32,13 @@
         <option value="0" {{ 'selected' if authenticated == '0' }}>Unauthenticated</option>
     </select>
 
+    <select name="label" class="form-select" onchange="this.form.submit()">
+        <option value="">All labels</option>
+        {% for l in all_labels %}
+            <option value="{{ l }}" {{ 'selected' if label == l }}>{{ l }}</option>
+        {% endfor %}
+    </select>
+
     {% if not app %}
     <select name="app_id" class="form-select" onchange="this.form.submit()">
         <option value="">All apps</option>
@@ -56,7 +63,7 @@
     <input type="text" name="q" value="{{ q }}" placeholder="Search..."
            class="form-input" style="width: 140px;">
 
-    {% if latest or scanner or authenticated or filter or q %}
+    {% if latest or scanner or authenticated or label or filter or q %}
         <a href="/scans{% if app %}?app_id={{ app.id }}{% endif %}" class="btn btn-outline btn-sm" style="height: 30px; padding: 0 0.5rem; font-size: 0.8rem; line-height: 28px;">Clear</a>
     {% endif %}
 </form>
@@ -75,7 +82,7 @@
                     <th>TP</th>
                     <th>FP</th>
                     <th>FN</th>
-                    <th>Submitted By</th>
+                    <th>Labels</th>
                     {% if user %}
                         <th style="width: 40px;"></th>
                     {% endif %}
@@ -94,7 +101,19 @@
                     <td class="text-success">{{ scan.tp_count if scan.tp_count is defined else '-' }}</td>
                     <td class="text-error">{{ scan.fp_count if scan.fp_count is defined else '-' }}</td>
                     <td class="text-error">-</td>
-                    <td class="text-secondary">{{ scan.submitter_name or scan.submitted_by }}</td>
+                    <td>
+                        {% set labels = scan_labels_map.get(scan.id, []) %}
+                        {% if labels %}
+                        <div class="scan-labels-cell">
+                            {% for lbl in labels[:3] %}
+                                <span class="label-badge" style="background: {{ lbl.color }}1a; color: {{ lbl.color }}; border: 1px solid {{ lbl.color }}40;">{{ lbl.name }}</span>
+                            {% endfor %}
+                            {% if labels|length > 3 %}
+                                <span class="label-badge label-overflow" title="{{ labels[3:]|map(attribute='name')|join(', ') }}">+{{ labels|length - 3 }}</span>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                    </td>
                     {% if user %}
                     <td>
                         {% if user.role == 'admin' or scan.submitted_by == user.sub %}
@@ -115,7 +134,7 @@
 {% else %}
 <div class="empty-state">
     <h3>No scans found</h3>
-    <p>{% if latest or scanner or authenticated or app_id or filter or q %}No scans match the current filters.{% else %}No scan results have been submitted yet.{% endif %}</p>
+    <p>{% if latest or scanner or authenticated or label or app_id or filter or q %}No scans match the current filters.{% else %}No scan results have been submitted yet.{% endif %}</p>
 </div>
 {% endif %}
 {% endblock %}
