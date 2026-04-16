@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from app.templating import templates
 from app.database import get_connection
 from app.dependencies import require_admin
@@ -106,3 +106,89 @@ async def delete_user(request: Request, user_id: int):
         await db.close()
 
     return RedirectResponse(url="/admin/users", status_code=303)
+
+
+# ── Label Management ─────────────────────────────────────────
+
+
+@router.get("/labels", response_class=HTMLResponse)
+async def list_labels(request: Request):
+    await require_admin(request)
+
+    db = await get_connection()
+    try:
+        cursor = await db.execute(
+            """SELECT l.*, (SELECT COUNT(*) FROM scan_labels WHERE label_id = l.id) as scan_count
+               FROM labels l ORDER BY l.name"""
+        )
+        labels = await cursor.fetchall()
+    finally:
+        await db.close()
+
+    return templates.TemplateResponse(
+        request, "admin/labels.html", {"user": request.state.user, "labels": labels}
+    )
+
+
+@router.post("/labels")
+async def create_label(request: Request):
+    await require_admin(request)
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    color = (form.get("color") or "#f97316").strip()
+
+    if not name:
+        return RedirectResponse(url="/admin/labels", status_code=303)
+
+    db = await get_connection()
+    try:
+        await db.execute(
+            "INSERT OR IGNORE INTO labels (name, color) VALUES (?, ?)",
+            (name, color),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    return RedirectResponse(url="/admin/labels", status_code=303)
+
+
+@router.post("/labels/{label_id}/update")
+async def update_label(request: Request, label_id: int):
+    await require_admin(request)
+    body = await request.json()
+
+    db = await get_connection()
+    try:
+        updates = {}
+        if "name" in body and body["name"].strip():
+            updates["name"] = body["name"].strip()
+        if "color" in body and body["color"].strip():
+            updates["color"] = body["color"].strip()
+
+        if not updates:
+            return {"ok": False}
+
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        values = list(updates.values()) + [label_id]
+        await db.execute(f"UPDATE labels SET {set_clause} WHERE id=?", values)
+        await db.commit()
+    finally:
+        await db.close()
+
+    return {"ok": True}
+
+
+@router.post("/labels/{label_id}/delete")
+async def delete_label(request: Request, label_id: int):
+    await require_admin(request)
+
+    db = await get_connection()
+    try:
+        await db.execute("DELETE FROM scan_labels WHERE label_id = ?", (label_id,))
+        await db.execute("DELETE FROM labels WHERE id = ?", (label_id,))
+        await db.commit()
+    finally:
+        await db.close()
+
+    return RedirectResponse(url="/admin/labels", status_code=303)

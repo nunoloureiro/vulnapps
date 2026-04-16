@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}Label Management - Vulnapps{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Label Management</h1>
+</div>
+
+<div class="card mb-2">
+    <h3 class="card-title mb-2">Create Label</h3>
+    <form method="post" action="/admin/labels" class="flex gap-1 items-center" style="flex-wrap: wrap;">
+        <input type="text" name="name" class="form-input" placeholder="Label name" required style="width: 200px;">
+        <input type="hidden" name="color" id="new-label-color" value="#f97316">
+        <div class="color-picker-row" id="new-label-picker">
+            <span class="color-swatch selected" data-color="#ef4444" style="background:#ef4444;"></span>
+            <span class="color-swatch" data-color="#f97316" style="background:#f97316;"></span>
+            <span class="color-swatch" data-color="#eab308" style="background:#eab308;"></span>
+            <span class="color-swatch" data-color="#22c55e" style="background:#22c55e;"></span>
+            <span class="color-swatch" data-color="#06b6d4" style="background:#06b6d4;"></span>
+            <span class="color-swatch" data-color="#3b82f6" style="background:#3b82f6;"></span>
+            <span class="color-swatch" data-color="#8b5cf6" style="background:#8b5cf6;"></span>
+            <span class="color-swatch" data-color="#ec4899" style="background:#ec4899;"></span>
+            <span class="color-swatch" data-color="#a1a1aa" style="background:#a1a1aa;"></span>
+            <span class="color-swatch" data-color="#f59e0b" style="background:#f59e0b;"></span>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Create</button>
+    </form>
+</div>
+
+{% if labels %}
+<div class="card">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Color</th>
+                    <th>Name</th>
+                    <th>Preview</th>
+                    <th>Scans</th>
+                    <th style="width: 80px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for lbl in labels %}
+                <tr class="label-row" data-id="{{ lbl.id }}">
+                    <td>
+                        <div class="color-picker-row" data-label-id="{{ lbl.id }}">
+                            {% for c in ['#ef4444','#f97316','#eab308','#22c55e','#06b6d4','#3b82f6','#8b5cf6','#ec4899','#a1a1aa','#f59e0b'] %}
+                                <span class="color-swatch{{ ' selected' if lbl.color == c else '' }}" data-color="{{ c }}" style="background:{{ c }};"></span>
+                            {% endfor %}
+                        </div>
+                    </td>
+                    <td class="cell-editable" data-field="name" data-value="{{ lbl.name }}">{{ lbl.name }}</td>
+                    <td>
+                        <span class="label-badge" data-preview="{{ lbl.id }}" style="background: {{ lbl.color }}1a; color: {{ lbl.color }}; border: 1px solid {{ lbl.color }}40;">{{ lbl.name }}</span>
+                    </td>
+                    <td class="text-muted">{{ lbl.scan_count }}</td>
+                    <td>
+                        <form method="post" action="/admin/labels/{{ lbl.id }}/delete" onsubmit="return confirm('Delete label &quot;{{ lbl.name }}&quot;? It will be removed from {{ lbl.scan_count }} scan(s).');" style="display:inline;">
+                            <button type="submit" class="btn-icon btn-icon-danger" title="Delete label">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="empty-state">
+    <h3>No labels</h3>
+    <p>Create your first label above, or add labels from any scan detail page.</p>
+</div>
+{% endif %}
+
+<script>
+(function() {
+    // New label color picker
+    var picker = document.getElementById('new-label-picker');
+    var colorInput = document.getElementById('new-label-color');
+    picker.querySelectorAll('.color-swatch').forEach(function(sw) {
+        sw.addEventListener('click', function() {
+            picker.querySelectorAll('.color-swatch').forEach(function(s) { s.classList.remove('selected'); });
+            sw.classList.add('selected');
+            colorInput.value = sw.dataset.color;
+        });
+    });
+
+    // Inline name editing
+    document.querySelectorAll('.label-row .cell-editable').forEach(function(td) {
+        td.addEventListener('click', function() {
+            if (td.querySelector('.inline-input')) return;
+            var row = td.closest('tr');
+            var labelId = row.dataset.id;
+            var origValue = td.dataset.value;
+            var origHtml = td.innerHTML;
+
+            var input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'inline-input';
+            input.value = origValue;
+            td.innerHTML = '';
+            td.appendChild(input);
+            input.focus();
+            input.select();
+
+            function save() {
+                var newValue = input.value.trim();
+                if (!newValue || newValue === origValue) { td.innerHTML = origHtml; return; }
+                fetch('/admin/labels/' + labelId + '/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: newValue})
+                }).then(function(r) { return r.json(); }).then(function(res) {
+                    if (res.ok) {
+                        td.dataset.value = newValue;
+                        td.textContent = newValue;
+                        var preview = row.querySelector('[data-preview]');
+                        if (preview) preview.textContent = newValue;
+                    } else { td.innerHTML = origHtml; }
+                }).catch(function() { td.innerHTML = origHtml; });
+            }
+
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); save(); }
+                if (e.key === 'Escape') td.innerHTML = origHtml;
+            });
+            input.addEventListener('blur', function() { setTimeout(function() { if (td.contains(input)) save(); }, 150); });
+        });
+    });
+
+    // Inline color changing
+    document.querySelectorAll('.label-row .color-picker-row').forEach(function(pickerRow) {
+        var labelId = pickerRow.dataset.labelId;
+        pickerRow.querySelectorAll('.color-swatch').forEach(function(sw) {
+            sw.addEventListener('click', function() {
+                var color = sw.dataset.color;
+                pickerRow.querySelectorAll('.color-swatch').forEach(function(s) { s.classList.remove('selected'); });
+                sw.classList.add('selected');
+
+                fetch('/admin/labels/' + labelId + '/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({color: color})
+                }).then(function(r) { return r.json(); }).then(function(res) {
+                    if (res.ok) {
+                        var preview = pickerRow.closest('tr').querySelector('[data-preview]');
+                        if (preview) {
+                            preview.style.background = color + '1a';
+                            preview.style.color = color;
+                            preview.style.borderColor = color + '40';
+                        }
+                    }
+                });
+            });
+        });
+    });
+})();
+</script>
+{% endblock %}
