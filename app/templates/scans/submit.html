@@ -26,12 +26,14 @@
                     <label class="form-label" for="authenticated" style="margin-bottom:0">Authenticated Scan</label>
                 </div>
             </div>
+            {% if app.visibility == 'public' %}
             <div class="form-group">
                 <div class="form-check mt-2">
-                    <input type="checkbox" id="is_public" name="is_public" value="1" checked>
+                    <input type="checkbox" id="is_public" name="is_public" value="1">
                     <label class="form-label" for="is_public" style="margin-bottom:0">Public</label>
                 </div>
             </div>
+            {% endif %}
         </div>
 
         <div class="form-group">
