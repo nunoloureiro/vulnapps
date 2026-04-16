@@ -160,8 +160,8 @@ async def new_vuln_from_fp(request: Request, app_id: int,
     }
 
     return templates.TemplateResponse(
-        "vulns/form.html",
-        {"request": request, "user": user, "app": app, "vuln": None, "prefill": prefill},
+        request, "vulns/form.html",
+        {"user": user, "app": app, "vuln": None, "prefill": prefill},
     )
 
 
@@ -174,8 +174,8 @@ async def new_vuln_form(request: Request, app_id: int):
         await db.close()
 
     return templates.TemplateResponse(
-        "vulns/form.html",
-        {"request": request, "user": user, "app": app, "vuln": None},
+        request, "vulns/form.html",
+        {"user": user, "app": app, "vuln": None},
     )
 
 
@@ -253,8 +253,8 @@ async def vuln_detail(request: Request, app_id: int, vuln_id: int):
         await db.close()
 
     return templates.TemplateResponse(
-        "vulns/detail.html",
-        {"request": request, "user": user, "app": app, "vuln": vuln, "can_edit": can_edit},
+        request, "vulns/detail.html",
+        {"user": user, "app": app, "vuln": vuln, "can_edit": can_edit},
     )
 
 
@@ -270,8 +270,8 @@ async def edit_vuln_form(request: Request, app_id: int, vuln_id: int):
         await db.close()
 
     return templates.TemplateResponse(
-        "vulns/form.html",
-        {"request": request, "user": user, "app": app, "vuln": vuln},
+        request, "vulns/form.html",
+        {"user": user, "app": app, "vuln": vuln},
     )
 
 

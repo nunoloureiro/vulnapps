@@ -97,8 +97,7 @@ async def list_apps(request: Request, q: str = "", filter: str = ""):
         await db.close()
 
     return templates.TemplateResponse(
-        "apps/list.html", {
-            "request": request,
+        request, "apps/list.html", {
             "user": request.state.user,
             "apps": apps_with_tech,
             "q": q,
@@ -139,8 +138,7 @@ async def new_app_form(request: Request, clone_from: int = None):
         await db.close()
 
     return templates.TemplateResponse(
-        "apps/form.html", {
-            "request": request,
+        request, "apps/form.html", {
             "user": user,
             "app": None,
             "tech_stack": source_tech,
@@ -293,9 +291,8 @@ async def app_detail(request: Request, app_id: int):
         await db.close()
 
     return templates.TemplateResponse(
-        "apps/detail.html",
+        request, "apps/detail.html",
         {
-            "request": request,
             "user": request.state.user,
             "app": app,
             "vulns": vulns,
@@ -335,8 +332,7 @@ async def edit_app_form(request: Request, app_id: int):
         await db.close()
 
     return templates.TemplateResponse(
-        "apps/form.html", {
-            "request": request,
+        request, "apps/form.html", {
             "user": user,
             "app": app,
             "tech_stack": ", ".join(tech_stack),

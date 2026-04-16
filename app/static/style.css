@@ -186,6 +186,18 @@ select.inline-input { cursor: pointer; }
     box-shadow: 0 0 0 3px var(--accent-dim);
 }
 .form-textarea { min-height: 100px; resize: vertical; }
+.filter-bar {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.filter-bar .form-select,
+.filter-bar .form-input {
+    width: auto;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.85rem;
+}
 .form-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -481,3 +493,35 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
     gap: 1rem;
     justify-content: center;
 }
+
+/* Modal */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+}
+.modal {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    width: 100%;
+    max-width: 420px;
+    position: relative;
+}
+.modal-close {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.25rem;
+    cursor: pointer;
+    line-height: 1;
+}
+.modal-close:hover { color: var(--text); }

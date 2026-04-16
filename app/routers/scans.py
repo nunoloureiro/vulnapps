@@ -53,8 +53,11 @@ async def example_csv():
 
 
 @router.get("/scans", response_class=HTMLResponse)
-async def list_scans(request: Request, app_id: int = None, filter: str = ""):
+async def list_scans(request: Request, app_id: str = "", filter: str = "",
+                     scanner: str = "", latest: str = "", q: str = ""):
     user = request.state.user
+    # Convert app_id from string to int (form submits empty string when unselected)
+    app_id = int(app_id) if app_id and app_id.isdigit() else None
 
     db = await get_connection()
     try:
@@ -82,19 +85,63 @@ async def list_scans(request: Request, app_id: int = None, filter: str = ""):
             except ValueError:
                 pass
 
+        if scanner:
+            extra_filters += " AND scans.scanner_name = ?"
+            extra_params.append(scanner)
+
+        if q:
+            extra_filters += " AND (apps.name LIKE ? OR scans.scanner_name LIKE ? OR users.name LIKE ?)"
+            q_like = f"%{q}%"
+            extra_params.extend([q_like, q_like, q_like])
+
         vis_clause, vis_params = scan_visibility_filter(user)
-        cursor = await db.execute(
-            f"""SELECT scans.*, apps.name as app_name, users.name as submitter_name,
+
+        base_query = f"""SELECT scans.*, apps.name as app_name, apps.version as app_version,
+                      users.name as submitter_name,
                       (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
                       (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count
                FROM scans
                LEFT JOIN apps ON scans.app_id=apps.id
                LEFT JOIN users ON scans.submitted_by=users.id
-               WHERE {vis_clause}{extra_filters}
-               ORDER BY scans.created_at DESC""",
-            vis_params + extra_params,
-        )
+               WHERE {vis_clause}{extra_filters}"""
+
+        if latest:
+            sql = f"""WITH base AS ({base_query}),
+                      ranked AS (
+                          SELECT *, ROW_NUMBER() OVER (
+                              PARTITION BY scanner_name, app_id
+                              ORDER BY scan_date DESC, created_at DESC
+                          ) as rn FROM base
+                      )
+                      SELECT * FROM ranked WHERE rn = 1
+                      ORDER BY created_at DESC"""
+        else:
+            sql = base_query + " ORDER BY scans.created_at DESC"
+
+        cursor = await db.execute(sql, vis_params + extra_params)
         scans = await cursor.fetchall()
+
+        # Get distinct scanner names for filter dropdown (scoped to app if filtered)
+        scanner_filter = " AND scans.app_id = ?" if app_id else ""
+        scanner_params = vis_params + ([app_id] if app_id else [])
+        cursor = await db.execute(
+            f"""SELECT DISTINCT scans.scanner_name
+               FROM scans LEFT JOIN apps ON scans.app_id=apps.id
+               WHERE {vis_clause}{scanner_filter}
+               ORDER BY scans.scanner_name""",
+            scanner_params,
+        )
+        scanners = [row["scanner_name"] for row in await cursor.fetchall()]
+
+        # Get distinct apps for filter dropdown
+        cursor = await db.execute(
+            f"""SELECT DISTINCT apps.id, apps.name, apps.version
+               FROM scans LEFT JOIN apps ON scans.app_id=apps.id
+               WHERE {vis_clause}
+               ORDER BY apps.name, apps.version""",
+            vis_params,
+        )
+        apps_list = await cursor.fetchall()
 
         # Get user's teams for filter dropdown
         user_teams = []
@@ -111,13 +158,18 @@ async def list_scans(request: Request, app_id: int = None, filter: str = ""):
         await db.close()
 
     return templates.TemplateResponse(
-        "scans/list.html", {
-            "request": request,
+        request, "scans/list.html", {
             "user": request.state.user,
             "scans": scans,
             "app": app,
             "filter": filter,
             "user_teams": user_teams,
+            "scanners": scanners,
+            "apps_list": apps_list,
+            "latest": latest,
+            "scanner": scanner,
+            "q": q,
+            "app_id": app_id,
         }
     )
 
@@ -147,7 +199,7 @@ async def submit_scan_form(request: Request, app_id: int):
         await db.close()
 
     return templates.TemplateResponse(
-        "scans/submit.html", {"request": request, "user": user, "app": app}
+        request, "scans/submit.html", {"user": user, "app": app}
     )
 
 
@@ -314,9 +366,8 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
         # If no scan IDs provided, show selector
         if not scans:
             return templates.TemplateResponse(
-                "scans/compare.html",
+                request, "scans/compare.html",
                 {
-                    "request": request,
                     "user": user,
                     "app": app,
                     "available_scans": available_scans,
@@ -329,9 +380,8 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
         scan_ids = [int(s) for s in scans.split(",") if s.strip().isdigit()][:7]
         if not scan_ids:
             return templates.TemplateResponse(
-                "scans/compare.html",
+                request, "scans/compare.html",
                 {
-                    "request": request,
                     "user": user,
                     "app": app,
                     "available_scans": available_scans,
@@ -437,9 +487,8 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
         await db.close()
 
     return templates.TemplateResponse(
-        "scans/compare.html",
+        request, "scans/compare.html",
         {
-            "request": request,
             "user": user,
             "app": app,
             "available_scans": available_scans,
@@ -548,9 +597,8 @@ async def scan_detail(request: Request, scan_id: int):
         await db.close()
 
     return templates.TemplateResponse(
-        "scans/detail.html",
+        request, "scans/detail.html",
         {
-            "request": request,
             "user": user,
             "scan": scan,
             "app": app,

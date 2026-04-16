@@ -31,7 +31,7 @@ async def inject_user(request: Request, call_next):
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse("home.html", {"request": request, "user": request.state.user})
+    return templates.TemplateResponse(request, "home.html", {"user": request.state.user})
 
 
 @app.get("/users/{user_id}", response_class=HTMLResponse)
@@ -57,14 +57,15 @@ async def user_profile(request: Request, user_id: int):
         await db.close()
 
     return templates.TemplateResponse(
-        "profile.html",
-        {"request": request, "user": request.state.user, "profile": profile, "user_apps": user_apps},
+        request, "profile.html",
+        {"user": request.state.user, "profile": profile, "user_apps": user_apps},
     )
 
 
 from app.routers import auth_routes, apps, vulns, scans, admin, api, teams  # noqa: E402
 
 app.include_router(auth_routes.router)
+app.include_router(auth_routes.account_router)
 app.include_router(apps.router)
 app.include_router(vulns.router)
 app.include_router(scans.router)

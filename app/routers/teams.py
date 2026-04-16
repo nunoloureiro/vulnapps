@@ -51,7 +51,7 @@ async def list_teams(request: Request):
         await db.close()
 
     return templates.TemplateResponse(
-        "teams/list.html", {"request": request, "user": user, "teams": teams_list}
+        request, "teams/list.html", {"user": user, "teams": teams_list}
     )
 
 
@@ -60,7 +60,7 @@ async def new_team_form(request: Request):
     user = await require_user(request)
 
     return templates.TemplateResponse(
-        "teams/form.html", {"request": request, "user": user, "team": None}
+        request, "teams/form.html", {"user": user, "team": None}
     )
 
 
@@ -134,9 +134,8 @@ async def team_detail(request: Request, team_id: int):
         await db.close()
 
     return templates.TemplateResponse(
-        "teams/detail.html",
+        request, "teams/detail.html",
         {
-            "request": request,
             "user": user,
             "team": team,
             "members": members,

@@ -19,7 +19,7 @@ async def list_users(request: Request):
         await db.close()
 
     return templates.TemplateResponse(
-        "admin/users.html", {"request": request, "user": request.state.user, "users": users}
+        request, "admin/users.html", {"user": request.state.user, "users": users}
     )
 
 

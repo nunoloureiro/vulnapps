@@ -9,8 +9,16 @@
 {% if not comparison %}
 {# === SCAN SELECTOR === #}
 <div class="card">
-    <h3 class="card-title mb-2">Select scans to compare <span class="text-muted text-sm">(max 7)</span></h3>
+    <h3 class="card-title mb-1">Select scans to compare <span class="text-muted text-sm">(max 7)</span></h3>
     {% if available_scans %}
+
+    <div class="flex gap-1 items-center mb-2" style="flex-wrap: wrap;">
+        <button type="button" id="latest-btn" class="btn btn-outline btn-sm">Latest per scanner</button>
+        <select id="scanner-filter" class="form-select form-select-sm" style="width: auto;">
+            <option value="">All scanners</option>
+        </select>
+    </div>
+
     <form id="compare-form">
         <div class="table-wrap">
             <table>
@@ -25,7 +33,7 @@
                 </thead>
                 <tbody>
                     {% for scan in available_scans %}
-                    <tr>
+                    <tr class="scan-row" data-scanner="{{ scan.scanner_name }}" data-date="{{ scan.scan_date }}" data-id="{{ scan.id }}">
                         <td><input type="checkbox" name="scan_ids" value="{{ scan.id }}" class="scan-checkbox" style="accent-color: var(--accent); width:16px; height:16px;"></td>
                         <td><strong>{{ scan.scanner_name }}</strong></td>
                         <td>{{ scan.scan_date }}</td>
@@ -53,29 +61,99 @@
     var form = document.getElementById('compare-form');
     var btn = document.getElementById('compare-btn');
     var countEl = document.getElementById('selection-count');
-    var checkboxes = document.querySelectorAll('.scan-checkbox');
+    var rows = document.querySelectorAll('.scan-row');
+    var latestBtn = document.getElementById('latest-btn');
+    var scannerFilter = document.getElementById('scanner-filter');
+    var latestActive = false;
+    var currentScanner = '';
 
-    function update() {
-        var checked = document.querySelectorAll('.scan-checkbox:checked');
+    // Populate scanner dropdown from data
+    var scannerSet = new Set();
+    rows.forEach(function(r) { scannerSet.add(r.dataset.scanner); });
+    Array.from(scannerSet).sort().forEach(function(name) {
+        var opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        scannerFilter.appendChild(opt);
+    });
+
+    function getVisibleCheckboxes() {
+        var cbs = [];
+        rows.forEach(function(r) {
+            if (r.style.display !== 'none') {
+                var cb = r.querySelector('.scan-checkbox');
+                if (cb) cbs.push(cb);
+            }
+        });
+        return cbs;
+    }
+
+    function updateButtons() {
+        var visible = getVisibleCheckboxes();
+        var checked = visible.filter(function(cb) { return cb.checked; });
         var n = checked.length;
         btn.disabled = n < 2 || n > 7;
         countEl.textContent = n + ' selected' + (n > 7 ? ' (max 7)' : '');
-        checkboxes.forEach(function(cb) {
+        visible.forEach(function(cb) {
             if (!cb.checked) cb.disabled = n >= 7;
         });
     }
 
-    checkboxes.forEach(function(cb) { cb.addEventListener('change', update); });
+    function applyFilters() {
+        // Find latest per scanner (by scan_date then by row order as tiebreaker)
+        var latestByScanner = {};
+        rows.forEach(function(r) {
+            var name = r.dataset.scanner;
+            if (!latestByScanner[name] || r.dataset.date > latestByScanner[name].dataset.date) {
+                latestByScanner[name] = r;
+            }
+        });
+
+        rows.forEach(function(r) {
+            var show = true;
+            if (currentScanner && r.dataset.scanner !== currentScanner) show = false;
+            if (latestActive && latestByScanner[r.dataset.scanner] !== r) show = false;
+            r.style.display = show ? '' : 'none';
+            if (!show) {
+                var cb = r.querySelector('.scan-checkbox');
+                if (cb) { cb.checked = false; cb.disabled = false; }
+            }
+        });
+        updateButtons();
+    }
+
+    latestBtn.addEventListener('click', function() {
+        latestActive = !latestActive;
+        if (latestActive) {
+            latestBtn.classList.remove('btn-outline');
+            latestBtn.classList.add('btn-primary');
+        } else {
+            latestBtn.classList.remove('btn-primary');
+            latestBtn.classList.add('btn-outline');
+        }
+        applyFilters();
+    });
+
+    scannerFilter.addEventListener('change', function() {
+        currentScanner = scannerFilter.value;
+        applyFilters();
+    });
+
+    rows.forEach(function(r) {
+        var cb = r.querySelector('.scan-checkbox');
+        if (cb) cb.addEventListener('change', updateButtons);
+    });
 
     var selectAll = document.getElementById('select-all');
     selectAll.addEventListener('change', function() {
         var shouldCheck = selectAll.checked;
-        checkboxes.forEach(function(cb, i) {
+        var visible = getVisibleCheckboxes();
+        visible.forEach(function(cb, i) {
             if (shouldCheck && i >= 7) return;
             cb.checked = shouldCheck;
             cb.disabled = false;
         });
-        update();
+        updateButtons();
     });
 
     form.addEventListener('submit', function(e) {
