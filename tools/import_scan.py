@@ -206,6 +206,19 @@ class VulnappsClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_labels(self) -> list:
+        resp = self.client.get("/labels/autocomplete")
+        resp.raise_for_status()
+        return resp.json()["labels"]
+
+    def add_label(self, scan_id: int, name: str, color: str = "#f97316") -> dict:
+        resp = self.client.post(
+            f"/scans/{scan_id}/labels",
+            json={"name": name, "color": color},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
 
 # ── Formatting ───────────────────────────────────────────────
 
@@ -400,9 +413,9 @@ def main():
     parser.add_argument("--app-id", type=int, required=True, help="Target app ID")
     parser.add_argument("--dir", required=True, help="Directory with .md scan result files")
     parser.add_argument("--file", help="Single .md file to import (instead of --dir)")
-    parser.add_argument("--public", action="store_true", default=True, help="Make scan public (default)")
     parser.add_argument("--scanner", default=None, help="Scanner name (overrides LLM-detected name)")
-    parser.add_argument("--private", action="store_true", help="Make scan private")
+    parser.add_argument("--public", action="store_true", help="Make scan public (default: private)")
+    parser.add_argument("--labels", default="", help="Comma-separated labels (must already exist in Vulnapps)")
     parser.add_argument("--notes", default="", help="Notes to attach to the scan")
     parser.add_argument("--model", default=None, help="Claude model (default: claude-sonnet-4-20250514)")
     parser.add_argument("--provider", choices=["anthropic", "vertex"], default=None,
@@ -448,7 +461,7 @@ def main():
         print(f"  {colored('Error:', 'RED')} No .md files found.", file=sys.stderr)
         sys.exit(1)
 
-    is_public = not args.private
+    is_public = args.public
 
     # Connect to Vulnapps
     client = VulnappsClient(args.url, args.api_key)
@@ -476,6 +489,17 @@ def main():
     vulns = client.get_vulns(args.app_id)
     print(f"  {colored('✓', 'GREEN')} Known vulns: {colored(str(len(vulns)), 'BOLD')}")
     print(f"  {colored('✓', 'GREEN')} Scan files:  {colored(str(len(md_files)), 'BOLD')}")
+
+    # Validate labels
+    label_names = [l.strip() for l in args.labels.split(",") if l.strip()] if args.labels else []
+    if label_names:
+        existing_labels = {l["name"]: l for l in client.get_labels()}
+        unknown = [n for n in label_names if n not in existing_labels]
+        if unknown:
+            print(f"  {colored('✗', 'RED')} Unknown labels: {', '.join(unknown)}", file=sys.stderr)
+            print(f"    {C.DIM}Available: {', '.join(sorted(existing_labels.keys())) or '(none)'}{C.RESET}", file=sys.stderr)
+            sys.exit(1)
+        print(f"  {colored('✓', 'GREEN')} Labels:      {colored(', '.join(label_names), 'CYAN')}")
 
     if args.dry_run:
         print(f"  {colored('⚑', 'YELLOW')} Dry run mode — no changes will be made")
@@ -519,6 +543,11 @@ def main():
 
         try:
             scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes)
+            # Apply labels
+            for label_name in label_names:
+                client.add_label(scan_id, label_name)
+            if label_names:
+                print(f"  {colored('✓', 'GREEN')} Labels: {colored(', '.join(label_names), 'CYAN')}")
             print(f"  {colored('🔗', 'BLUE')} {args.url}/scans/{scan_id}")
         except httpx.HTTPStatusError as e:
             print(f"  {colored('✗', 'RED')} Submit failed: {e.response.status_code} {e.response.text}", file=sys.stderr)

@@ -40,7 +40,8 @@ show_help() {
     echo -e "  ${BOLD}Optional:${NC}"
     echo -e "    ${CYAN}--url${NC} ${DIM}<url>${NC}         Vulnapps URL (default: \$VULNAPPS_URL)"
     echo -e "    ${CYAN}--api-key${NC} ${DIM}<key>${NC}     API key (default: \$VULNAPPS_API_KEY)"
-    echo -e "    ${CYAN}--private${NC}            Make scan private (default: public)"
+    echo -e "    ${CYAN}--public${NC}             Make scan public (default: private)"
+    echo -e "    ${CYAN}--labels${NC} ${DIM}<list>${NC}     Comma-separated labels (must exist in Vulnapps)"
     echo -e "    ${CYAN}--notes${NC} ${DIM}<text>${NC}      Notes to attach to the scan"
     echo -e "    ${CYAN}--model${NC} ${DIM}<model>${NC}     Claude model (default: claude-sonnet-4-20250514)"
     echo ""
@@ -55,7 +56,7 @@ show_help() {
     echo -e "  ${BOLD}Examples:${NC}"
     echo -e "    ./scanimport.sh dry-run --app-id 1 --dir ./scan-results/"
     echo -e "    ./scanimport.sh import --app-id 1 --file ./zap-scan.md"
-    echo -e "    ./scanimport.sh import --app-id 1 --dir ./scans/ --private --notes \"Q1 batch\""
+    echo -e "    ./scanimport.sh import --app-id 1 --dir ./scans/ --labels \"baseline,quarterly\""
     echo ""
 }
 

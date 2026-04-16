@@ -78,7 +78,8 @@ python tools/import_scan.py --url <vulnapps-url> --app-id <id> --dir <scan-resul
 | `--provider` | `anthropic` or `vertex` | auto-detected |
 | `--vertex-region` | Vertex AI region | `$ANTHROPIC_VERTEX_LOCATION` |
 | `--vertex-project` | GCP project ID | `$ANTHROPIC_VERTEX_PROJECT_ID` |
-| `--private` | Make the scan private | public by default |
+| `--public` | Make the scan public | private by default |
+| `--labels` | Comma-separated labels (must exist in Vulnapps) | |
 | `--notes` | Notes to attach to the scan | |
 | `--dry-run` | Show LLM mapping without submitting | |
 
@@ -113,7 +114,7 @@ python tools/import_scan.py \
   --notes "Q1 2026 scan batch"
 ```
 
-### Import as private scan using Vertex AI
+### Import as public scan with labels using Vertex AI
 
 ```bash
 export CLAUDE_CODE_USE_VERTEX=1
@@ -124,7 +125,8 @@ python tools/import_scan.py \
   --url https://vulnapps.example.com \
   --app-id 1 \
   --dir ./scan-results/ \
-  --private
+  --public \
+  --labels "baseline,quarterly"
 ```
 
 ### Use a specific model
