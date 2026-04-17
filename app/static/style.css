@@ -384,8 +384,10 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
     font-size: 0.8125rem;
 }
 .color-swatch {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    min-height: 18px;
     border-radius: 50%;
     display: inline-block;
     cursor: pointer;
@@ -397,7 +399,7 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .color-picker-row {
     display: flex;
     gap: 0.375rem;
-    margin-top: 0.375rem;
+    align-items: center;
     flex-wrap: wrap;
 }
 

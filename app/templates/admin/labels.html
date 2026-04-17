@@ -7,22 +7,27 @@
 
 <div class="card mb-2">
     <h3 class="card-title mb-2">Create Label</h3>
-    <form method="post" action="/admin/labels" class="flex gap-1 items-center" style="flex-wrap: wrap;">
-        <input type="text" name="name" class="form-input" placeholder="Label name" required style="width: 200px;">
-        <input type="hidden" name="color" id="new-label-color" value="#f97316">
-        <div class="color-picker-row" id="new-label-picker">
-            <span class="color-swatch selected" data-color="#ef4444" style="background:#ef4444;"></span>
-            <span class="color-swatch" data-color="#f97316" style="background:#f97316;"></span>
-            <span class="color-swatch" data-color="#eab308" style="background:#eab308;"></span>
-            <span class="color-swatch" data-color="#22c55e" style="background:#22c55e;"></span>
-            <span class="color-swatch" data-color="#06b6d4" style="background:#06b6d4;"></span>
-            <span class="color-swatch" data-color="#3b82f6" style="background:#3b82f6;"></span>
-            <span class="color-swatch" data-color="#8b5cf6" style="background:#8b5cf6;"></span>
-            <span class="color-swatch" data-color="#ec4899" style="background:#ec4899;"></span>
-            <span class="color-swatch" data-color="#a1a1aa" style="background:#a1a1aa;"></span>
-            <span class="color-swatch" data-color="#f59e0b" style="background:#f59e0b;"></span>
+    <form method="post" action="/admin/labels">
+        <input type="hidden" name="color" id="new-label-color" value="#ef4444">
+        <div class="flex gap-1 items-center mb-1">
+            <input type="text" name="name" class="form-input" placeholder="Label name" required style="width: 200px;">
+            <button type="submit" class="btn btn-primary btn-sm">Create</button>
         </div>
-        <button type="submit" class="btn btn-primary btn-sm">Create</button>
+        <div class="flex gap-1 items-center">
+            <span class="text-muted text-sm" style="margin-right: 0.25rem;">Color:</span>
+            <div class="color-picker-row" id="new-label-picker" style="margin-top: 0;">
+                <span class="color-swatch selected" data-color="#ef4444" style="background:#ef4444;"></span>
+                <span class="color-swatch" data-color="#f97316" style="background:#f97316;"></span>
+                <span class="color-swatch" data-color="#eab308" style="background:#eab308;"></span>
+                <span class="color-swatch" data-color="#22c55e" style="background:#22c55e;"></span>
+                <span class="color-swatch" data-color="#06b6d4" style="background:#06b6d4;"></span>
+                <span class="color-swatch" data-color="#3b82f6" style="background:#3b82f6;"></span>
+                <span class="color-swatch" data-color="#8b5cf6" style="background:#8b5cf6;"></span>
+                <span class="color-swatch" data-color="#ec4899" style="background:#ec4899;"></span>
+                <span class="color-swatch" data-color="#a1a1aa" style="background:#a1a1aa;"></span>
+                <span class="color-swatch" data-color="#f59e0b" style="background:#f59e0b;"></span>
+            </div>
+        </div>
     </form>
 </div>
 
