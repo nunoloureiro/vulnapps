@@ -87,16 +87,22 @@ a:hover { color: var(--accent-hover); }
 .nav-dropdown-menu {
     display: none;
     position: absolute;
-    top: 100%;
+    top: calc(100% + 0.25rem);
     right: 0;
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     min-width: 140px;
     padding: 0.25rem 0;
+    margin: 0;
     list-style: none;
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     z-index: 200;
+}
+.nav-dropdown-menu li {
+    list-style: none;
+    margin: 0;
+    padding: 0;
 }
 .nav-dropdown-menu li a {
     display: block;
@@ -104,13 +110,14 @@ a:hover { color: var(--accent-hover); }
     font-size: 0.8125rem;
     color: var(--text-secondary);
     border-radius: 0;
+    white-space: nowrap;
+    background: none;
 }
 .nav-dropdown-menu li a:hover {
     color: var(--accent);
     background: var(--accent-dim);
 }
-.nav-dropdown:hover .nav-dropdown-menu,
-.nav-dropdown.open .nav-dropdown-menu { display: block; }
+.nav-dropdown:hover .nav-dropdown-menu { display: block; }
 
 /* Cards */
 .card {
