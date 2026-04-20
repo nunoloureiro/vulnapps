@@ -343,6 +343,89 @@ def print_mapping_table(mapping: dict, vulns: list):
     print(f"\n  {C.DIM}Summary:{C.RESET} {' / '.join(parts)}")
 
 
+STATUS_COLORS = {
+    "submitted": "GREEN",
+    "dry-run":   "YELLOW",
+    "skipped":   "GRAY",
+    "aborted":   "GRAY",
+    "empty":     "GRAY",
+    "failed":    "RED",
+    "error":     "RED",
+}
+
+
+def print_summary_table(rows: list):
+    """Print a summary table of all processed files."""
+    if not rows:
+        return
+
+    print_header("Summary", width=72)
+
+    # Columns: File, Scanner, Total, Matched, Unmatched, FP, Status
+    headers = ["File", "Scanner", "Total", "TP", "Unmatched", "FP", "Status"]
+    widths = [len(h) for h in headers]
+
+    data_rows = []
+    for r in rows:
+        row = [
+            r.get("file", ""),
+            r.get("scanner", "-"),
+            str(r.get("total", "-")),
+            str(r.get("matched", "-")),
+            str(r.get("unmatched", "-")),
+            str(r.get("fp", "-")),
+            r.get("status", "-"),
+        ]
+        data_rows.append(row)
+        for i, v in enumerate(row):
+            widths[i] = max(widths[i], len(v))
+
+    # Header
+    header_line = "  " + "  ".join(f"{C.BOLD}{h.ljust(widths[i])}{C.RESET}" for i, h in enumerate(headers))
+    sep = "  " + "  ".join(colored("─" * w, "GRAY") for w in widths)
+    print(header_line)
+    print(sep)
+
+    # Rows
+    totals = {"total": 0, "matched": 0, "unmatched": 0, "fp": 0}
+    for r, row in zip(rows, data_rows):
+        status = r.get("status", "-")
+        status_colored_s = colored(status.ljust(widths[6]), STATUS_COLORS.get(status, ""))
+        cells = [
+            row[0].ljust(widths[0]),
+            colored(row[1].ljust(widths[1]), "CYAN"),
+            colored(row[2].rjust(widths[2]), "BOLD"),
+            colored(row[3].rjust(widths[3]), "GREEN"),
+            colored(row[4].rjust(widths[4]), "YELLOW"),
+            colored(row[5].rjust(widths[5]), "RED"),
+            status_colored_s,
+        ]
+        print("  " + "  ".join(cells))
+
+        if isinstance(r.get("total"), int):
+            totals["total"] += r["total"]
+            totals["matched"] += r.get("matched", 0)
+            totals["unmatched"] += r.get("unmatched", 0)
+            totals["fp"] += r.get("fp", 0)
+
+    # Totals row
+    print(sep)
+    print(
+        "  "
+        + f"{C.BOLD}Total{C.RESET}".ljust(widths[0] + len(C.BOLD) + len(C.RESET))
+        + "  "
+        + " " * widths[1]
+        + "  "
+        + colored(str(totals["total"]).rjust(widths[2]), "BOLD")
+        + "  "
+        + colored(str(totals["matched"]).rjust(widths[3]), "GREEN")
+        + "  "
+        + colored(str(totals["unmatched"]).rjust(widths[4]), "YELLOW")
+        + "  "
+        + colored(str(totals["fp"]).rjust(widths[5]), "RED")
+    )
+
+
 def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_public: bool, notes: str, cost: float | None = None):
     """Submit the scan and apply LLM-corrected matches."""
     findings_payload = []
@@ -507,12 +590,16 @@ def main():
     if args.dry_run:
         print(f"  {colored('⚑', 'YELLOW')} Dry run mode — no changes will be made")
 
+    # Collect per-file results for end-of-run summary
+    summary_rows = []
+
     for idx, md_file in enumerate(md_files, 1):
         print_header(f"[{idx}/{len(md_files)}] {md_file.name}")
 
         content = md_file.read_text()
         if not content.strip():
             print(f"  {colored('⏭', 'YELLOW')} Skipping empty file")
+            summary_rows.append({"file": md_file.name, "status": "empty"})
             continue
 
         # Run LLM mapping
@@ -520,9 +607,11 @@ def main():
             mapping = run_llm_mapping(content, vulns, args.model, llm_client)
         except json.JSONDecodeError as e:
             print(f"  {colored('✗', 'RED')} LLM returned invalid JSON: {e}", file=sys.stderr)
+            summary_rows.append({"file": md_file.name, "status": "error"})
             continue
         except anthropic.APIError as e:
             print(f"  {colored('✗', 'RED')} Claude API error: {e}", file=sys.stderr)
+            summary_rows.append({"file": md_file.name, "status": "error"})
             continue
 
         if args.scanner:
@@ -530,8 +619,24 @@ def main():
 
         print_mapping_table(mapping, vulns)
 
+        findings = mapping.get("findings", [])
+        matched = sum(1 for f in findings if f.get("matched_vuln_db_id"))
+        unmatched = sum(1 for f in findings if not f.get("matched_vuln_db_id") and not f.get("is_false_positive"))
+        fps = sum(1 for f in findings if f.get("is_false_positive"))
+        row = {
+            "file": md_file.name,
+            "scanner": mapping.get("scanner_name", "unknown"),
+            "date": mapping.get("scan_date", ""),
+            "total": len(findings),
+            "matched": matched,
+            "unmatched": unmatched,
+            "fp": fps,
+        }
+
         if args.dry_run:
             print(f"\n  {colored('⚑', 'YELLOW')} Dry run — skipping submission")
+            row["status"] = "dry-run"
+            summary_rows.append(row)
             continue
 
         # Confirm before submitting
@@ -539,9 +644,13 @@ def main():
             answer = input(f"\n  {colored('?', 'CYAN')} Submit this scan? [{colored('y', 'GREEN')}/N] ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print(f"\n  {colored('⏭', 'YELLOW')} Aborted")
+            row["status"] = "aborted"
+            summary_rows.append(row)
             break
         if answer != "y":
             print(f"  {colored('⏭', 'YELLOW')} Skipped")
+            row["status"] = "skipped"
+            summary_rows.append(row)
             continue
 
         try:
@@ -552,9 +661,14 @@ def main():
             if label_names:
                 print(f"  {colored('✓', 'GREEN')} Labels: {colored(', '.join(label_names), 'CYAN')}")
             print(f"  {colored('🔗', 'BLUE')} {args.url}/scans/{scan_id}")
+            row["status"] = "submitted"
+            row["scan_id"] = scan_id
         except httpx.HTTPStatusError as e:
             print(f"  {colored('✗', 'RED')} Submit failed: {e.response.status_code} {e.response.text}", file=sys.stderr)
+            row["status"] = "failed"
+        summary_rows.append(row)
 
+    print_summary_table(summary_rows)
     print(f"\n  {colored('Done.', 'GREEN')}\n")
 
 
