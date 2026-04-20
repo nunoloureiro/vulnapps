@@ -576,7 +576,7 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .matrix-hit { color: var(--success); font-size: 1.125rem; font-weight: 700; }
 .matrix-miss { color: #3f3f46; font-size: 1.125rem; }
 .matrix-table td, .matrix-table th { padding: 0.5rem 0.75rem; }
-.matrix-header { max-width: 100px; word-wrap: break-word; }
+.matrix-header { max-width: 140px; word-wrap: break-word; vertical-align: top; }
 .tooltip-wrap { position: relative; display: inline-block; cursor: help; }
 .tooltip-wrap .tooltip-text {
     visibility: hidden;

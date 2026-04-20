@@ -465,6 +465,14 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
             cursor = await db.execute("SELECT * FROM scan_findings WHERE scan_id = ?", (sid,))
             findings = await cursor.fetchall()
 
+            cursor = await db.execute(
+                """SELECT l.id, l.name, l.color FROM labels l
+                   JOIN scan_labels sl ON sl.label_id = l.id
+                   WHERE sl.scan_id = ? ORDER BY l.name""",
+                (sid,),
+            )
+            scan_labels = [dict(row) for row in await cursor.fetchall()]
+
             matched_ids = {f["matched_vuln_id"] for f in findings if f["matched_vuln_id"] is not None}
             tp = len(matched_ids)
             fp = sum(1 for f in findings if f["is_false_positive"] == 1)
@@ -493,6 +501,7 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
             scanners.append({
                 "scan": scan,
                 "short_date": short_date,
+                "labels": scan_labels,
                 "metrics": {"tp": tp, "fp": fp, "pending": pending, "fn": fn, "precision": precision, "recall": recall, "f1": f1},
                 "matched_vuln_ids": matched_ids,
                 "fp_findings": fp_findings,

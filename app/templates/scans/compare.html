@@ -1,5 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Compare Scans - {{ app.name }} - Vulnapps{% endblock %}
+
+{% macro scanner_header(s) %}
+    {{ s.scan.scanner_name }}<br>
+    <span class="text-muted text-xs">{{ s.short_date }}</span>
+    {% if s.labels %}
+    <div class="scan-labels-cell" style="justify-content: center; margin-top: 0.25rem;">
+        {% for lbl in s.labels %}
+            <span class="label-badge" style="background: {{ lbl.color }}1a; color: {{ lbl.color }}; border: 1px solid {{ lbl.color }}40; font-weight: 500;">{{ lbl.name }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+{% endmacro %}
+
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">Compare Scans <span class="text-muted text-sm">{{ app.name }}{% if app.version %} v{{ app.version }}{% endif %}</span></h1>
@@ -178,7 +191,7 @@
                 <tr>
                     <th>Metric</th>
                     {% for s in comparison.scanners %}
-                        <th class="text-center">{{ s.scan.scanner_name }}<br><span class="text-muted text-xs">{{ s.short_date }}</span></th>
+                        <th class="text-center">{{ scanner_header(s) }}</th>
                     {% endfor %}
                 </tr>
             </thead>
@@ -250,7 +263,7 @@
                     <th>Vulnerability</th>
                     <th>Severity</th>
                     {% for s in comparison.scanners %}
-                        <th class="text-center matrix-header">{{ s.scan.scanner_name }}<br><span class="text-muted text-xs">{{ s.short_date }}</span></th>
+                        <th class="text-center matrix-header">{{ scanner_header(s) }}</th>
                     {% endfor %}
                     <th class="text-center">Found</th>
                 </tr>
@@ -294,7 +307,7 @@
                     <th>Location</th>
                     <th>Parameter</th>
                     {% for s in comparison.scanners %}
-                        <th class="text-center matrix-header">{{ s.scan.scanner_name }}<br><span class="text-muted text-xs">{{ s.short_date }}</span></th>
+                        <th class="text-center matrix-header">{{ scanner_header(s) }}</th>
                     {% endfor %}
                     <th class="text-center">Flagged</th>
                     {% if can_edit %}
