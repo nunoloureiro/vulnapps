@@ -499,6 +499,7 @@ def main():
     parser.add_argument("--dir", required=True, help="Directory with .md scan result files")
     parser.add_argument("--file", help="Single .md file to import (instead of --dir)")
     parser.add_argument("--scanner", default=None, help="Scanner name (overrides LLM-detected name)")
+    parser.add_argument("--scan-date", default=None, help="Scan date in YYYY-MM-DD (overrides LLM-detected date)")
     parser.add_argument("--public", action="store_true", help="Make scan public (default: private)")
     parser.add_argument("--labels", default="", help="Comma-separated labels (must already exist in Vulnapps)")
     parser.add_argument("--cost", type=float, default=None, help="Scan cost in USD (optional, private — for LLM-based scanners)")
@@ -516,6 +517,15 @@ def main():
     if not args.api_key:
         print(f"  {colored('Error:', 'RED')} --api-key or VULNAPPS_API_KEY environment variable required", file=sys.stderr)
         sys.exit(1)
+
+    # Validate --scan-date format
+    if args.scan_date:
+        try:
+            from datetime import datetime as _dt
+            _dt.strptime(args.scan_date, "%Y-%m-%d")
+        except ValueError:
+            print(f"  {colored('Error:', 'RED')} --scan-date must be in YYYY-MM-DD format", file=sys.stderr)
+            sys.exit(1)
 
     # Auto-detect Vertex from env (same vars as Claude Code)
     if args.provider is None:
@@ -616,6 +626,8 @@ def main():
 
         if args.scanner:
             mapping["scanner_name"] = args.scanner
+        if args.scan_date:
+            mapping["scan_date"] = args.scan_date
 
         print_mapping_table(mapping, vulns)
 
