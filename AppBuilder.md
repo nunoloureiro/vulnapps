@@ -136,7 +136,10 @@ vulnapps/
 │   ├── 006_teams.sql                    # Teams + team_members tables
 │   ├── 007_app_visibility.sql           # App visibility + team_id
 │   ├── ...                              # 008-011: incremental changes
-│   └── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
+│   ├── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
+│   └── 013_api_keys.sql                # API keys table with scopes
+├── tools/
+│   └── import_scan.py                  # CLI scan importer with LLM-assisted vuln mapping
 ├── tests/
 │   └── __init__.py
 ├── tasks/
@@ -168,6 +171,7 @@ pyjwt
 bcrypt
 python-dotenv
 httpx
+anthropic
 pytest
 pytest-asyncio
 ```
@@ -185,7 +189,7 @@ Uses `python-dotenv` to load `.env` file.
 
 ---
 
-## Database Schema (migrations 001–012)
+## Database Schema (migrations 001–013)
 
 ```sql
 PRAGMA journal_mode=WAL;
@@ -291,6 +295,19 @@ CREATE TABLE IF NOT EXISTS team_members (
 
 CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id);
 CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id);
+
+-- Migration 013: API keys
+CREATE TABLE IF NOT EXISTS api_keys (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key_prefix TEXT NOT NULL,
+    key_hash   TEXT NOT NULL,
+    name       TEXT NOT NULL DEFAULT 'default',
+    scope      TEXT NOT NULL DEFAULT 'read' CHECK(scope IN ('read','vuln-mapper','full')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_used  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
 ```
 
 ### Tech Stack
@@ -321,14 +338,19 @@ On startup (via FastAPI lifespan), all `.sql` files in `migrations/` are execute
 - **Login:** email + password (not username)
 - **Register:** name (display name) + email + password
 - **Web:** JWT stored in httponly cookie named `token`, set on login/register, deleted on logout
-- **API:** JWT in `Authorization: Bearer <token>` header
-- `get_current_user` middleware checks cookie first, then header, injects result into `request.state.user`
+- **API:** JWT or API key in `Authorization: Bearer <token>` header
+- **API Keys:** Format `va_` + 32 hex chars. Stored as SHA-256 hash. Users generate/revoke from Account page.
+  - Scopes: `read` (GET only), `vuln-mapper` (read + submit scans + match findings), `full` (all ops)
+  - `get_current_user` detects `va_` prefix → looks up in `api_keys` table → loads user with `api_key_scope`
+  - `require_scope(user, min_scope)` enforces scope hierarchy. JWT/cookie users bypass scope checks.
+- `get_current_user` middleware checks cookie first, then Bearer header (JWT or API key), injects result into `request.state.user`
 - Role-based auth functions raise HTTPException 401/403:
   - `require_user` — any authenticated user
   - `require_admin` — admin only
   - `require_app_write(request, db, app)` — admin, creator, or team contributor+
   - `require_scan_write(request, db, scan, app)` — admin, submitter, or team contributor+
   - `get_team_role(db, user_id, team_id)` — returns team role or None
+  - `require_scope(user, min_scope)` — API key scope check
 - Password hashing: bcrypt
 - JWT payload: `{ sub: user_id, name, role, exp }`
 - 24h token expiry, no refresh tokens
@@ -425,6 +447,15 @@ Source: `/Users/nuno/dev/TaintedPort/KnownVulnerabilities.txt`
 | POST | `/scans/{id}/findings/{fid}/mark-fp` | Scan write | Mark finding as false positive |
 | GET | `/apps/{id}/compare` | None | Scan comparison — selector when no params, results when `?scans=1,2,3` |
 
+### Account (`/account`)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/account` | User+ | Account settings page (name, email, password, API keys) |
+| POST | `/account/name` | User+ | Update display name (JSON body) |
+| POST | `/account/password` | User+ | Change password (JSON body with current + new) |
+| POST | `/account/api-keys` | User+ | Generate API key (JSON: `{name, scope}`) — returns full key once |
+| DELETE | `/account/api-keys/{id}` | User+ | Revoke API key (must own it) |
+
 ### Admin (`/admin`)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -449,19 +480,21 @@ Source: `/Users/nuno/dev/TaintedPort/KnownVulnerabilities.txt`
 
 ## REST API Routes (`/api/v1`)
 
-All return JSON. Auth via `Authorization: Bearer <token>` header.
+All return JSON. Auth via `Authorization: Bearer <token>` header (JWT or API key).
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/v1/apps` | None | List apps (visibility filtered) |
-| GET | `/api/v1/apps/{id}` | None | App detail with vulns (visibility filtered) |
-| GET | `/api/v1/apps/{id}/vulns` | None | List vulns for app (visibility filtered) |
-| POST | `/api/v1/apps` | User+ | Create app (JSON body, validates visibility permissions) |
-| POST | `/api/v1/apps/{id}/vulns` | App write | Create vuln (JSON body, uses `require_app_write`) |
-| GET | `/api/v1/scans` | None | List scans (uses `scan_visibility_filter`) |
-| GET | `/api/v1/scans/{id}` | Varies | Scan detail with metrics (visibility checked) |
-| POST | `/api/v1/apps/{id}/scans` | User+ | Submit scan (validates scan submission permissions) |
-| GET | `/api/v1/apps/{id}/compare?scans=1,2,3` | None | Compare up to 7 scans (JSON metrics + detection matrix) |
+| Method | Path | Auth / Scope | Description |
+|--------|------|-------------|-------------|
+| GET | `/api/v1/apps` | None / read | List apps (visibility filtered) |
+| GET | `/api/v1/apps/{id}` | None / read | App detail with vulns (visibility filtered) |
+| GET | `/api/v1/apps/{id}/vulns` | None / read | List vulns for app (visibility filtered) |
+| POST | `/api/v1/apps` | User+ / full | Create app (JSON body, validates visibility permissions) |
+| POST | `/api/v1/apps/{id}/vulns` | App write / full | Create vuln (JSON body, uses `require_app_write`) |
+| GET | `/api/v1/scans` | None / read | List scans (uses `scan_visibility_filter`) |
+| GET | `/api/v1/scans/{id}` | Varies / read | Scan detail with metrics (visibility checked) |
+| POST | `/api/v1/apps/{id}/scans` | User+ / vuln-mapper | Submit scan (validates scan submission permissions) |
+| POST | `/api/v1/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Manual match finding to vuln `{"vuln_id": int\|null}` |
+| POST | `/api/v1/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive |
+| GET | `/api/v1/apps/{id}/compare?scans=1,2,3` | None / read | Compare up to 7 scans (JSON metrics + detection matrix) |
 
 ---
 

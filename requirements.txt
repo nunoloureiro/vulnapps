@@ -7,5 +7,6 @@ pyjwt
 bcrypt
 python-dotenv
 httpx
+anthropic[vertex]
 pytest
 pytest-asyncio

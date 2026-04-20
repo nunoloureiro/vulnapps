@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block title %}Account - Vulnapps{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Account Settings</h1>
+</div>
+
+<div style="max-width: 600px;">
+    <!-- Name -->
+    <div class="card mb-2">
+        <h3 class="card-title mb-2">Name</h3>
+        <form id="name-form" class="flex gap-1 items-center">
+            <input type="text" id="name-input" class="form-input" value="{{ account.name }}" required style="flex:1">
+            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+        </form>
+        <div id="name-feedback" class="text-sm mt-1"></div>
+    </div>
+
+    <!-- Email -->
+    <div class="card mb-2">
+        <h3 class="card-title mb-2">Email</h3>
+        <div class="detail-grid">
+            <span class="detail-label">Email</span>
+            <span class="detail-value">{{ account.email }}</span>
+        </div>
+        <p class="text-xs text-muted mt-1">Contact an administrator to change your email.</p>
+    </div>
+
+    <!-- Account Info -->
+    <div class="card mb-2">
+        <h3 class="card-title mb-2">Account Info</h3>
+        <div class="detail-grid">
+            <span class="detail-label">Role</span>
+            <span class="detail-value"><span class="badge badge-{{ account.role }}">{{ account.role }}</span></span>
+            <span class="detail-label">Member since</span>
+            <span class="detail-value">{{ account.created_at[:10] if account.created_at else 'N/A' }}</span>
+        </div>
+    </div>
+
+    <!-- Password -->
+    <div class="card mb-2">
+        <h3 class="card-title mb-2">Password</h3>
+        <p class="text-sm text-secondary mb-2">Change your account password.</p>
+        <button class="btn btn-outline btn-sm" onclick="document.getElementById('password-modal').style.display='flex'">Change Password</button>
+    </div>
+
+    <!-- API Keys -->
+    <div class="card mb-2">
+        <h3 class="card-title mb-2">API Keys</h3>
+        <p class="text-sm text-secondary mb-2">Generate API keys for programmatic access. Keys are shown only once.</p>
+
+        <div id="api-keys-list">
+        {% for key in api_keys %}
+            <div class="api-key-row flex items-center gap-1 mb-1" data-key-id="{{ key.id }}" style="padding: 0.5rem 0; border-bottom: 1px solid var(--border);">
+                <div style="flex: 1; min-width: 0;">
+                    <span class="text-sm" style="font-weight: 500;">{{ key.name }}</span>
+                    <span class="badge badge-{% if key.scope == 'full' %}admin{% elif key.scope == 'vuln-mapper' %}info{% else %}user{% endif %}" style="margin-left: 0.5rem;">{{ key.scope }}</span>
+                    <div class="text-xs text-muted" style="margin-top: 2px;">
+                        <code>{{ key.key_prefix }}...</code> &middot;
+                        Created {{ key.created_at[:10] }}{% if key.last_used %} &middot; Last used {{ key.last_used[:10] }}{% endif %}
+                    </div>
+                </div>
+                <button class="btn btn-outline btn-sm" style="color: var(--error); border-color: var(--error);" onclick="revokeKey({{ key.id }}, this)">Revoke</button>
+            </div>
+        {% endfor %}
+        {% if not api_keys %}
+            <p class="text-sm text-muted" id="no-keys-msg">No API keys yet.</p>
+        {% endif %}
+        </div>
+
+        <div style="margin-top: 1rem; display: flex; gap: 0.5rem; align-items: flex-end; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 120px;">
+                <label class="form-label text-xs" for="key-name">Name</label>
+                <input type="text" id="key-name" class="form-input" placeholder="e.g. scan-importer" style="font-size: 0.875rem;">
+            </div>
+            <div style="min-width: 130px;">
+                <label class="form-label text-xs" for="key-scope">Scope</label>
+                <select id="key-scope" class="form-input" style="font-size: 0.875rem;">
+                    <option value="read">read</option>
+                    <option value="vuln-mapper">vuln-mapper</option>
+                    <option value="full">full</option>
+                </select>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="generateKey()">Generate Key</button>
+        </div>
+
+        <div id="new-key-display" style="display: none; margin-top: 1rem; padding: 0.75rem; background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2); border-radius: var(--radius);">
+            <p class="text-sm text-success" style="font-weight: 500; margin-bottom: 0.25rem;">Key created — copy it now, it won't be shown again.</p>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <code id="new-key-value" style="flex: 1; font-size: 0.8125rem; word-break: break-all; background: var(--bg); padding: 0.5rem; border-radius: 4px;"></code>
+                <button class="btn btn-outline btn-sm" onclick="copyKey()">Copy</button>
+            </div>
+        </div>
+
+        <div id="key-feedback" class="text-sm mt-1"></div>
+    </div>
+</div>
+
+<!-- Password Modal -->
+<div id="password-modal" class="modal-backdrop" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+    <div class="modal">
+        <button class="modal-close" onclick="document.getElementById('password-modal').style.display='none'">&times;</button>
+        <h3 class="card-title mb-2">Change Password</h3>
+        <form id="password-form">
+            <div class="form-group">
+                <label class="form-label" for="current-password">Current Password</label>
+                <input type="password" id="current-password" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="new-password">New Password</label>
+                <input type="password" id="new-password" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="confirm-password">Confirm New Password</label>
+                <input type="password" id="confirm-password" class="form-input" required>
+            </div>
+            <div id="password-feedback" class="text-sm mb-1"></div>
+            <button type="submit" class="btn btn-primary" style="width:100%">Update Password</button>
+        </form>
+    </div>
+</div>
+
+<script>
+document.getElementById('name-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fb = document.getElementById('name-feedback');
+    const name = document.getElementById('name-input').value.trim();
+    if (!name) return;
+    try {
+        const res = await fetch('/account/name', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name})
+        });
+        const data = await res.json();
+        if (res.ok) {
+            fb.textContent = 'Name updated.';
+            fb.className = 'text-sm mt-1 text-success';
+        } else {
+            fb.textContent = data.detail || 'Error updating name.';
+            fb.className = 'text-sm mt-1 text-error';
+        }
+    } catch {
+        fb.textContent = 'Network error.';
+        fb.className = 'text-sm mt-1 text-error';
+    }
+});
+
+document.getElementById('password-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fb = document.getElementById('password-feedback');
+    const current = document.getElementById('current-password').value;
+    const newPw = document.getElementById('new-password').value;
+    const confirm = document.getElementById('confirm-password').value;
+    if (newPw !== confirm) {
+        fb.textContent = 'New passwords do not match.';
+        fb.className = 'text-sm mb-1 text-error';
+        return;
+    }
+    if (newPw.length < 4) {
+        fb.textContent = 'Password must be at least 4 characters.';
+        fb.className = 'text-sm mb-1 text-error';
+        return;
+    }
+    try {
+        const res = await fetch('/account/password', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({current_password: current, new_password: newPw})
+        });
+        const data = await res.json();
+        if (res.ok) {
+            fb.textContent = 'Password updated.';
+            fb.className = 'text-sm mb-1 text-success';
+            document.getElementById('password-form').reset();
+            setTimeout(() => { document.getElementById('password-modal').style.display = 'none'; fb.textContent = ''; }, 1500);
+        } else {
+            fb.textContent = data.detail || 'Error updating password.';
+            fb.className = 'text-sm mb-1 text-error';
+        }
+    } catch {
+        fb.textContent = 'Network error.';
+        fb.className = 'text-sm mb-1 text-error';
+    }
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') document.getElementById('password-modal').style.display = 'none';
+});
+
+async function generateKey() {
+    const name = document.getElementById('key-name').value.trim() || 'default';
+    const scope = document.getElementById('key-scope').value;
+    const fb = document.getElementById('key-feedback');
+    try {
+        const res = await fetch('/account/api-keys', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name, scope})
+        });
+        const data = await res.json();
+        if (res.ok) {
+            document.getElementById('new-key-value').textContent = data.key;
+            document.getElementById('new-key-display').style.display = 'block';
+            document.getElementById('key-name').value = '';
+            fb.textContent = '';
+            const noMsg = document.getElementById('no-keys-msg');
+            if (noMsg) noMsg.remove();
+            // Add row to list
+            const scopeClass = scope === 'full' ? 'admin' : scope === 'vuln-mapper' ? 'info' : 'user';
+            const today = new Date().toISOString().slice(0, 10);
+            const list = document.getElementById('api-keys-list');
+            const row = document.createElement('div');
+            row.className = 'api-key-row flex items-center gap-1 mb-1';
+            row.setAttribute('data-key-id', '0');
+            row.style.cssText = 'padding: 0.5rem 0; border-bottom: 1px solid var(--border);';
+            row.innerHTML = `<div style="flex: 1; min-width: 0;">
+                <span class="text-sm" style="font-weight: 500;">${name}</span>
+                <span class="badge badge-${scopeClass}" style="margin-left: 0.5rem;">${scope}</span>
+                <div class="text-xs text-muted" style="margin-top: 2px;">
+                    <code>${data.prefix}...</code> &middot; Created ${today}
+                </div>
+            </div>`;
+            list.prepend(row);
+        } else {
+            fb.textContent = data.detail || 'Error creating key.';
+            fb.className = 'text-sm mt-1 text-error';
+        }
+    } catch {
+        fb.textContent = 'Network error.';
+        fb.className = 'text-sm mt-1 text-error';
+    }
+}
+
+function copyKey() {
+    const key = document.getElementById('new-key-value').textContent;
+    navigator.clipboard.writeText(key);
+}
+
+async function revokeKey(keyId, btn) {
+    if (!confirm('Revoke this API key? This cannot be undone.')) return;
+    try {
+        const res = await fetch(`/account/api-keys/${keyId}`, {method: 'DELETE'});
+        if (res.ok) {
+            btn.closest('.api-key-row').remove();
+        }
+    } catch {}
+}
+</script>
+{% endblock %}
