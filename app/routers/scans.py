@@ -248,6 +248,11 @@ async def submit_scan(request: Request, app_id: int):
     authenticated = 1 if form.get("authenticated") else 0
     is_public = 1 if form.get("is_public") else 0
     notes = form.get("notes")
+    cost_raw = (form.get("cost") or "").strip()
+    try:
+        cost = float(cost_raw) if cost_raw else None
+    except ValueError:
+        cost = None
 
     db = await get_connection()
     try:
@@ -314,9 +319,9 @@ async def submit_scan(request: Request, app_id: int):
                 i += 1
 
         cursor = await db.execute(
-            """INSERT INTO scans (app_id, scanner_name, scan_date, authenticated, is_public, notes, submitted_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (app_id, scanner_name, scan_date, authenticated, is_public, notes, user["sub"]),
+            """INSERT INTO scans (app_id, scanner_name, scan_date, authenticated, is_public, notes, cost, submitted_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (app_id, scanner_name, scan_date, authenticated, is_public, notes, cost, user["sub"]),
         )
         scan_id = cursor.lastrowid
 
@@ -635,15 +640,20 @@ async def scan_detail(request: Request, scan_id: int):
 
         # Determine scan edit permissions
         can_edit_scan = False
+        can_view_cost = False
         if user:
             if user["role"] == "admin":
                 can_edit_scan = True
+                can_view_cost = True
             elif scan["submitted_by"] == user["sub"]:
                 can_edit_scan = True
+                can_view_cost = True
             elif app["visibility"] == "team" and app["team_id"]:
                 team_role = await get_team_role(db, user["sub"], app["team_id"])
                 if team_role in ("admin", "contributor"):
                     can_edit_scan = True
+                if team_role is not None:
+                    can_view_cost = True
 
         # Fetch labels for this scan
         cursor = await db.execute(
@@ -673,6 +683,7 @@ async def scan_detail(request: Request, scan_id: int):
             "vuln_finding_counts": dict(vuln_finding_counts),
             "vuln_finding_details": vuln_finding_details,
             "can_edit_scan": can_edit_scan,
+            "can_view_cost": can_view_cost,
             "scan_labels": scan_label_list,
             "all_labels_json": json.dumps(all_labels),
         },

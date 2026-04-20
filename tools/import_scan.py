@@ -343,7 +343,7 @@ def print_mapping_table(mapping: dict, vulns: list):
     print(f"\n  {C.DIM}Summary:{C.RESET} {' / '.join(parts)}")
 
 
-def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_public: bool, notes: str):
+def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_public: bool, notes: str, cost: float | None = None):
     """Submit the scan and apply LLM-corrected matches."""
     findings_payload = []
     for f in mapping.get("findings", []):
@@ -363,6 +363,8 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
         "notes": notes,
         "findings": findings_payload,
     }
+    if cost is not None:
+        scan_data["cost"] = cost
 
     with Spinner("Submitting scan..."):
         result = client.submit_scan(app_id, scan_data)
@@ -416,6 +418,7 @@ def main():
     parser.add_argument("--scanner", default=None, help="Scanner name (overrides LLM-detected name)")
     parser.add_argument("--public", action="store_true", help="Make scan public (default: private)")
     parser.add_argument("--labels", default="", help="Comma-separated labels (must already exist in Vulnapps)")
+    parser.add_argument("--cost", type=float, default=None, help="Scan cost in USD (optional, private — for LLM-based scanners)")
     parser.add_argument("--notes", default="", help="Notes to attach to the scan")
     parser.add_argument("--model", default=None, help="Claude model (default: claude-sonnet-4-20250514)")
     parser.add_argument("--provider", choices=["anthropic", "vertex"], default=None,
@@ -542,7 +545,7 @@ def main():
             continue
 
         try:
-            scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes)
+            scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost)
             # Apply labels
             for label_name in label_names:
                 client.add_label(scan_id, label_name)

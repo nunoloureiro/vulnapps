@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException
 from app.database import get_connection
-from app.dependencies import require_user, require_app_write, require_scan_write, get_team_role
+from app.dependencies import require_user, require_app_write, require_scan_write, get_team_role, require_scope
 from app.matching import match_finding
 from app.visibility import app_visibility_filter, scan_visibility_filter
 
@@ -89,6 +89,7 @@ async def list_vulns(request: Request, app_id: int):
 @router.post("/apps")
 async def create_app(request: Request):
     user = await require_user(request)
+    require_scope(user, "full")
     body = await request.json()
 
     db = await get_connection()
@@ -145,6 +146,8 @@ async def create_app(request: Request):
 
 @router.post("/apps/{app_id}/vulns")
 async def create_vuln(request: Request, app_id: int):
+    user_check = await require_user(request)
+    require_scope(user_check, "full")
     body = await request.json()
 
     db = await get_connection()
@@ -205,6 +208,9 @@ async def list_scans(request: Request):
             vis_params,
         )
         scans = [dict(row) for row in await cursor.fetchall()]
+        # Never expose cost in list view
+        for s in scans:
+            s.pop("cost", None)
     finally:
         await db.close()
 
@@ -267,11 +273,24 @@ async def scan_detail(request: Request, scan_id: int):
             "recall": recall,
             "f1": f1,
         }
+
+        # Cost visibility: owner, any team member, or admin
+        can_view_cost = False
+        if user:
+            if user["role"] == "admin" or scan["submitted_by"] == user["sub"]:
+                can_view_cost = True
+            elif app["visibility"] == "team" and app["team_id"]:
+                if await get_team_role(db, user["sub"], app["team_id"]) is not None:
+                    can_view_cost = True
     finally:
         await db.close()
 
+    scan_dict = dict(scan)
+    if not can_view_cost:
+        scan_dict.pop("cost", None)
+
     return {
-        "scan": dict(scan),
+        "scan": scan_dict,
         "app": dict(app),
         "metrics": metrics,
         "findings": [dict(f) for f in findings],
@@ -282,6 +301,7 @@ async def scan_detail(request: Request, scan_id: int):
 @router.post("/apps/{app_id}/scans")
 async def submit_scan(request: Request, app_id: int):
     user = await require_user(request)
+    require_scope(user, "vuln-mapper")
     body = await request.json()
 
     db = await get_connection()
@@ -307,12 +327,18 @@ async def submit_scan(request: Request, app_id: int):
         authenticated = 1 if body.get("authenticated") else 0
         is_public = 1 if body.get("is_public", True) else 0
         notes = body.get("notes")
+        cost = body.get("cost")
+        if cost is not None:
+            try:
+                cost = float(cost)
+            except (TypeError, ValueError):
+                cost = None
         findings_data = body.get("findings", [])
 
         cursor = await db.execute(
-            """INSERT INTO scans (app_id, scanner_name, scan_date, authenticated, is_public, notes, submitted_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (app_id, scanner_name, scan_date, authenticated, is_public, notes, user["sub"]),
+            """INSERT INTO scans (app_id, scanner_name, scan_date, authenticated, is_public, notes, cost, submitted_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (app_id, scanner_name, scan_date, authenticated, is_public, notes, cost, user["sub"]),
         )
         scan_id = cursor.lastrowid
 
@@ -406,3 +432,68 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
         "matrix": matrix,
         "known_vuln_count": len(known_vulns),
     }
+
+
+@router.post("/scans/{scan_id}/findings/{finding_id}/match")
+async def match_finding_api(request: Request, scan_id: int, finding_id: int):
+    user = await require_user(request)
+    require_scope(user, "vuln-mapper")
+    body = await request.json()
+    vuln_id = body.get("vuln_id")
+
+    if vuln_id is not None:
+        matched_vuln_id = int(vuln_id)
+        is_false_positive = 0
+    else:
+        matched_vuln_id = None
+        is_false_positive = 0
+
+    db = await get_connection()
+    try:
+        cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
+        scan = await cursor.fetchone()
+        if not scan:
+            raise HTTPException(status_code=404, detail="Scan not found")
+
+        cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (scan["app_id"],))
+        app = await cursor.fetchone()
+
+        await require_scan_write(request, db, scan, app)
+
+        await db.execute(
+            "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = ? WHERE id = ? AND scan_id = ?",
+            (matched_vuln_id, is_false_positive, finding_id, scan_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    return {"ok": True, "matched_vuln_id": matched_vuln_id, "is_false_positive": is_false_positive}
+
+
+@router.post("/scans/{scan_id}/findings/{finding_id}/mark-fp")
+async def mark_fp_api(request: Request, scan_id: int, finding_id: int):
+    user = await require_user(request)
+    require_scope(user, "vuln-mapper")
+
+    db = await get_connection()
+    try:
+        cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
+        scan = await cursor.fetchone()
+        if not scan:
+            raise HTTPException(status_code=404, detail="Scan not found")
+
+        cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (scan["app_id"],))
+        app = await cursor.fetchone()
+
+        await require_scan_write(request, db, scan, app)
+
+        await db.execute(
+            "UPDATE scan_findings SET matched_vuln_id = NULL, is_false_positive = 1 WHERE id = ? AND scan_id = ?",
+            (finding_id, scan_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+    return {"ok": True}

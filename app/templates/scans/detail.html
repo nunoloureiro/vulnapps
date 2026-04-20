@@ -43,6 +43,11 @@
             </div>
         </span>
 
+        {% if can_view_cost and scan.cost is not none %}
+        <span class="detail-label">Cost <span class="text-muted text-xs">(private)</span></span>
+        <span class="detail-value font-mono">${{ '%.4f' % scan.cost }}</span>
+        {% endif %}
+
         {% if scan.notes %}
         <span class="detail-label">Notes</span>
         <span class="detail-value">{{ scan.notes }}</span>
