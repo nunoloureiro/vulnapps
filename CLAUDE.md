@@ -57,3 +57,9 @@
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
 - **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
 - Keep all the specs on a AppBuilder.md file. Every change or new implementation should be updated in that file. You can think of the file as a prompt that would give you all the instructions required to build everything from scratch.
+
+---
+
+# Git
+
+- **No Co-Authored-By**: Do not add Co-Authored-By lines to commit messages.
