@@ -500,6 +500,9 @@ def main():
     parser.add_argument("--file", help="Single .md file to import (instead of --dir)")
     parser.add_argument("--scanner", default=None, help="Scanner name (overrides LLM-detected name)")
     parser.add_argument("--scan-date", default=None, help="Scan date in YYYY-MM-DD (overrides LLM-detected date)")
+    auth_group = parser.add_mutually_exclusive_group()
+    auth_group.add_argument("--authenticated", dest="auth_override", action="store_const", const=True, help="Mark scan as authenticated (overrides LLM detection)")
+    auth_group.add_argument("--unauthenticated", dest="auth_override", action="store_const", const=False, help="Mark scan as unauthenticated (overrides LLM detection)")
     parser.add_argument("--public", action="store_true", help="Make scan public (default: private)")
     parser.add_argument("--labels", default="", help="Comma-separated labels (auto-created if missing)")
     parser.add_argument("--confirm", action="store_true", help="Ask for confirmation before submitting each scan")
@@ -628,6 +631,8 @@ def main():
             mapping["scanner_name"] = args.scanner
         if args.scan_date:
             mapping["scan_date"] = args.scan_date
+        if args.auth_override is not None:
+            mapping["authenticated"] = args.auth_override
 
         print_mapping_table(mapping, vulns)
 

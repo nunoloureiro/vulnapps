@@ -75,6 +75,7 @@ python tools/import_scan.py --url <vulnapps-url> --app-id <id> --dir <scan-resul
 | `--file` | Single `.md` file (instead of `--dir`) | |
 | `--scanner` | Scanner name (overrides LLM-detected name) | |
 | `--scan-date` | Scan date in YYYY-MM-DD (overrides LLM-detected date) | |
+| `--authenticated` / `--unauthenticated` | Mark scan as authenticated / unauthenticated (overrides LLM detection) | |
 | `--model` | Claude model to use | `claude-sonnet-4-20250514` |
 | `--provider` | `anthropic` or `vertex` | auto-detected |
 | `--vertex-region` | Vertex AI region | `$ANTHROPIC_VERTEX_LOCATION` |
