@@ -2,7 +2,7 @@
 {% block title %}Compare Scans - {{ app.name }} - Vulnapps{% endblock %}
 
 {% macro scanner_header(s) %}
-    {{ s.scan.scanner_name }}<br>
+    <a href="/scans/{{ s.scan.id }}">{{ s.scan.scanner_name }}</a><br>
     <span class="text-muted text-xs">{{ s.short_date }}</span>
     {% if s.labels %}
     <div class="scan-labels-cell" style="justify-content: center; margin-top: 0.25rem;">

@@ -507,6 +507,10 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
                 "fp_findings": fp_findings,
             })
 
+        # Order scanners by scan date ascending (oldest first) so the matrix
+        # columns read as a timeline. Fall back to scan id for stable sort.
+        scanners.sort(key=lambda s: (s["scan"]["scan_date"] or "", s["scan"]["id"]))
+
         # Build detection matrix: for each vuln, which scanners found it
         matrix = []
         for v in known_vulns:
