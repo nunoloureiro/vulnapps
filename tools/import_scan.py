@@ -501,7 +501,7 @@ def main():
     parser.add_argument("--scanner", default=None, help="Scanner name (overrides LLM-detected name)")
     parser.add_argument("--scan-date", default=None, help="Scan date in YYYY-MM-DD (overrides LLM-detected date)")
     parser.add_argument("--public", action="store_true", help="Make scan public (default: private)")
-    parser.add_argument("--labels", default="", help="Comma-separated labels (must already exist in Vulnapps)")
+    parser.add_argument("--labels", default="", help="Comma-separated labels (auto-created if missing)")
     parser.add_argument("--cost", type=float, default=None, help="Scan cost in USD (optional, private — for LLM-based scanners)")
     parser.add_argument("--notes", default="", help="Notes to attach to the scan")
     parser.add_argument("--model", default=None, help="Claude model (default: claude-sonnet-4-20250514)")
@@ -586,16 +586,15 @@ def main():
     print(f"  {colored('✓', 'GREEN')} Known vulns: {colored(str(len(vulns)), 'BOLD')}")
     print(f"  {colored('✓', 'GREEN')} Scan files:  {colored(str(len(md_files)), 'BOLD')}")
 
-    # Validate labels
+    # Resolve labels (new ones will be created at submission time)
     label_names = [l.strip() for l in args.labels.split(",") if l.strip()] if args.labels else []
     if label_names:
         existing_labels = {l["name"]: l for l in client.get_labels()}
-        unknown = [n for n in label_names if n not in existing_labels]
-        if unknown:
-            print(f"  {colored('✗', 'RED')} Unknown labels: {', '.join(unknown)}", file=sys.stderr)
-            print(f"    {C.DIM}Available: {', '.join(sorted(existing_labels.keys())) or '(none)'}{C.RESET}", file=sys.stderr)
-            sys.exit(1)
-        print(f"  {colored('✓', 'GREEN')} Labels:      {colored(', '.join(label_names), 'CYAN')}")
+        new_labels = [n for n in label_names if n not in existing_labels]
+        if new_labels:
+            print(f"  {colored('✓', 'GREEN')} Labels:      {colored(', '.join(label_names), 'CYAN')} {C.DIM}(new: {', '.join(new_labels)}){C.RESET}")
+        else:
+            print(f"  {colored('✓', 'GREEN')} Labels:      {colored(', '.join(label_names), 'CYAN')}")
 
     if args.dry_run:
         print(f"  {colored('⚑', 'YELLOW')} Dry run mode — no changes will be made")

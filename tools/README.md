@@ -80,7 +80,7 @@ python tools/import_scan.py --url <vulnapps-url> --app-id <id> --dir <scan-resul
 | `--vertex-region` | Vertex AI region | `$ANTHROPIC_VERTEX_LOCATION` |
 | `--vertex-project` | GCP project ID | `$ANTHROPIC_VERTEX_PROJECT_ID` |
 | `--public` | Make the scan public | private by default |
-| `--labels` | Comma-separated labels (must exist in Vulnapps) | |
+| `--labels` | Comma-separated labels (auto-created if missing) | |
 | `--notes` | Notes to attach to the scan | |
 | `--dry-run` | Show LLM mapping without submitting | |
 
