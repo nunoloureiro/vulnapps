@@ -46,7 +46,7 @@
                     <p class="text-secondary text-sm mt-1">{{ item.app.description[:120] }}{% if item.app.description|length > 120 %}...{% endif %}</p>
                 {% endif %}
                 <div class="flex justify-between items-center mt-1">
-                    <span class="text-muted text-xs">{{ item.app.vuln_count }} vulnerabilit{{ 'y' if item.app.vuln_count == 1 else 'ies' }}</span>
+                    <span class="text-muted text-xs">{{ item.app.vuln_count }} vulnerabilit{{ 'y' if item.app.vuln_count == 1 else 'ies' }} &middot; {{ item.app.scan_count }} scan{{ '' if item.app.scan_count == 1 else 's' }}</span>
                     {% if item.app.creator_name %}
                         <span class="text-muted text-xs">by {{ item.app.creator_name }}</span>
                     {% endif %}

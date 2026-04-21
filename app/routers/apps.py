@@ -67,7 +67,8 @@ async def list_apps(request: Request, q: str = "", filter: str = ""):
 
         base_query = f"""
             SELECT apps.*, users.name as creator_name,
-                   (SELECT COUNT(*) FROM vulnerabilities WHERE app_id=apps.id) as vuln_count
+                   (SELECT COUNT(*) FROM vulnerabilities WHERE app_id=apps.id) as vuln_count,
+                   (SELECT COUNT(*) FROM scans WHERE app_id=apps.id) as scan_count
             FROM apps
             LEFT JOIN users ON apps.created_by=users.id
             WHERE {vis_clause}{extra_filters}
