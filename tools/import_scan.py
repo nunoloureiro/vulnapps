@@ -502,6 +502,7 @@ def main():
     parser.add_argument("--scan-date", default=None, help="Scan date in YYYY-MM-DD (overrides LLM-detected date)")
     parser.add_argument("--public", action="store_true", help="Make scan public (default: private)")
     parser.add_argument("--labels", default="", help="Comma-separated labels (auto-created if missing)")
+    parser.add_argument("--confirm", action="store_true", help="Ask for confirmation before submitting each scan")
     parser.add_argument("--cost", type=float, default=None, help="Scan cost in USD (optional, private — for LLM-based scanners)")
     parser.add_argument("--notes", default="", help="Notes to attach to the scan")
     parser.add_argument("--model", default=None, help="Claude model (default: claude-sonnet-4-20250514)")
@@ -650,19 +651,20 @@ def main():
             summary_rows.append(row)
             continue
 
-        # Confirm before submitting
-        try:
-            answer = input(f"\n  {colored('?', 'CYAN')} Submit this scan? [{colored('y', 'GREEN')}/N] ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print(f"\n  {colored('⏭', 'YELLOW')} Aborted")
-            row["status"] = "aborted"
-            summary_rows.append(row)
-            break
-        if answer != "y":
-            print(f"  {colored('⏭', 'YELLOW')} Skipped")
-            row["status"] = "skipped"
-            summary_rows.append(row)
-            continue
+        # Confirm before submitting (only if --confirm)
+        if args.confirm:
+            try:
+                answer = input(f"\n  {colored('?', 'CYAN')} Submit this scan? [{colored('y', 'GREEN')}/N] ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print(f"\n  {colored('⏭', 'YELLOW')} Aborted")
+                row["status"] = "aborted"
+                summary_rows.append(row)
+                break
+            if answer != "y":
+                print(f"  {colored('⏭', 'YELLOW')} Skipped")
+                row["status"] = "skipped"
+                summary_rows.append(row)
+                continue
 
         try:
             scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost)
