@@ -66,6 +66,7 @@ async def update_app(request: Request, app_id: int):
     user = request.state.user
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    require_scope(user, "full")
 
     body = await request.json()
     db = await get_connection()
@@ -96,6 +97,7 @@ async def delete_app(request: Request, app_id: int):
     user = request.state.user
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    require_scope(user, "full")
 
     db = await get_connection()
     try:

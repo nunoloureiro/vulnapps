@@ -64,6 +64,7 @@ async def update_vuln(request: Request, app_id: int, vuln_id: int):
     user = request.state.user
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    require_scope(user, "full")
 
     body = await request.json()
     db = await get_connection()
@@ -83,6 +84,7 @@ async def delete_vuln(request: Request, app_id: int, vuln_id: int):
     user = request.state.user
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    require_scope(user, "full")
 
     db = await get_connection()
     try:
@@ -105,6 +107,7 @@ async def import_vulns(
     user = request.state.user
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    require_scope(user, "full")
 
     vulns_data: list[dict] = []
 

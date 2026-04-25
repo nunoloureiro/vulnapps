@@ -3,7 +3,9 @@
 
 async def list_users(db) -> list:
     """Return all users ordered by created_at DESC."""
-    cursor = await db.execute("SELECT * FROM users ORDER BY created_at DESC")
+    cursor = await db.execute(
+        "SELECT id, name, email, role, created_at, last_login FROM users ORDER BY created_at DESC"
+    )
     return [dict(row) for row in await cursor.fetchall()]
 
 
