@@ -172,28 +172,28 @@ class VulnappsClient:
         )
 
     def get_app(self, app_id: int) -> dict:
-        resp = self.client.get(f"/api/v1/apps/{app_id}")
+        resp = self.client.get(f"/api/apps/{app_id}")
         resp.raise_for_status()
         return resp.json()
 
     def get_vulns(self, app_id: int) -> list:
-        resp = self.client.get(f"/api/v1/apps/{app_id}/vulns")
+        resp = self.client.get(f"/api/apps/{app_id}/vulns")
         resp.raise_for_status()
         return resp.json()["vulnerabilities"]
 
     def submit_scan(self, app_id: int, scan_data: dict) -> dict:
-        resp = self.client.post(f"/api/v1/apps/{app_id}/scans", json=scan_data)
+        resp = self.client.post(f"/api/apps/{app_id}/scans", json=scan_data)
         resp.raise_for_status()
         return resp.json()
 
     def get_scan(self, scan_id: int) -> dict:
-        resp = self.client.get(f"/api/v1/scans/{scan_id}")
+        resp = self.client.get(f"/api/scans/{scan_id}")
         resp.raise_for_status()
         return resp.json()
 
     def match_finding(self, scan_id: int, finding_id: int, vuln_id: int | None) -> dict:
         resp = self.client.post(
-            f"/api/v1/scans/{scan_id}/findings/{finding_id}/match",
+            f"/api/scans/{scan_id}/findings/{finding_id}/match",
             json={"vuln_id": vuln_id},
         )
         resp.raise_for_status()
@@ -201,19 +201,19 @@ class VulnappsClient:
 
     def mark_fp(self, scan_id: int, finding_id: int) -> dict:
         resp = self.client.post(
-            f"/api/v1/scans/{scan_id}/findings/{finding_id}/mark-fp",
+            f"/api/scans/{scan_id}/findings/{finding_id}/mark-fp",
         )
         resp.raise_for_status()
         return resp.json()
 
     def get_labels(self) -> list:
-        resp = self.client.get("/labels/autocomplete")
+        resp = self.client.get("/api/labels")
         resp.raise_for_status()
         return resp.json()["labels"]
 
     def add_label(self, scan_id: int, name: str, color: str = "#f97316") -> dict:
         resp = self.client.post(
-            f"/scans/{scan_id}/labels",
+            f"/api/scans/{scan_id}/labels",
             json={"name": name, "color": color},
         )
         resp.raise_for_status()
