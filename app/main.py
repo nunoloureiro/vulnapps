@@ -56,6 +56,26 @@ app.include_router(api_teams.router, prefix="/api/teams", tags=["teams"])
 app.include_router(api_admin.router, prefix="/api/admin", tags=["admin"])
 
 
+@app.get("/api")
+async def api_root():
+    return {
+        "name": "Vulnapps API",
+        "version": "1.0.0",
+        "docs": "/api/docs",
+        "redoc": "/api/redoc",
+        "openapi": "/api/openapi.json",
+        "endpoints": {
+            "auth": "/api/auth",
+            "apps": "/api/apps",
+            "scans": "/api/scans",
+            "labels": "/api/labels",
+            "teams": "/api/teams",
+            "admin": "/api/admin",
+            "account": "/api/account",
+        },
+    }
+
+
 # ── SPA serving ──
 # Serve Vite build assets if the dist directory exists
 if SPA_DIR.exists():
