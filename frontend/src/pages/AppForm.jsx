@@ -34,14 +34,14 @@ export default function AppForm() {
       try {
         // Fetch teams for dropdown
         try {
-          const teamsData = await api.get('/api/teams');
+          const teamsData = await api.get('/teams');
           setTeams(teamsData.teams || []);
         } catch {
           // Teams may not be accessible if not logged in
         }
 
         if (isEdit) {
-          const data = await api.get('/api/apps/' + id);
+          const data = await api.get('/apps/' + id);
           const app = data.app;
           setForm({
             name: app.name || '',
@@ -53,7 +53,7 @@ export default function AppForm() {
             team_id: app.team_id ? String(app.team_id) : '',
           });
         } else if (cloneFrom) {
-          const data = await api.get('/api/apps/' + cloneFrom);
+          const data = await api.get('/apps/' + cloneFrom);
           const app = data.app;
           setCloneSource(app);
           setForm({
@@ -102,9 +102,9 @@ export default function AppForm() {
     try {
       let result;
       if (isEdit) {
-        result = await api.put('/api/apps/' + id, body);
+        result = await api.put('/apps/' + id, body);
       } else {
-        result = await api.post('/api/apps', body);
+        result = await api.post('/apps', body);
       }
       const appId = result.app?.id || id;
       navigate('/apps/' + appId);

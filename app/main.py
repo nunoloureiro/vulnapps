@@ -63,11 +63,18 @@ if SPA_DIR.exists():
 
 
 # SPA catch-all: any non-API, non-static path serves the React app
-@app.get("/{path:path}")
-async def spa_catchall(request: Request, path: str):
-    # If the SPA build exists, serve it
+@app.middleware("http")
+async def spa_middleware(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    # If a real route handled it (not 404/405), return as-is
+    if response.status_code not in (404, 405):
+        return response
+    # Don't serve SPA for API or static paths
+    if path.startswith("/api") or path.startswith("/static"):
+        return response
+    # Serve the SPA index.html for client-side routing
     spa_index = SPA_DIR / "index.html"
     if spa_index.exists():
         return FileResponse(spa_index)
-    # Fallback: return a simple message if no SPA build
-    return {"message": "Vulnapps API", "docs": "/api/docs"}
+    return response

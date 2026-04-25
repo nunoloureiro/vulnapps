@@ -14,7 +14,7 @@ export default function VulnDetail() {
       setLoading(true);
       setError(null);
       try {
-        const result = await api.get('/api/apps/' + appId + '/vulns/' + id);
+        const result = await api.get('/apps/' + appId + '/vulns/' + id);
         setData(result);
       } catch (err) {
         setError(err.message || 'Failed to load vulnerability');

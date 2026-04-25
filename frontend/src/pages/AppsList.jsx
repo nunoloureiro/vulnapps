@@ -22,7 +22,7 @@ export default function AppsList() {
       if (q) params.set('q', q);
       if (filter) params.set('filter', filter);
       const qs = params.toString();
-      const data = await api.get('/api/apps' + (qs ? '?' + qs : ''));
+      const data = await api.get('/apps' + (qs ? '?' + qs : ''));
       setApps(data.apps || []);
     } catch (err) {
       setError(err.message || 'Failed to load apps');

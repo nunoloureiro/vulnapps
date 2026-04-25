@@ -21,7 +21,7 @@ export default function AppDetail() {
     setLoading(true);
     setError(null);
     try {
-      const result = await api.get('/api/apps/' + id);
+      const result = await api.get('/apps/' + id);
       setData(result);
     } catch (err) {
       setError(err.message || 'Failed to load app');
@@ -35,7 +35,7 @@ export default function AppDetail() {
   async function handleDeleteVuln(vulnId) {
     if (!window.confirm('Delete this vulnerability?')) return;
     try {
-      await api.del('/api/apps/' + id + '/vulns/' + vulnId);
+      await api.del('/apps/' + id + '/vulns/' + vulnId);
       fetchApp();
     } catch (err) {
       setError(err.message || 'Failed to delete vulnerability');
@@ -91,7 +91,7 @@ export default function AppDetail() {
         body[f] = vuln[f] || '';
       }
       body[field] = value;
-      await api.put('/api/apps/' + id + '/vulns/' + vuln.id, body);
+      await api.put('/apps/' + id + '/vulns/' + vuln.id, body);
       cancelEdit();
       fetchApp();
     } catch (err) {

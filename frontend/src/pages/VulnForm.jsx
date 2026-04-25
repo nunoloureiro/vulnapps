@@ -38,7 +38,7 @@ export default function VulnForm() {
       setError(null);
       try {
         if (isEdit) {
-          const data = await api.get('/api/apps/' + appId + '/vulns/' + id);
+          const data = await api.get('/apps/' + appId + '/vulns/' + id);
           const v = data.vuln;
           setAppName(data.app?.name || '');
           setForm({
@@ -59,7 +59,7 @@ export default function VulnForm() {
         } else {
           // Fetch app name for the header
           try {
-            const appData = await api.get('/api/apps/' + appId);
+            const appData = await api.get('/apps/' + appId);
             setAppName(appData.app?.name || '');
           } catch {
             // Non-critical
@@ -113,10 +113,10 @@ export default function VulnForm() {
     try {
       let result;
       if (isEdit) {
-        result = await api.put('/api/apps/' + appId + '/vulns/' + id, body);
+        result = await api.put('/apps/' + appId + '/vulns/' + id, body);
         navigate('/apps/' + appId + '/vulns/' + id);
       } else {
-        result = await api.post('/api/apps/' + appId + '/vulns', body);
+        result = await api.post('/apps/' + appId + '/vulns', body);
         const newId = result.vulnerability?.id;
         navigate(newId ? '/apps/' + appId + '/vulns/' + newId : '/apps/' + appId);
       }
