@@ -8,9 +8,26 @@ Complete specification to build the Vulnapps application from scratch.
 
 Vulnerability registry app where users register known vulnerable applications with their vulnerabilities, then submit scan results to measure scanner accuracy (TP, FP, FN, precision, recall, F1).
 
-**Stack:** FastAPI + SQLite (aiosqlite) + Jinja2 templates + JWT auth (bcrypt + pyjwt)
+**Stack:** FastAPI (API-first) + SQLite (aiosqlite) + React SPA (Vite) + JWT auth (bcrypt + pyjwt)
 **Target:** AWS t2.nano (512MB RAM) — must be lightweight
 **Python:** >=3.8 (use `from __future__ import annotations` for type union syntax)
+
+---
+
+## Architecture
+
+### API-First Design
+
+The application follows an API-first architecture. All functionality is exposed through JSON REST endpoints under `/api`. The old Jinja2 template-based web routes are removed. A React SPA serves the frontend.
+
+**Backend layers:**
+1. **Route handlers** (`app/routers/api/`) — Thin JSON wrappers. Parse request, call service, return JSON or raise HTTPException.
+2. **Service layer** (`app/services/`) — All business logic, database queries, permission checks. Services receive a `db` connection and `user` dict.
+3. **Shared modules** — `matching.py`, `visibility.py`, `dependencies.py`, `auth.py` provide cross-cutting concerns.
+
+**Frontend:** React SPA in `frontend/` built with Vite. Communicates exclusively via `/api` endpoints. JWT stored in `localStorage`.
+
+**SPA serving:** FastAPI serves the built React app. Non-API, non-static paths that return 404 serve `frontend/dist/index.html` for client-side routing.
 
 ---
 
@@ -35,11 +52,11 @@ Dark theme with orange accents:
 | Role | Can do |
 |------|--------|
 | **user** (default) | Create private/team apps, submit scans on own apps, manage teams |
-| **admin** | Everything + manage public apps/vulns/scans, manage users |
+| **admin** | Everything + manage public apps/vulns/scans, manage users, manage labels |
 
 - First registered user automatically becomes **admin**
 - Subsequent users register as **user** by default
-- Admin grants admin access via `/admin/users`
+- Admin grants admin access via admin panel
 
 ### Team-Level Roles (3)
 | Role | Can do within team |
@@ -71,7 +88,7 @@ Dark theme with orange accents:
 - Admin (always)
 
 ### App Cloning
-Any logged-in user can clone any app they can read. Cloning creates a private copy with all vulns (not scans). Clone via `GET /apps/new?clone_from=<id>`.
+Any logged-in user can clone any app they can read. Cloning creates a private copy with all vulns (not scans).
 
 ---
 
@@ -81,52 +98,83 @@ Any logged-in user can clone any app they can read. Cloning creates a private co
 vulnapps/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py              # FastAPI app, lifespan, static/template config, middleware, router includes
+│   ├── main.py              # FastAPI app, lifespan, SPA serving, middleware, API router includes
 │   ├── config.py             # Settings from env vars (SECRET_KEY, DATABASE_PATH, TOKEN_EXPIRY_HOURS)
 │   ├── database.py           # aiosqlite connection (Row factory), migration runner
 │   ├── auth.py               # bcrypt hash/verify, JWT create/decode (HS256)
-│   ├── dependencies.py       # get_current_user, require_user, require_admin, require_app_write, require_scan_write, get_team_role
+│   ├── dependencies.py       # get_current_user, require_user, require_admin, require_app_write, require_scan_write, get_team_role, require_scope
 │   ├── matching.py           # Shared scan finding matching logic (DAST + SAST)
-│   ├── visibility.py         # App visibility filter (public/team/private)
-│   ├── models.py             # Pydantic schemas (UserCreate, UserLogin, AppCreate, VulnCreate, ScanCreate, FindingCreate)
-│   ├── templating.py         # Shared Jinja2Templates instance (breaks circular import)
-│   ├── seed.py               # TaintedPort seed data (25 vulns, auto-seeded on first admin registration)
+│   ├── visibility.py         # App/scan visibility filter (public/team/private)
+│   ├── models.py             # Pydantic schemas
+│   ├── templating.py         # Legacy — Jinja2Templates instance (kept for compatibility)
+│   ├── seed.py               # TaintedPort seed data (25+ vulns, auto-seeded on first admin registration)
 │   ├── routers/
 │   │   ├── __init__.py
-│   │   ├── auth_routes.py    # /auth — login, register, logout
-│   │   ├── apps.py           # /apps — app CRUD (web)
-│   │   ├── vulns.py          # /apps/{id}/vulns — vulnerability CRUD (web)
-│   │   ├── scans.py          # /scans, /apps/{id}/scans — scan submission + metrics (web)
-│   │   ├── admin.py          # /admin — user management with inline editing (web)
-│   │   ├── teams.py          # /teams — team CRUD, member management (web)
-│   │   └── api.py            # /api/v1 — REST API (JSON)
-│   ├── templates/
-│   │   ├── base.html         # Layout: navbar, alerts, content block
-│   │   ├── home.html         # Hero landing page
-│   │   ├── auth/
-│   │   │   ├── login.html
-│   │   │   └── register.html
-│   │   ├── apps/
-│   │   │   ├── list.html     # Card grid with search
-│   │   │   ├── detail.html   # App info + vulns table + scan link
-│   │   │   └── form.html     # Create/edit form
-│   │   ├── vulns/
-│   │   │   ├── detail.html   # Full vuln detail with PoC
-│   │   │   └── form.html     # Create/edit form
-│   │   ├── scans/
-│   │   │   ├── list.html     # Scans table with TP/FP counts
-│   │   │   ├── detail.html   # Metrics dashboard + findings table + missed vulns
-│   │   │   ├── submit.html   # Scan form with dynamic JS finding rows
-│   │   │   └── compare.html  # Scan comparison: selector + metrics table + detection matrix
-│   │   ├── admin/
-│   │   │   └── users.html    # User table with inline editing + delete
-│   │   └── teams/
-│   │       ├── list.html     # Teams table
-│   │       ├── form.html     # Create team form
-│   │       └── detail.html   # Team detail + member management
+│   │   ├── api/              # API-first route handlers (thin JSON wrappers)
+│   │   │   ├── __init__.py
+│   │   │   ├── auth.py       # /api/auth — login, register, me
+│   │   │   ├── account.py    # /api/account — profile, name, password, API keys
+│   │   │   ├── apps.py       # /api/apps — app CRUD
+│   │   │   ├── vulns.py      # /api/apps/{id}/vulns — vulnerability CRUD + import
+│   │   │   ├── scans.py      # /api/scans — scan CRUD, findings, labels, compare, submit
+│   │   │   ├── teams.py      # /api/teams — team CRUD, member management
+│   │   │   └── admin.py      # /api/admin — user management, label management
+│   │   ├── api_legacy.py     # Legacy /api/v1 routes (kept for backward compatibility)
+│   │   ├── auth_routes.py    # Legacy web auth routes
+│   │   ├── apps.py           # Legacy web app routes
+│   │   ├── vulns.py          # Legacy web vuln routes
+│   │   ├── scans.py          # Legacy web scan routes
+│   │   ├── admin.py          # Legacy web admin routes
+│   │   └── teams.py          # Legacy web team routes
+│   ├── services/             # Business logic layer
+│   │   ├── __init__.py
+│   │   ├── auth.py           # Login, register, me, API key management, password/name updates
+│   │   ├── apps.py           # App CRUD, cloning, visibility checks
+│   │   ├── vulns.py          # Vulnerability CRUD, import (JSON/CSV)
+│   │   ├── scans.py          # Scan CRUD, submit, matching, compare, metrics
+│   │   ├── labels.py         # Label CRUD, scan-label association, admin label management
+│   │   ├── teams.py          # Team CRUD, member management
+│   │   └── users.py          # Admin user management (list, update, delete, profiles)
 │   └── static/
-│       ├── style.css         # Full dark theme CSS
+│       ├── style.css         # Full dark theme CSS (shared by React SPA)
 │       └── logo.svg          # Shield + crosshair SVG logo (orange on dark)
+├── frontend/                 # React SPA (Vite)
+│   ├── index.html            # HTML entry point
+│   ├── package.json          # Dependencies: react, react-dom, react-router-dom
+│   ├── vite.config.js        # Vite config with dev proxy to backend
+│   ├── dist/                 # Built output (served by FastAPI in production)
+│   └── src/
+│       ├── main.jsx          # React entry point
+│       ├── App.jsx           # Router with all 19 page routes
+│       ├── api/
+│       │   └── client.js     # API client: fetch wrapper with JWT auth, auto-redirect on 401
+│       ├── context/
+│       │   └── AuthContext.jsx  # Auth state provider (login, register, logout, refreshUser)
+│       ├── components/
+│       │   ├── Navbar.jsx    # Top nav with auth-aware links
+│       │   ├── Badge.jsx     # Severity/role badge component
+│       │   ├── LabelBadge.jsx  # Color-coded scan label badge
+│       │   ├── ConfirmButton.jsx  # Button with confirmation dialog
+│       │   └── EmptyState.jsx    # Empty state placeholder
+│       └── pages/
+│           ├── Home.jsx          # Landing page
+│           ├── Login.jsx         # Login form
+│           ├── Register.jsx      # Registration form
+│           ├── Account.jsx       # Account settings (name, password, API keys)
+│           ├── AppsList.jsx      # App listing with search and filters
+│           ├── AppDetail.jsx     # App detail with vulns table, scan count
+│           ├── AppForm.jsx       # Create/edit app form (with clone support)
+│           ├── VulnDetail.jsx    # Vulnerability detail
+│           ├── VulnForm.jsx      # Create/edit vulnerability form
+│           ├── ScansList.jsx     # Scans listing with filters (scanner, app, label, auth status)
+│           ├── ScanDetail.jsx    # Scan detail with metrics, findings, missed vulns
+│           ├── ScanSubmit.jsx    # Scan submission form (JSON/CSV upload or manual entry)
+│           ├── ScanCompare.jsx   # Scan comparison with metrics and detection matrix
+│           ├── TeamsList.jsx     # Teams listing
+│           ├── TeamDetail.jsx    # Team detail with member management
+│           ├── TeamForm.jsx      # Create team form
+│           ├── AdminUsers.jsx    # Admin user management
+│           └── AdminLabels.jsx   # Admin label management
 ├── migrations/
 │   ├── 001_initial.sql       # Schema with all tables and indexes
 │   ├── 002_tech_stack.sql    # App technologies table
@@ -137,7 +185,10 @@ vulnapps/
 │   ├── 007_app_visibility.sql           # App visibility + team_id
 │   ├── ...                              # 008-011: incremental changes
 │   ├── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
-│   └── 013_api_keys.sql                # API keys table with scopes
+│   ├── 013_api_keys.sql                 # API keys table with scopes
+│   ├── 014_scan_labels.sql              # Labels + scan_labels junction table
+│   ├── 015_scan_cost.sql                # cost REAL column on scans
+│   └── 016_scan_tokens.sql              # tokens INTEGER column on scans
 ├── tools/
 │   └── import_scan.py                  # CLI scan importer with LLM-assisted vuln mapping
 ├── tests/
@@ -146,7 +197,7 @@ vulnapps/
 │   └── todo.md
 ├── requirements.txt
 ├── pyproject.toml
-├── Dockerfile
+├── Dockerfile                          # Multi-stage build (Node 20 + Python 3.12)
 ├── docker-compose.yml
 ├── .dockerignore
 ├── .env.example
@@ -161,6 +212,7 @@ vulnapps/
 
 ## Dependencies
 
+### Backend (`requirements.txt`)
 ```
 fastapi
 uvicorn[standard]
@@ -171,9 +223,24 @@ pyjwt
 bcrypt
 python-dotenv
 httpx
-anthropic
+anthropic[vertex]
 pytest
 pytest-asyncio
+```
+
+### Frontend (`frontend/package.json`)
+```json
+{
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}
 ```
 
 ---
@@ -189,7 +256,7 @@ Uses `python-dotenv` to load `.env` file.
 
 ---
 
-## Database Schema (migrations 001–013)
+## Database Schema (migrations 001-016)
 
 ```sql
 PRAGMA journal_mode=WAL;
@@ -247,6 +314,8 @@ CREATE TABLE IF NOT EXISTS scans (
     authenticated  INTEGER NOT NULL DEFAULT 0,
     is_public      INTEGER NOT NULL DEFAULT 1,
     notes          TEXT,
+    cost           REAL,                        -- Private: scan cost in USD (migration 015)
+    tokens         INTEGER,                     -- Private: LLM token count (migration 016)
     submitted_by   INTEGER NOT NULL REFERENCES users(id),
     created_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -308,20 +377,47 @@ CREATE TABLE IF NOT EXISTS api_keys (
     last_used  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+
+-- Migration 014: Scan labels
+CREATE TABLE IF NOT EXISTS labels (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    name  TEXT NOT NULL UNIQUE,
+    color TEXT NOT NULL DEFAULT '#f97316'
+);
+
+CREATE TABLE IF NOT EXISTS scan_labels (
+    scan_id  INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+    label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+    PRIMARY KEY (scan_id, label_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_labels_scan ON scan_labels(scan_id);
+CREATE INDEX IF NOT EXISTS idx_scan_labels_label ON scan_labels(label_id);
 ```
 
 ### Tech Stack
-Apps have a one-to-many relationship with `app_technologies`. Each row stores a single technology name (e.g., "PHP", "Next.js"). In the web form, users enter comma-separated values which are parsed and stored as individual rows. The `category` column in `apps` is legacy and not used in the UI.
+Apps have a one-to-many relationship with `app_technologies`. Each row stores a single technology name (e.g., "PHP", "Next.js"). In the form, users enter comma-separated values which are parsed and stored as individual rows. The `category` column in `apps` is legacy and not used in the UI.
+
+### Scan Labels
+Labels are user-defined, color-coded tags for scans. A many-to-many junction table (`scan_labels`) links scans to labels. Labels can be added/removed per-scan by anyone with scan write access. Admin can manage labels globally (CRUD) via `/api/admin/labels`. Labels are displayed as color-coded badges in the scans list and scan detail. The scans list supports filtering by label.
+
+### Scan Cost & Tokens
+Private fields on scans (`cost REAL`, `tokens INTEGER`). Only visible to the scan owner, team members of the app's team, and admins. Used to track LLM-based scanner costs. The CLI auto-captures token count from the LLM response if `--tokens` is not explicitly set.
 
 ---
 
 ## Architecture Patterns
 
-### Circular Import Prevention
-`app/templating.py` holds the shared `Jinja2Templates` instance. Both `main.py` and all routers import from `app.templating`, NOT from `app.main`. This breaks the circular dependency since `main.py` imports routers at module level.
+### Service Layer Pattern
+All business logic lives in `app/services/`. Route handlers in `app/routers/api/` are thin JSON wrappers:
+1. Parse request (query params, JSON body)
+2. Call service function with `db`, `user`, and parsed args
+3. Return JSON result or raise HTTPException for errors
 
-### Database Access in Routes
-Routes use manual connection management (not FastAPI dependency injection):
+Services raise `ValueError` (mapped to 400/404) or `PermissionError` (mapped to 403) — route handlers catch and convert to HTTP errors.
+
+### Database Access
+Routes and services use manual connection management:
 ```python
 db = await get_connection()
 try:
@@ -337,13 +433,13 @@ On startup (via FastAPI lifespan), all `.sql` files in `migrations/` are execute
 ### Auth Flow
 - **Login:** email + password (not username)
 - **Register:** name (display name) + email + password
-- **Web:** JWT stored in httponly cookie named `token`, set on login/register, deleted on logout
+- **Frontend (React SPA):** JWT stored in `localStorage`, sent as `Authorization: Bearer <token>` header
 - **API:** JWT or API key in `Authorization: Bearer <token>` header
 - **API Keys:** Format `va_` + 32 hex chars. Stored as SHA-256 hash. Users generate/revoke from Account page.
   - Scopes: `read` (GET only), `vuln-mapper` (read + submit scans + match findings), `full` (all ops)
   - `get_current_user` detects `va_` prefix → looks up in `api_keys` table → loads user with `api_key_scope`
-  - `require_scope(user, min_scope)` enforces scope hierarchy. JWT/cookie users bypass scope checks.
-- `get_current_user` middleware checks cookie first, then Bearer header (JWT or API key), injects result into `request.state.user`
+  - `require_scope(user, min_scope)` enforces scope hierarchy on all write endpoints. JWT users bypass scope checks.
+- `get_current_user` middleware checks Bearer header (JWT or API key), injects result into `request.state.user`
 - Role-based auth functions raise HTTPException 401/403:
   - `require_user` — any authenticated user
   - `require_admin` — admin only
@@ -355,8 +451,13 @@ On startup (via FastAPI lifespan), all `.sql` files in `migrations/` are execute
 - JWT payload: `{ sub: user_id, name, role, exp }`
 - 24h token expiry, no refresh tokens
 
+### Security
+- Password hashes are excluded from the admin user list endpoint
+- API key scope enforcement on all write endpoints
+- All write operations check both authentication and authorization
+
 ### First User = Admin + Seed Data
-In `auth_routes.py`, the register handler checks `SELECT COUNT(*) FROM users`. If 0, the new user gets `role='admin'`. All subsequent users get `role='user'`.
+In the register service, when user count is 0, the new user gets `role='admin'`. All subsequent users get `role='user'`.
 
 When the first admin registers, `seed_taintedport(db, user_id)` is called to populate the database with the TaintedPort app and all 25 known vulnerabilities. The seed function is idempotent — it checks if TaintedPort already exists before inserting.
 
@@ -400,121 +501,145 @@ Source: `/Users/nuno/dev/TaintedPort/KnownVulnerabilities.txt`
 
 ---
 
-## Web Routes
+## API Routes (`/api`)
 
-### Auth (`/auth`)
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/auth/login` | None | Login form |
-| POST | `/auth/login` | None | Verify credentials, set cookie, redirect to `/` |
-| GET | `/auth/register` | None | Register form |
-| POST | `/auth/register` | None | Create user (first=admin), set cookie, redirect to `/` |
-| GET | `/auth/logout` | None | Delete cookie, redirect to `/` |
+All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT or API key). Auto-generated Swagger UI at `/api/docs`, ReDoc at `/api/redoc`, OpenAPI spec at `/api/openapi.json`.
 
-### Apps (`/apps`)
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/apps` | None | List apps with search (`?q=`). Query joins users for creator_name, subquery for vuln_count |
-| GET | `/apps/new` | User+ | Create app form. Supports `?clone_from=<id>` to pre-fill from existing app |
-| POST | `/apps/new` | User+ | Insert app (validates visibility: public=admin, team=contributor+). Clones vulns if `clone_from` field set |
-| GET | `/apps/{id}` | None | App detail with vulns table, scan count. Passes `can_edit`, `can_submit_scan` booleans |
-| GET | `/apps/{id}/edit` | App write | Edit app form (uses `require_app_write`) |
-| POST | `/apps/{id}/edit` | App write | Update app (validates visibility changes) |
+### API Root (`/api`)
+`GET /api` — Returns API info and endpoint listing. Redirects to Swagger UI if `Accept: text/html`.
 
-### Vulnerabilities (`/apps/{id}/vulns`)
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/apps/{id}/vulns/new` | App write | Create vuln form (uses `require_app_write`) |
-| POST | `/apps/{id}/vulns` | App write | Insert vuln, redirect to app detail |
-| GET | `/apps/{id}/vulns/{vid}` | App read | Vuln detail (vid = DB id, not custom vuln_id). Passes `can_edit` boolean |
-| GET | `/apps/{id}/vulns/{vid}/edit` | App write | Edit vuln form |
-| POST | `/apps/{id}/vulns/{vid}/edit` | App write | Update vuln, redirect to vuln detail |
-| POST | `/apps/{id}/vulns/{vid}/delete` | App write | Delete vuln, redirect to app detail |
-| POST | `/apps/{id}/vulns/{vid}/inline` | App write | AJAX inline update (JSON body with field:value) |
+### Auth (`/api/auth`)
+| Method | Path | Auth / Scope | Description |
+|--------|------|-------------|-------------|
+| POST | `/api/auth/login` | None | Login with `{email, password}`, returns `{token, user}` |
+| POST | `/api/auth/register` | None | Register with `{name, email, password}`, returns `{token, user}` |
+| GET | `/api/auth/me` | User+ | Get current user profile |
 
-### Scans
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/scans` | None | List scans (uses `scan_visibility_filter`: public + own + team scans) |
-| GET | `/scans/example/json` | None | Download example JSON findings file |
-| GET | `/scans/example/csv` | None | Download example CSV findings file |
-| GET | `/apps/{id}/scans` | User+ | Scan submission form. Validates: admin for public apps, creator for private, team contributor+ for team |
-| POST | `/apps/{id}/scans` | User+ | Process scan with same permission checks |
-| GET | `/scans/{id}` | Varies | Scan detail. Anonymous OK for public scans on public apps. Otherwise requires visibility check. Passes `can_edit_scan` boolean |
-| POST | `/scans/{id}/delete` | Scan write | Delete scan (uses `require_scan_write`) |
-| POST | `/scans/{id}/rematch` | Scan write | Re-run automatic matching for all findings |
-| POST | `/scans/{id}/findings/{fid}/match` | Scan write | Map finding to vuln |
-| POST | `/scans/{id}/findings/{fid}/mark-fp` | Scan write | Mark finding as false positive |
-| GET | `/apps/{id}/compare` | None | Scan comparison — selector when no params, results when `?scans=1,2,3` |
+### Apps (`/api/apps`)
+| Method | Path | Auth / Scope | Description |
+|--------|------|-------------|-------------|
+| GET | `/api/apps` | None / read | List apps (visibility filtered). Query: `?q=`, `?filter=` |
+| GET | `/api/apps/{id}` | None / read | App detail with vulns, tech stack, permissions |
+| POST | `/api/apps` | User+ / full | Create app. Body: `{name, version, description, url, visibility, team_id, tech_stack, clone_from}` |
+| PUT | `/api/apps/{id}` | App write / full | Update app |
+| DELETE | `/api/apps/{id}` | App write / full | Delete app |
 
-### Account (`/account`)
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/account` | User+ | Account settings page (name, email, password, API keys) |
-| POST | `/account/name` | User+ | Update display name (JSON body) |
-| POST | `/account/password` | User+ | Change password (JSON body with current + new) |
-| POST | `/account/api-keys` | User+ | Generate API key (JSON: `{name, scope}`) — returns full key once |
-| DELETE | `/account/api-keys/{id}` | User+ | Revoke API key (must own it) |
+### Vulnerabilities (`/api/apps/{id}/vulns`)
+| Method | Path | Auth / Scope | Description |
+|--------|------|-------------|-------------|
+| GET | `/api/apps/{id}/vulns` | None / read | List vulns for app |
+| GET | `/api/apps/{id}/vulns/{vid}` | None / read | Vuln detail |
+| POST | `/api/apps/{id}/vulns` | App write / full | Create vuln |
+| PUT | `/api/apps/{id}/vulns/{vid}` | App write / full | Update vuln |
+| DELETE | `/api/apps/{id}/vulns/{vid}` | App write / full | Delete vuln |
+| POST | `/api/apps/{id}/vulns/import` | App write / full | Import vulns from JSON/CSV (file upload or JSON body) |
 
-### Admin (`/admin`)
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/admin/users` | Admin | List all users with inline editing (name/email only) |
-| POST | `/admin/users/{id}/role` | Admin | Toggle user/admin role (Make Admin / Revoke Admin) |
-| POST | `/admin/users/{id}/inline` | Admin | AJAX inline update name/email |
-| POST | `/admin/users/{id}/delete` | Admin | Delete user (cannot delete self or admins) |
+### Scans (`/api/scans` + `/api/apps/{id}/scans`)
+| Method | Path | Auth / Scope | Description |
+|--------|------|-------------|-------------|
+| GET | `/api/scans` | None / read | List scans with filters: `?app_id=`, `?scanner=`, `?latest=`, `?q=`, `?authenticated=`, `?label=`, `?filter=`. Returns scans, scan_labels_map, scanners list, apps list, all labels |
+| GET | `/api/scans/{id}` | Varies / read | Scan detail with metrics, findings, missed vulns, labels |
+| PUT | `/api/scans/{id}` | Scan write / vuln-mapper | Update scan metadata: `{scanner_name, scan_date, authenticated, notes}` |
+| DELETE | `/api/scans/{id}` | Scan write | Delete scan |
+| POST | `/api/apps/{id}/scans` | User+ / vuln-mapper | Submit scan. Body: `{scanner_name, scan_date, authenticated, is_public, notes, cost, tokens, findings, labels}` |
+| POST | `/api/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Map finding to vuln: `{vuln_id: int\|null}` |
+| POST | `/api/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive |
+| POST | `/api/scans/{id}/rematch` | Scan write / vuln-mapper | Re-run automatic matching for all findings |
+| POST | `/api/scans/{id}/labels` | Scan write | Add label to scan: `{name, color}`. Upserts label, links to scan |
+| DELETE | `/api/scans/{id}/labels/{label_id}` | Scan write | Remove label from scan |
 
-### Teams (`/teams`)
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/teams` | User+ | List teams (own teams; admin sees all) |
-| GET | `/teams/new` | User+ | Create team form |
-| POST | `/teams/new` | User+ | Create team (creator becomes team admin) |
-| GET | `/teams/{id}` | Team member or admin | Team detail + member list |
-| POST | `/teams/{id}/members` | Team admin or app admin | Add member by email with role (admin/contributor/view, default view) |
-| POST | `/teams/{id}/members/{uid}/remove` | Team admin or app admin | Remove member |
-| POST | `/teams/{id}/members/{uid}/role` | Team admin or app admin | Change member role (admin/contributor/view) |
-| POST | `/teams/{id}/delete` | Team admin or app admin | Delete team |
+### Scan Comparison (`/api/apps/{id}/compare`)
+| Method | Path | Auth / Scope | Description |
+|--------|------|-------------|-------------|
+| GET | `/api/apps/{id}/compare` | None / read | Without `?scans=`: returns available scans. With `?scans=1,2,3`: returns comparison metrics + detection matrix |
+
+### Labels (`/api/labels`)
+| Method | Path | Auth / Scope | Description |
+|--------|------|-------------|-------------|
+| GET | `/api/labels` | None | List all labels (name, color) |
+
+### Teams (`/api/teams`)
+| Method | Path | Auth / Scope | Description |
+|--------|------|-------------|-------------|
+| GET | `/api/teams` | User+ | List teams (own teams; admin sees all) |
+| GET | `/api/teams/{id}` | Team member+ | Team detail with members |
+| POST | `/api/teams` | User+ | Create team (creator becomes team admin) |
+| DELETE | `/api/teams/{id}` | Team admin+ | Delete team |
+| POST | `/api/teams/{id}/members` | Team admin+ | Add member: `{email, role}` |
+| PUT | `/api/teams/{id}/members/{uid}` | Team admin+ | Change member role: `{role}` |
+| DELETE | `/api/teams/{id}/members/{uid}` | Team admin+ | Remove member |
+
+### Account (`/api/account`)
+| Method | Path | Auth / Scope | Description |
+|--------|------|-------------|-------------|
+| GET | `/api/account` | User+ | Account info + API keys |
+| PUT | `/api/account/name` | User+ | Update display name: `{name}`. Returns new JWT token |
+| PUT | `/api/account/password` | User+ | Change password: `{current_password, new_password}` |
+| POST | `/api/account/api-keys` | User+ | Generate API key: `{name, scope}` — returns full key once |
+| DELETE | `/api/account/api-keys/{id}` | User+ | Revoke API key (must own it) |
+
+### Admin (`/api/admin`)
+| Method | Path | Auth / Scope | Description |
+|--------|------|-------------|-------------|
+| GET | `/api/admin/users` | Admin | List all users (password hashes excluded) |
+| PUT | `/api/admin/users/{id}` | Admin | Update user (name, email, role) |
+| DELETE | `/api/admin/users/{id}` | Admin | Delete user (cannot delete self or admins) |
+| GET | `/api/admin/labels` | Admin | List labels with scan_count |
+| POST | `/api/admin/labels` | Admin | Create label: `{name, color}` |
+| PUT | `/api/admin/labels/{id}` | Admin | Update label: `{name, color}` |
+| DELETE | `/api/admin/labels/{id}` | Admin | Delete label and all associations |
 
 ---
 
-## REST API Routes (`/api/v1`)
+## React SPA Frontend
 
-All return JSON. Auth via `Authorization: Bearer <token>` header (JWT or API key).
+### Technology
+- **Framework:** React 18 with Vite 5
+- **Routing:** React Router DOM v6
+- **Styling:** Reuses existing `style.css` from `/static/style.css` (no CSS framework)
+- **Auth:** JWT stored in `localStorage`, sent as `Authorization: Bearer` header
+- **API Client:** `frontend/src/api/client.js` — thin fetch wrapper with auto-401 redirect
 
-| Method | Path | Auth / Scope | Description |
-|--------|------|-------------|-------------|
-| GET | `/api/v1/apps` | None / read | List apps (visibility filtered) |
-| GET | `/api/v1/apps/{id}` | None / read | App detail with vulns (visibility filtered) |
-| GET | `/api/v1/apps/{id}/vulns` | None / read | List vulns for app (visibility filtered) |
-| POST | `/api/v1/apps` | User+ / full | Create app (JSON body, validates visibility permissions) |
-| POST | `/api/v1/apps/{id}/vulns` | App write / full | Create vuln (JSON body, uses `require_app_write`) |
-| GET | `/api/v1/scans` | None / read | List scans (uses `scan_visibility_filter`) |
-| GET | `/api/v1/scans/{id}` | Varies / read | Scan detail with metrics (visibility checked) |
-| POST | `/api/v1/apps/{id}/scans` | User+ / vuln-mapper | Submit scan (validates scan submission permissions) |
-| POST | `/api/v1/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Manual match finding to vuln `{"vuln_id": int\|null}` |
-| POST | `/api/v1/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive |
-| GET | `/api/v1/apps/{id}/compare?scans=1,2,3` | None / read | Compare up to 7 scans (JSON metrics + detection matrix) |
+### Vite Configuration
+Dev server proxies `/api` and `/static` to `http://127.0.0.1:8000`. Build output goes to `frontend/dist/`.
+
+### Auth Context (`AuthContext.jsx`)
+React context providing `{user, loading, login, register, logout, refreshUser}`. On mount, checks for stored token and calls `/api/auth/me` to restore session.
+
+### Page Routes (19 pages)
+| Route | Component | Description |
+|-------|-----------|-------------|
+| `/` | Home | Landing page |
+| `/login` | Login | Login form |
+| `/register` | Register | Registration form |
+| `/account` | Account | Settings: name, password, API keys |
+| `/apps` | AppsList | App listing with search |
+| `/apps/new` | AppForm | Create app (supports `?clone_from=`) |
+| `/apps/:id` | AppDetail | App detail + vulns table + scan/compare links |
+| `/apps/:id/edit` | AppForm | Edit app |
+| `/apps/:appId/vulns/new` | VulnForm | Create vulnerability |
+| `/apps/:appId/vulns/:id` | VulnDetail | Vulnerability detail |
+| `/apps/:appId/vulns/:id/edit` | VulnForm | Edit vulnerability |
+| `/apps/:id/scans/new` | ScanSubmit | Submit scan (file upload or manual) |
+| `/apps/:id/compare` | ScanCompare | Scan comparison |
+| `/scans` | ScansList | All scans with filters |
+| `/scans/:id` | ScanDetail | Scan metrics + findings + FN |
+| `/teams` | TeamsList | Teams listing |
+| `/teams/new` | TeamForm | Create team |
+| `/teams/:id` | TeamDetail | Team detail + member management |
+| `/admin/users` | AdminUsers | Admin user management |
+| `/admin/labels` | AdminLabels | Admin label management |
+
+### Shared Components
+- **Navbar** — Auth-aware nav: Apps, Scans (logged-in), Teams (logged-in), Admin (admin), Account/Login/Register
+- **Badge** — Severity/role colored badges
+- **LabelBadge** — Color-coded scan label badge with optional remove button
+- **ConfirmButton** — Button that shows confirmation dialog before action
+- **EmptyState** — Placeholder for empty lists
 
 ---
 
 ## Scan Submission & Matching
-
-### Web Form Field Naming
-Findings submitted as indexed arrays: `findings[0][vuln_type]`, `findings[0][url]`, `findings[0][http_method]`, `findings[0][parameter]`, `findings[1][vuln_type]`, etc.
-
-Router parses by incrementing index in a while loop:
-```python
-i = 0
-while True:
-    vt = form.get(f"findings[{i}][vuln_type]")
-    if vt is None:
-        break
-    findings_data.append({...})
-    i += 1
-```
-
-Dynamic rows added via JavaScript in `submit.html` — clones a template row, increments the index counter.
 
 ### API JSON Body
 ```json
@@ -524,6 +649,9 @@ Dynamic rows added via JavaScript in `submit.html` — clones a template row, in
   "authenticated": false,
   "is_public": true,
   "notes": "optional",
+  "cost": 0.05,
+  "tokens": 12500,
+  "labels": ["label-name"],
   "findings": [
     {"vuln_type": "XSS", "http_method": "GET", "url": "/search", "parameter": "q"}
   ]
@@ -532,7 +660,7 @@ Dynamic rows added via JavaScript in `submit.html` — clones a template row, in
 
 ### Matching Logic (`app/matching.py`)
 
-Shared `match_finding(finding, known_vulns)` function used by both web routes and API.
+Shared `match_finding(finding, known_vulns)` function used by the scan service.
 
 Uses a **scoring-based system** instead of binary matching. Each known vuln is scored against the finding; the highest score above a threshold (60) wins.
 
@@ -568,8 +696,8 @@ Uses a **scoring-based system** instead of binary matching. Each known vuln is s
 | **FP** | null | 1 | User explicitly marked as false positive |
 
 - **Automatic matching**: Score >= 60 → TP. Score < 60 → **Pending** (not FP)
-- **Manual mapping** (existing UI): User maps pending finding to known vuln → TP
-- **Mark FP** (button on scan detail): User explicitly marks as FP → `POST /scans/{id}/findings/{fid}/mark-fp`
+- **Manual mapping**: User maps pending finding to known vuln → TP
+- **Mark FP**: User explicitly marks as FP → `POST /api/scans/{id}/findings/{fid}/mark-fp`
 - **Metrics**: Pending findings are **excluded** from TP/FP/precision/recall calculations
 - **Compare page**: Pending findings excluded from FP matrix
 
@@ -597,9 +725,7 @@ XSS,GET,/search,q,
 Hardcoded Secret,,,,src/config.py
 ```
 
-Example files downloadable at `GET /scans/example/json` and `GET /scans/example/csv`.
-
-### Metrics Computation (on scan detail view)
+### Metrics Computation
 ```
 TP      = count of UNIQUE matched vulns (not finding count) — multiple findings matching the same vuln count as 1 TP
 FP      = count of findings where is_false_positive = 1
@@ -613,40 +739,57 @@ f1        = 2 * P * R / (P+R)  if (P + R) > 0 else 0
 
 **TP counts unique vulns, not findings.** If 3 scanner findings all match the same known vuln, TP=1. This prevents inflated precision when scanners report the same vuln multiple times (e.g., "Missing CSP", "Missing HSTS", "Missing X-Frame-Options" all matching TP-016 "Missing Security Headers"). In the scan list SQL, this uses `COUNT(DISTINCT matched_vuln_id)`.
 
-**Duplicate indicator:** When multiple findings match the same vuln, a badge shows "N findings" next to the matched vuln link. Computed via `Counter(matched_vuln_id for matched findings)` and passed as `vuln_finding_counts` dict to template.
+**Duplicate indicator:** When multiple findings match the same vuln, a badge shows "N findings" next to the matched vuln link.
 
 Pending findings are excluded from precision/recall calculations — they haven't been classified yet.
 
 Displayed in a metrics-grid: TP (green), FP (red), Pending (yellow), FN (red), Precision/Recall/F1 (orange, as percentages).
 
+### Editable Scan Metadata
+
+`PUT /api/scans/{id}` allows updating `scanner_name`, `scan_date`, `authenticated`, and `notes` on an existing scan. Requires scan write access and `vuln-mapper` API key scope.
+
 ### Rematch Endpoint
 
-`POST /scans/{scan_id}/rematch` — Re-runs automatic matching for all findings in a scan. Requires scan write access (submitter, team contributor+, or admin). Re-matches ALL findings including manually mapped and manually marked FP ones. Returns `{"ok": true, "updated": count}`.
+`POST /api/scans/{id}/rematch` — Re-runs automatic matching for all findings in a scan. Requires scan write access. Re-matches ALL findings including manually mapped and manually marked FP ones. Returns `{"ok": true, "updated": count}`.
 
-Use case: After splitting a coarse-grained vuln into finer ones, re-match picks up the new vulns. The UI shows a "Re-match All" button next to the Findings heading (scan write access only) with a confirmation dialog.
+Use case: After splitting a coarse-grained vuln into finer ones, re-match picks up the new vulns.
 
 ### Split/Refine Workflow
 
-The "+ Vuln" button appears on ALL findings (not just unmatched), allowing users to create fine-grained vulns from any finding — including ones already matched to a coarse vuln. After creating new vulns, "Re-match All" re-runs matching so findings map to the more specific vulns.
+Users can create fine-grained vulns from any finding — including ones already matched to a coarse vuln. After creating new vulns, "Re-match All" re-runs matching so findings map to the more specific vulns.
 
 ---
 
-## Inline Editing Pattern
+## Scan Comparison
 
-Used in vuln table (app detail) and user table (admin). Each editable cell has:
-- `class="cell-editable"` — pointer cursor, orange highlight on hover
-- `data-field` — field name for API call
-- `data-value` — current value
-- `data-type="select"` — optional, renders dropdown instead of text input
+Comparison page at `/apps/:id/compare` (API: `GET /api/apps/{id}/compare?scans=1,2,3`).
 
-On click: replace cell content with input/select. Save on Enter/change/blur, cancel on Escape.
-Save via `fetch POST` to `/{resource}/{id}/inline` with JSON `{field: value}`.
-On success, update `data-value` and re-render display (badges for severity/role, links for titles).
+**Features:**
+- No scan limit for comparison (select any number of scans)
+- Severity filter toggles that recalculate metrics dynamically
+- Horizontal scroll with sticky columns for the detection matrix
+- Cost/tokens shown in comparison when available (private, only shown to authorized users)
+- Scans ordered by date in the selector
 
-CSS: `.cell-editable`, `.cell-editable:hover`, `.inline-input`
+**Comparison data includes:**
+- **Metrics Table**: TP, FP, FN, Precision, Recall, F1, Detection Rate per scanner. Color-coded: green >=70%, yellow >=40%, red <40%
+- **Detection Matrix**: Rows = known vulnerabilities, Columns = scanners. Green checkmark (found) or gray X (missed). Coverage summary per vuln.
+- **False Positives Table**: FPs grouped by scanner with vuln_type, method, URL, parameter.
+- Scanner names in comparison link to scan detail page
 
-Actions column has pencil icon (link to full edit form) and trashcan icon (form POST to delete with confirm).
-CSS: `.btn-icon`, `.btn-icon:hover`, `.btn-icon-danger:hover`, `.vuln-row:hover`
+---
+
+## Scan Labels
+
+User-defined, color-coded tags for organizing scans.
+
+- **Labels table**: `id`, `name` (unique), `color` (hex, default orange)
+- **Junction table**: `scan_labels(scan_id, label_id)` — many-to-many
+- **Badge display**: Color-coded badges in scans list and scan detail
+- **Filtering**: Scans list supports `?label=` filter
+- **Management**: Admin can CRUD labels via `/api/admin/labels`. Non-admin users can add/remove labels on scans they have write access to.
+- **CLI support**: `--labels` flag on import_scan.py for auto-labeling (labels auto-created if they don't exist)
 
 ---
 
@@ -660,16 +803,12 @@ Apps have a `visibility` field: `public` (default), `team`, or `private`.
 
 `app/visibility.py` provides `app_visibility_filter(user)` which returns a SQL WHERE clause and params for filtering. Applied in app list and app detail queries.
 
-App form includes visibility dropdown and conditional team selector (shown only when visibility="team").
-
 ---
 
 ## Teams
 
 Users can create teams and add members by email. Team creator becomes team admin.
 Team admins (and app admins) can add/remove members and change member roles (admin/contributor/view).
-
-Nav bar shows "Teams" link for all authenticated users. Any logged-in user can create teams.
 
 ---
 
@@ -681,72 +820,6 @@ Nav bar shows "Teams" link for all authenticated users. Any logged-in user can c
   - Unauthenticated: public scans on public apps only
   - Logged in: public scans + own scans + scans on team apps
   - Admin: all scans
-
----
-
-## Template Details
-
-### base.html
-- Sticky top navbar: logo (SVG shield+crosshair, 28x28) + brand "vulnapps" (orange), nav links (Apps, Scans), auth buttons
-- Favicon: `/static/logo.svg`
-- Scans link only shown to logged-in users
-- Teams link only shown to logged-in users
-- Admin link only shown to admin role
-- Alert blocks for `error` and `success` template variables
-- Content block for page-specific content
-
-### Scan Detail Template (`scans/detail.html`)
-- Detail grid: scanner, app (linked), date, authenticated, submitted_by, notes
-- Metrics grid (7 cards): TP, FP, Pending, FN, Precision%, Recall%, F1%
-- Findings table: type, method, url, parameter, filename, status badge (TP green / FP red / Pending yellow)
-- Status: TP = matched_vuln_id set, FP = is_false_positive=1, Pending = neither
-- Pending findings show "Mark FP" button for users with `can_edit_scan` access
-- Manual mapping dropdown: maps pending → TP (or unmaps TP → Pending, not FP)
-- Missed Vulnerabilities (FN) table: vuln_id, title (linked), type, severity, url
-
-### Scan Submit Template (`scans/submit.html`)
-- File upload section (JSON/CSV) with example download links
-- Manual finding rows as fallback (used when no file uploaded)
-- JavaScript for dynamic finding rows with add/remove
-- Prevents removing the last row
-- Each row: vuln_type (text), http_method (select), url (text, DAST), parameter (text, DAST), filename (text, SAST)
-- Form uses `enctype="multipart/form-data"`
-
-### App Detail Template (`apps/detail.html`)
-- Users with `can_edit` see: Edit App, Add Vulnerability, Import Vulns buttons
-- Users with `can_submit_scan` see: Submit Scan button
-- Any logged-in user sees: Clone button
-- Shows app visibility badge in detail grid
-- Shows `creator_name` (joined from users table) or falls back to `created_by` ID
-- **Tech Stack:** Displayed as `badge-info` badges (from `app_technologies` table)
-- **Vulnerability Summary:** Before the vulns table, shows total count in header and a `metrics-grid` with severity-colored badge counts (only severities with >0 vulns shown)
-
-### App Form Template (`apps/form.html`)
-- Tech Stack field: comma-separated text input with hint text, parsed server-side into individual `app_technologies` rows
-- Visibility dropdown: public (default), team, private
-- Team selector: shown only when visibility is "team", populated with user's teams
-
-### App List Template (`apps/list.html`)
-- Each card shows tech stack badges instead of category
-- Shows visibility badge (team/private) when not public
-- Template receives `apps` as list of `{"app": row, "tech": [names]}` dicts
-- Apps filtered by visibility (via `app_visibility_filter`)
-
-### Scan Comparison Template (`scans/compare.html`)
-Two-mode template controlled by `comparison` variable:
-
-**Selector mode** (`comparison` is None):
-- Table of available scans for the app with checkboxes
-- JavaScript enforces min 2, max 7 selection — disables unchecked boxes at 7
-- Submit builds URL: `/apps/{id}/compare?scans=1,2,3`
-
-**Results mode** (`comparison` is set):
-- **Metrics Comparison Table**: Rows = metrics (TP, FP, FN, Precision, Recall, F1, Detection Rate), Columns = scanners. Color-coded: green >=70%, yellow >=40%, red <40%
-- **Detection Matrix**: Rows = known vulnerabilities, Columns = scanners. Cells show green checkmark (found) or gray X (missed). Last column shows "Found by N/M scanners" with color coding (all=green, none=red, partial=yellow)
-- **False Positives Table**: Grouped by scanner with rowspan. Each FP shows vuln_type (red), method, URL, parameter. Scanner name column shows FP count. Only shown if any scanner has FPs.
-- "Compare Scans" button appears on app detail page when `scan_count >= 2`
-
-CSS: `.text-center`, `.matrix-hit` (green checkmark), `.matrix-miss` (gray X), `.matrix-table`, `.matrix-header`
 
 ---
 
@@ -766,8 +839,55 @@ CSS: `.text-center`, `.matrix-hit` (green checkmark), `.matrix-miss` (gray X), `
 
 ---
 
+## CLI Scan Importer (`tools/import_scan.py`)
+
+LLM-assisted CLI tool to import scan results (.md files) into Vulnapps.
+
+**Usage:**
+```bash
+python tools/import_scan.py --url https://vulnapps.example.com \
+    --api-key va_... --app-id 1 --dir ./scan-results/
+```
+
+**Features:**
+- Reads one or more `.md` scan result files (combines into single scan via `--dir`)
+- Sends scan content + known vulns to Claude for mapping
+- Displays colored mapping table (matched, unmatched, FP)
+- Submits scan and applies LLM match corrections
+- Auto-captures LLM token count from response
+- Supports `--labels` for auto-labeling scans
+
+**Key flags:**
+| Flag | Description |
+|------|-------------|
+| `--url` | Vulnapps instance URL (required) |
+| `--api-key` | API key (or `VULNAPPS_API_KEY` env var) |
+| `--app-id` | Target app ID (required) |
+| `--dir` | Directory with `.md` files (combined into one scan) |
+| `--file` | Single `.md` file to import |
+| `--scanner` | Override LLM-detected scanner name |
+| `--scan-date` | Override LLM-detected date (YYYY-MM-DD) |
+| `--authenticated` | Mark scan as authenticated (overrides LLM detection) |
+| `--unauthenticated` | Mark scan as unauthenticated (overrides LLM detection) |
+| `--public` | Make scan public (default: private) |
+| `--labels` | Comma-separated labels (auto-created if missing) |
+| `--confirm` | Ask for confirmation before submitting (default: auto-submit) |
+| `--cost` | Scan cost in USD (private field) |
+| `--tokens` | Token count (auto-captured from LLM if not set) |
+| `--notes` | Notes to attach to the scan |
+| `--model` | Claude model (default: `claude-sonnet-4-20250514`) |
+| `--provider` | `anthropic` or `vertex` (auto-detected from `CLAUDE_CODE_USE_VERTEX=1`) |
+| `--vertex-region` | Vertex AI region (or `ANTHROPIC_VERTEX_LOCATION`) |
+| `--vertex-project` | GCP project ID (or `ANTHROPIC_VERTEX_PROJECT_ID`) |
+| `--dry-run` | Show mapping without submitting |
+
+**LLM provider:** Supports both Anthropic direct API and Google Vertex AI. Auto-detects from `CLAUDE_CODE_USE_VERTEX=1` env var.
+
+---
+
 ## Running (Local Development)
 
+### Backend
 ```bash
 python -m venv venv
 source venv/bin/activate
@@ -775,25 +895,59 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
+### Frontend (development)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Vite dev server runs on port 5173 and proxies `/api` and `/static` to the backend on port 8000.
+
+### Frontend (production build)
+```bash
+cd frontend
+npm run build
+```
+Output goes to `frontend/dist/`, which FastAPI serves automatically.
+
 First registered user becomes admin. Database auto-creates on startup.
 
 ---
 
 ## Docker Deployment
 
-### Files
+### Dockerfile (Multi-Stage Build)
 
-**`Dockerfile`**
 ```dockerfile
+# Stage 1: Build React frontend
+FROM node:20-slim AS frontend
+WORKDIR /frontend
+COPY frontend/package*.json .
+RUN npm ci
+COPY frontend/ .
+RUN npm run build
+
+# Stage 2: Python backend + built frontend
 FROM python:3.12-slim
 WORKDIR /app
+
+# Install Python dependencies (cached layer)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
 COPY app/ app/
 COPY migrations/ migrations/
+
+# Copy built frontend from Stage 1
+COPY --from=frontend /frontend/dist frontend/dist
+
+# Data volume for SQLite persistence
 VOLUME /data
 ENV DATABASE_PATH=/data/vulnapps.db
+
 EXPOSE 8000
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
