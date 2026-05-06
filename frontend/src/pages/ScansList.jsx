@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import { LabelBadge } from '../components/LabelBadge';
 
 export default function ScansList() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState(null);
+  const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(true);
 
   const params = {
@@ -35,6 +37,20 @@ export default function ScansList() {
   const hasFilters = Object.values(params).some(v => v);
   const scans = data?.scans || [];
   const labelsMap = data?.scan_labels_map || {};
+
+  const appId = params.app_id;
+  const toggleSelect = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else if (next.size < 7) next.add(id);
+      return next;
+    });
+  };
+  const compareSelected = () => {
+    if (selected.size >= 2 && appId) {
+      navigate(`/apps/${appId}/compare?scans=${Array.from(selected).join(',')}`);
+    }
+  };
 
   const deleteScan = async (id) => {
     if (!confirm('Delete this scan and all its findings?')) return;
@@ -78,14 +94,22 @@ export default function ScansList() {
         </div>
       )}
 
+      {appId && selected.size >= 2 && (
+        <div className="flex gap-1 items-center mb-2">
+          <button className="btn btn-primary btn-sm" onClick={compareSelected}>Compare {selected.size} Scans</button>
+          <button className="btn btn-outline btn-sm" onClick={() => setSelected(new Set())}>Clear Selection</button>
+        </div>
+      )}
+
       {scans.length > 0 ? (
         <div className="card">
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
+                  {appId && <th style={{ width: 36 }}></th>}
                   <th>Scanner</th>
-                  <th>App</th>
+                  {!appId && <th>App</th>}
                   <th>Date</th>
                   <th>Auth</th>
                   <th>TP</th>
@@ -99,11 +123,21 @@ export default function ScansList() {
                   const labels = labelsMap[scan.id] || [];
                   return (
                     <tr key={scan.id}>
+                      {appId && (
+                        <td>
+                          <input type="checkbox" checked={selected.has(scan.id)}
+                            onChange={() => toggleSelect(scan.id)}
+                            disabled={!selected.has(scan.id) && selected.size >= 7}
+                            style={{ accentColor: 'var(--accent)', width: 16, height: 16, cursor: 'pointer' }} />
+                        </td>
+                      )}
                       <td><Link to={`/scans/${scan.id}`}>{scan.scanner_name}</Link></td>
-                      <td>
-                        <Link to={`/apps/${scan.app_id}`}>{scan.app_name}</Link>
-                        {scan.app_version && <span className="text-muted text-sm"> v{scan.app_version}</span>}
-                      </td>
+                      {!appId && (
+                        <td>
+                          <Link to={`/apps/${scan.app_id}`}>{scan.app_name}</Link>
+                          {scan.app_version && <span className="text-muted text-sm"> v{scan.app_version}</span>}
+                        </td>
+                      )}
                       <td>{scan.scan_date}</td>
                       <td>{scan.authenticated ? 'Yes' : 'No'}</td>
                       <td className="text-success">{scan.tp_count ?? '-'}</td>

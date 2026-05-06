@@ -78,6 +78,23 @@ async def get_scan(request: Request, scan_id: int):
     return result
 
 
+@router.put("/{scan_id}")
+async def update_scan(request: Request, scan_id: int):
+    user = await require_user(request)
+    require_scope(user, "vuln-mapper")
+    body = await request.json()
+    db = await get_connection()
+    try:
+        scan = await scans_service.update_scan(db, user, scan_id, body)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+    return {"ok": True, "scan": scan}
+
+
 @router.delete("/{scan_id}")
 async def delete_scan(request: Request, scan_id: int):
     user = await require_user(request)

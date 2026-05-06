@@ -420,6 +420,28 @@ async def delete_scan(db, user, scan_id: int) -> None:
     await db.commit()
 
 
+async def update_scan(db, user, scan_id: int, updates: dict) -> dict:
+    """Update scan metadata (scanner_name, scan_date, authenticated, notes)."""
+    scan, app = await _get_scan_and_app(db, scan_id)
+    await _check_scan_write(db, user, scan, app)
+
+    allowed = {"scanner_name", "scan_date", "authenticated", "notes", "cost", "tokens"}
+    clean = {k: v for k, v in updates.items() if k in allowed and v is not None}
+    if "authenticated" in clean:
+        clean["authenticated"] = 1 if clean["authenticated"] else 0
+
+    if not clean:
+        return dict(scan)
+
+    set_clause = ", ".join(f"{k}=?" for k in clean)
+    values = list(clean.values()) + [scan_id]
+    await db.execute(f"UPDATE scans SET {set_clause} WHERE id=?", values)
+    await db.commit()
+
+    cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
+    return dict(await cursor.fetchone())
+
+
 async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id) -> dict:
     """Manually match a finding to a vuln (or clear the match).
 

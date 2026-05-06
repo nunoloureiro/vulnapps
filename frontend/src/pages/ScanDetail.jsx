@@ -38,6 +38,56 @@ export default function ScanDetail() {
   );
 }
 
+function EditableField({ label, value, canEdit, onSave, type = 'text', options }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  const save = () => {
+    const newVal = type === 'checkbox' ? draft : draft;
+    if (newVal !== value) onSave(newVal);
+    setEditing(false);
+  };
+
+  if (!canEdit) {
+    return (
+      <>
+        <span className="detail-label">{label}</span>
+        <span className="detail-value">{type === 'checkbox' ? (value ? 'Yes' : 'No') : (value || '-')}</span>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <span className="detail-label">{label}</span>
+      <span className="detail-value">
+        {editing ? (
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            {type === 'checkbox' ? (
+              <select className="form-select" value={draft ? '1' : '0'} onChange={e => setDraft(e.target.value === '1')} style={{ width: 'auto', padding: '2px 6px', fontSize: '0.85rem' }} autoFocus>
+                <option value="1">Yes</option>
+                <option value="0">No</option>
+              </select>
+            ) : type === 'textarea' ? (
+              <textarea className="form-textarea" value={draft || ''} onChange={e => setDraft(e.target.value)} style={{ fontSize: '0.85rem', minHeight: 60 }} autoFocus />
+            ) : (
+              <input className="form-input" type={type} value={draft || ''} onChange={e => setDraft(e.target.value)}
+                style={{ padding: '2px 6px', fontSize: '0.85rem', width: 'auto' }} autoFocus
+                onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }} />
+            )}
+            <button className="btn btn-primary btn-sm" onClick={save} style={{ height: 24, padding: '0 0.4rem', fontSize: '0.7rem' }}>Save</button>
+            <button className="btn btn-outline btn-sm" onClick={() => { setDraft(value); setEditing(false); }} style={{ height: 24, padding: '0 0.4rem', fontSize: '0.7rem' }}>Cancel</button>
+          </div>
+        ) : (
+          <span onClick={() => { setDraft(value); setEditing(true); }} className="cell-editable" style={{ cursor: 'pointer' }}>
+            {type === 'checkbox' ? (value ? 'Yes' : 'No') : (value || '-')}
+          </span>
+        )}
+      </span>
+    </>
+  );
+}
+
 function ScanMeta({ scan, app, labels, canEdit, canViewCost, scanId, onUpdate }) {
   const [showLabelInput, setShowLabelInput] = useState(false);
   const [labelName, setLabelName] = useState('');
@@ -59,17 +109,19 @@ function ScanMeta({ scan, app, labels, canEdit, canViewCost, scanId, onUpdate })
     onUpdate();
   };
 
+  const updateField = async (field, value) => {
+    await api.put(`/scans/${scanId}`, { [field]: value });
+    onUpdate();
+  };
+
   return (
     <div className="card">
       <div className="detail-grid">
-        <span className="detail-label">Scanner</span>
-        <span className="detail-value">{scan.scanner_name}</span>
+        <EditableField label="Scanner" value={scan.scanner_name} canEdit={canEdit} onSave={v => updateField('scanner_name', v)} />
         <span className="detail-label">App</span>
         <span className="detail-value"><Link to={`/apps/${app.id}`}>{app.name}</Link></span>
-        <span className="detail-label">Scan Date</span>
-        <span className="detail-value">{scan.scan_date}</span>
-        <span className="detail-label">Authenticated</span>
-        <span className="detail-value">{scan.authenticated ? 'Yes' : 'No'}</span>
+        <EditableField label="Scan Date" value={scan.scan_date} canEdit={canEdit} type="date" onSave={v => updateField('scan_date', v)} />
+        <EditableField label="Authenticated" value={scan.authenticated} canEdit={canEdit} type="checkbox" onSave={v => updateField('authenticated', v)} />
         <span className="detail-label">Submitted By</span>
         <span className="detail-value text-secondary">{scan.submitter_name || scan.submitted_by}</span>
         <span className="detail-label">Labels</span>
@@ -104,12 +156,7 @@ function ScanMeta({ scan, app, labels, canEdit, canViewCost, scanId, onUpdate })
             <span className="detail-value font-mono">${scan.cost.toFixed(4)}</span>
           </>
         )}
-        {scan.notes && (
-          <>
-            <span className="detail-label">Notes</span>
-            <span className="detail-value">{scan.notes}</span>
-          </>
-        )}
+        <EditableField label="Notes" value={scan.notes} canEdit={canEdit} type="textarea" onSave={v => updateField('notes', v)} />
       </div>
     </div>
   );
@@ -159,13 +206,15 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
         <div className="card">
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Type</th><th>Method</th><th>Location</th><th>Parameter</th><th>Status</th><th>Matched Vuln</th>{canEdit && <th></th>}</tr></thead>
+              <thead><tr><th>Type</th><th>Location</th><th>Parameter</th><th>Status</th><th>Matched Vuln</th>{canEdit && <th></th>}</tr></thead>
               <tbody>
-                {findings.map(f => (
+                {findings.map(f => {
+                  const location = f.url || f.filename || '-';
+                  const locationDisplay = f.http_method ? `${f.http_method} ${location}` : location;
+                  return (
                   <tr key={f.id}>
                     <td>{f.vuln_type}</td>
-                    <td className="font-mono">{f.http_method || '-'}</td>
-                    <td className="font-mono text-sm">{f.url || f.filename || '-'}</td>
+                    <td className="font-mono text-sm">{locationDisplay}</td>
                     <td className="font-mono">{f.parameter || '-'}</td>
                     <td>
                       {f.matched_vuln_id ? <Badge severity="low">TP</Badge> :
@@ -180,7 +229,10 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                           {knownVulns.map(v => <option key={v.id} value={v.id}>{v.vuln_id} - {v.title}</option>)}
                         </select>
                       ) : (
-                        f.matched_vuln_id ? knownVulns.find(v => v.id === f.matched_vuln_id)?.title || 'Matched' :
+                        f.matched_vuln_id ? (() => {
+                          const v = knownVulns.find(v => v.id === f.matched_vuln_id);
+                          return v ? <Link to={`/apps/${appId}/vulns/${v.id}`}>{v.vuln_id} - {v.title}</Link> : 'Matched';
+                        })() :
                         f.is_false_positive ? <span className="text-muted">FP</span> : <span className="text-muted">Unmapped</span>
                       )}
                     </td>
@@ -192,7 +244,8 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                       </td>
                     )}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
