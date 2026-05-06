@@ -277,7 +277,7 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
     db = await get_connection()
     try:
         if scans:
-            scan_ids = [int(s) for s in scans.split(",") if s.strip().isdigit()][:7]
+            scan_ids = [int(s) for s in scans.split(",") if s.strip().isdigit()]
             result = await scans_service.compare_scans(db, user, app_id, scan_ids)
         else:
             available = await scans_service.get_available_scans(db, user, app_id)

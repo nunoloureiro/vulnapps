@@ -42,7 +42,7 @@ export default function ScansList() {
   const toggleSelect = (id) => {
     setSelected(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else if (next.size < 7) next.add(id);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
@@ -127,7 +127,6 @@ export default function ScansList() {
                         <td>
                           <input type="checkbox" checked={selected.has(scan.id)}
                             onChange={() => toggleSelect(scan.id)}
-                            disabled={!selected.has(scan.id) && selected.size >= 7}
                             style={{ accentColor: 'var(--accent)', width: 16, height: 16, cursor: 'pointer' }} />
                         </td>
                       )}

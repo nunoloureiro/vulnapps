@@ -576,7 +576,24 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .matrix-hit { color: var(--success); font-size: 1.125rem; font-weight: 700; }
 .matrix-miss { color: #3f3f46; font-size: 1.125rem; }
 .matrix-table td, .matrix-table th { padding: 0.5rem 0.75rem; }
-.matrix-header { max-width: 140px; word-wrap: break-word; vertical-align: top; }
+.matrix-header { min-width: 120px; max-width: 160px; word-wrap: break-word; vertical-align: top; }
+.compare-scroll { overflow-x: auto; }
+.compare-scroll table { min-width: max-content; }
+.compare-scroll th.sticky-col,
+.compare-scroll td.sticky-col {
+    position: sticky;
+    left: 0;
+    background: var(--bg-panel);
+    z-index: 2;
+}
+.compare-scroll th.sticky-col2,
+.compare-scroll td.sticky-col2 {
+    position: sticky;
+    background: var(--bg-panel);
+    z-index: 2;
+}
+.compare-scroll thead th.sticky-col,
+.compare-scroll thead th.sticky-col2 { z-index: 3; }
 .tooltip-wrap { position: relative; display: inline-block; cursor: help; }
 .tooltip-wrap .tooltip-text {
     visibility: hidden;

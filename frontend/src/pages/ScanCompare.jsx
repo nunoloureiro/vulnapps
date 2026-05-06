@@ -28,7 +28,7 @@ export default function ScanCompare() {
   const toggleScan = (id) => {
     setSelected(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else if (next.size < 7) next.add(id);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
@@ -58,7 +58,7 @@ export default function ScanCompare() {
 function ScanSelector({ scans, selected, onToggle, onCompare }) {
   return (
     <div className="card">
-      <h3 className="card-title mb-2">Select scans to compare <span className="text-muted text-sm">(max 7)</span></h3>
+      <h3 className="card-title mb-2">Select scans to compare</h3>
       {scans.length > 0 ? (
         <>
           <div className="table-wrap">
@@ -67,7 +67,7 @@ function ScanSelector({ scans, selected, onToggle, onCompare }) {
               <tbody>
                 {scans.map(s => (
                   <tr key={s.id}>
-                    <td><input type="checkbox" checked={selected.has(s.id)} onChange={() => onToggle(s.id)} disabled={!selected.has(s.id) && selected.size >= 7} style={{ accentColor: 'var(--accent)' }} /></td>
+                    <td><input type="checkbox" checked={selected.has(s.id)} onChange={() => onToggle(s.id)} style={{ accentColor: 'var(--accent)', width: 16, height: 16, cursor: 'pointer' }} /></td>
                     <td><strong>{s.scanner_name}</strong></td>
                     <td>{s.scan_date}</td>
                     <td>{s.authenticated ? 'Yes' : 'No'}</td>
@@ -108,18 +108,18 @@ function ComparisonView({ data, appId }) {
     <>
       <div className="card mb-2">
         <h3 className="card-title mb-2">Metrics Comparison</h3>
-        <div className="table-wrap">
+        <div className="compare-scroll">
           <table>
             <thead>
               <tr>
-                <th>Metric</th>
+                <th className="sticky-col">Metric</th>
                 {scanners.map(s => <th key={s.scan.id} className="text-center"><ScannerHeader s={s} /></th>)}
               </tr>
             </thead>
             <tbody>
               {['tp', 'fp', 'fn', 'pending'].map(k => (
                 <tr key={k}>
-                  <td className="detail-label">{k === 'tp' ? 'True Positives' : k === 'fp' ? 'False Positives' : k === 'fn' ? 'False Negatives' : 'Pending'}</td>
+                  <td className="detail-label sticky-col">{k === 'tp' ? 'True Positives' : k === 'fp' ? 'False Positives' : k === 'fn' ? 'False Negatives' : 'Pending'}</td>
                   {scanners.map(s => (
                     <td key={s.scan.id} className={`text-center font-mono ${k === 'tp' ? 'text-success' : k === 'fp' || k === 'fn' ? 'text-error' : 'text-warning'}`}>{s.metrics[k]}</td>
                   ))}
@@ -127,14 +127,14 @@ function ComparisonView({ data, appId }) {
               ))}
               {['precision', 'recall', 'f1'].map(k => (
                 <tr key={k}>
-                  <td className="detail-label">{k === 'f1' ? 'F1 Score' : k.charAt(0).toUpperCase() + k.slice(1)}</td>
+                  <td className="detail-label sticky-col">{k === 'f1' ? 'F1 Score' : k.charAt(0).toUpperCase() + k.slice(1)}</td>
                   {scanners.map(s => (
                     <td key={s.scan.id} className={`text-center font-mono ${pctColor(s.metrics[k])}`}>{(s.metrics[k] * 100).toFixed(1)}%</td>
                   ))}
                 </tr>
               ))}
               <tr>
-                <td className="detail-label">Detection Rate</td>
+                <td className="detail-label sticky-col">Detection Rate</td>
                 {scanners.map(s => {
                   const rate = known_vuln_count > 0 ? s.metrics.tp / known_vuln_count : 0;
                   return <td key={s.scan.id} className="text-center font-mono text-accent">{(rate * 100).toFixed(1)}% ({s.metrics.tp}/{known_vuln_count})</td>;
@@ -142,7 +142,7 @@ function ComparisonView({ data, appId }) {
               </tr>
               {scanners.some(s => s.scan.tokens != null) && (
                 <tr>
-                  <td className="detail-label">Tokens</td>
+                  <td className="detail-label sticky-col">Tokens</td>
                   {scanners.map(s => (
                     <td key={s.scan.id} className="text-center font-mono text-secondary">{s.scan.tokens != null ? s.scan.tokens.toLocaleString() : '-'}</td>
                   ))}
@@ -150,7 +150,7 @@ function ComparisonView({ data, appId }) {
               )}
               {scanners.some(s => s.scan.cost != null) && (
                 <tr>
-                  <td className="detail-label">Cost</td>
+                  <td className="detail-label sticky-col">Cost</td>
                   {scanners.map(s => (
                     <td key={s.scan.id} className="text-center font-mono text-secondary">{s.scan.cost != null ? `$${s.scan.cost.toFixed(4)}` : '-'}</td>
                   ))}
@@ -163,11 +163,13 @@ function ComparisonView({ data, appId }) {
 
       <div className="card mb-2">
         <h3 className="card-title mb-2">Detection Matrix</h3>
-        <div className="table-wrap">
+        <div className="compare-scroll">
           <table className="matrix-table">
             <thead>
               <tr>
-                <th>ID</th><th>Vulnerability</th><th>Severity</th>
+                <th className="sticky-col" style={{ left: 0, minWidth: 70 }}>ID</th>
+                <th className="sticky-col2" style={{ left: 70, minWidth: 180 }}>Vulnerability</th>
+                <th className="sticky-col2" style={{ left: 250, minWidth: 80 }}>Severity</th>
                 {scanners.map(s => <th key={s.scan.id} className="text-center matrix-header"><ScannerHeader s={s} /></th>)}
                 <th className="text-center">Found</th>
               </tr>
@@ -175,9 +177,9 @@ function ComparisonView({ data, appId }) {
             <tbody>
               {matrix.map((row, i) => (
                 <tr key={i}>
-                  <td className="font-mono text-sm">{row.vuln.vuln_id}</td>
-                  <td>{row.vuln.title}</td>
-                  <td><Badge severity={row.vuln.severity} /></td>
+                  <td className="font-mono text-sm sticky-col" style={{ left: 0 }}>{row.vuln.vuln_id}</td>
+                  <td className="sticky-col2" style={{ left: 70 }}>{row.vuln.title}</td>
+                  <td className="sticky-col2" style={{ left: 250 }}><Badge severity={row.vuln.severity} /></td>
                   {row.detections.map((d, j) => (
                     <td key={j} className={`text-center ${d ? 'matrix-hit' : 'matrix-miss'}`}>{d ? '✓' : '✗'}</td>
                   ))}
@@ -194,11 +196,13 @@ function ComparisonView({ data, appId }) {
       {fp_matrix && fp_matrix.length > 0 && (
         <div className="card">
           <h3 className="card-title mb-2">False Positives</h3>
-          <div className="table-wrap">
+          <div className="compare-scroll">
             <table className="matrix-table">
               <thead>
                 <tr>
-                  <th>Type</th><th>Location</th><th>Parameter</th>
+                  <th className="sticky-col" style={{ left: 0, minWidth: 120 }}>Type</th>
+                  <th className="sticky-col2" style={{ left: 120, minWidth: 160 }}>Location</th>
+                  <th className="sticky-col2" style={{ left: 280, minWidth: 90 }}>Parameter</th>
                   {scanners.map(s => <th key={s.scan.id} className="text-center matrix-header"><ScannerHeader s={s} /></th>)}
                   <th className="text-center">Flagged</th>
                 </tr>
@@ -206,9 +210,9 @@ function ComparisonView({ data, appId }) {
               <tbody>
                 {fp_matrix.map((row, i) => (
                   <tr key={i}>
-                    <td className="text-error">{row.vuln_type}</td>
-                    <td className="font-mono text-sm">{row.location || '-'}</td>
-                    <td className="font-mono">{row.parameter || '-'}</td>
+                    <td className="text-error sticky-col" style={{ left: 0 }}>{row.vuln_type}</td>
+                    <td className="font-mono text-sm sticky-col2" style={{ left: 120 }}>{row.location || '-'}</td>
+                    <td className="font-mono sticky-col2" style={{ left: 280 }}>{row.parameter || '-'}</td>
                     {row.flagged_by.map((f, j) => (
                       <td key={j} className={`text-center ${f ? 'matrix-hit' : 'matrix-miss'}`}>{f ? '✓' : '✗'}</td>
                     ))}
