@@ -109,16 +109,18 @@ export default function ScanSubmit() {
             <label className="form-label">Labels <span className="text-muted text-xs">(optional, comma-separated)</span></label>
             <input className="form-input" value={form.labels} onChange={e => set('labels', e.target.value)} placeholder="e.g. baseline, quarterly" />
           </div>
-          <div className="form-row">
-            <div className="form-group">
-              <label className="form-label">Tokens <span className="text-muted text-xs">(optional, private)</span></label>
-              <input type="number" min="0" className="form-input" value={form.tokens} onChange={e => set('tokens', e.target.value)} placeholder="e.g. 15420" />
+          {app.visibility !== 'public' && (
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Tokens <span className="text-muted text-xs">(optional, private)</span></label>
+                <input type="number" min="0" className="form-input" value={form.tokens} onChange={e => set('tokens', e.target.value)} placeholder="e.g. 15420" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Cost <span className="text-muted text-xs">(optional, private)</span></label>
+                <input type="number" step="0.0001" min="0" className="form-input" value={form.cost} onChange={e => set('cost', e.target.value)} placeholder="e.g. 0.0432" />
+              </div>
             </div>
-            <div className="form-group">
-              <label className="form-label">Cost <span className="text-muted text-xs">(optional, private)</span></label>
-              <input type="number" step="0.0001" min="0" className="form-input" value={form.cost} onChange={e => set('cost', e.target.value)} placeholder="e.g. 0.0432" />
-            </div>
-          </div>
+          )}
 
           <h3 className="card-title mt-3 mb-2">Upload Findings File</h3>
           <div className="form-group">
