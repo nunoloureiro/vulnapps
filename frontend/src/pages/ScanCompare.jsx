@@ -140,6 +140,22 @@ function ComparisonView({ data, appId }) {
                   return <td key={s.scan.id} className="text-center font-mono text-accent">{(rate * 100).toFixed(1)}% ({s.metrics.tp}/{known_vuln_count})</td>;
                 })}
               </tr>
+              {scanners.some(s => s.scan.tokens != null) && (
+                <tr>
+                  <td className="detail-label">Tokens</td>
+                  {scanners.map(s => (
+                    <td key={s.scan.id} className="text-center font-mono text-secondary">{s.scan.tokens != null ? s.scan.tokens.toLocaleString() : '-'}</td>
+                  ))}
+                </tr>
+              )}
+              {scanners.some(s => s.scan.cost != null) && (
+                <tr>
+                  <td className="detail-label">Cost</td>
+                  {scanners.map(s => (
+                    <td key={s.scan.id} className="text-center font-mono text-secondary">{s.scan.cost != null ? `$${s.scan.cost.toFixed(4)}` : '-'}</td>
+                  ))}
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

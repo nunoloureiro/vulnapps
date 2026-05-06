@@ -92,6 +92,12 @@ function ScanMeta({ scan, app, labels, canEdit, canViewCost, scanId, onUpdate })
             )}
           </div>
         </span>
+        {canViewCost && scan.tokens != null && (
+          <>
+            <span className="detail-label">Tokens <span className="text-muted text-xs">(private)</span></span>
+            <span className="detail-value font-mono">{scan.tokens.toLocaleString()}</span>
+          </>
+        )}
         {canViewCost && scan.cost != null && (
           <>
             <span className="detail-label">Cost <span className="text-muted text-xs">(private)</span></span>

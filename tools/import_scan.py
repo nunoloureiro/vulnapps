@@ -280,7 +280,11 @@ def run_llm_mapping(scan_content: str, vulns: list, model: str, client) -> dict:
         text = text.split("\n", 1)[1]
         if text.endswith("```"):
             text = text[:-3]
-    return json.loads(text)
+    result = json.loads(text)
+    # Attach LLM usage stats
+    if hasattr(response, "usage") and response.usage:
+        result["_llm_tokens"] = response.usage.input_tokens + response.usage.output_tokens
+    return result
 
 
 def print_header(text: str, width: int = 60):
@@ -343,7 +347,7 @@ def print_mapping_table(mapping: dict, vulns: list):
     print(f"\n  {C.DIM}Summary:{C.RESET} {' / '.join(parts)}")
 
 
-def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_public: bool, notes: str, cost: float | None = None):
+def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_public: bool, notes: str, cost: float | None = None, tokens: int | None = None):
     """Submit the scan and apply LLM-corrected matches."""
     findings_payload = []
     for f in mapping.get("findings", []):
@@ -365,6 +369,8 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
     }
     if cost is not None:
         scan_data["cost"] = cost
+    if tokens is not None:
+        scan_data["tokens"] = tokens
 
     with Spinner("Submitting scan..."):
         result = client.submit_scan(app_id, scan_data)
@@ -424,6 +430,7 @@ def main():
     parser.add_argument("--labels", default="", help="Comma-separated labels (auto-created if missing)")
     parser.add_argument("--confirm", action="store_true", help="Ask for confirmation before submitting each scan")
     parser.add_argument("--cost", type=float, default=None, help="Scan cost in USD (optional, private — for LLM-based scanners)")
+    parser.add_argument("--tokens", type=int, default=None, help="Token count (optional, private — auto-captured from LLM if not set)")
     parser.add_argument("--notes", default="", help="Notes to attach to the scan")
     parser.add_argument("--model", default=None, help="Claude model (default: claude-sonnet-4-20250514)")
     parser.add_argument("--provider", choices=["anthropic", "vertex"], default=None,
@@ -573,7 +580,8 @@ def main():
             return
 
     try:
-        scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost)
+        tokens = args.tokens or mapping.get("_llm_tokens")
+        scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost, tokens)
         for label_name in label_names:
             client.add_label(scan_id, label_name)
         if label_names:

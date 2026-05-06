@@ -216,6 +216,12 @@ async def submit_scan(request: Request, app_id: int):
             cost = float(cost)
         except (TypeError, ValueError):
             cost = None
+    tokens = body.get("tokens")
+    if tokens is not None:
+        try:
+            tokens = int(tokens)
+        except (TypeError, ValueError):
+            tokens = None
     findings_data = body.get("findings", [])
     scan_labels = body.get("labels")
 
@@ -229,6 +235,7 @@ async def submit_scan(request: Request, app_id: int):
             is_public=is_public,
             notes=notes,
             cost=cost,
+            tokens=tokens,
             findings_data=findings_data,
             labels=scan_labels,
         )

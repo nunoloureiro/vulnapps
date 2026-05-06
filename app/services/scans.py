@@ -345,6 +345,7 @@ async def submit_scan(
     is_public: int,
     notes: str | None,
     cost: float | None,
+    tokens: int | None,
     findings_data: list[dict],
     labels: list[str] | None = None,
 ) -> int:
@@ -357,9 +358,9 @@ async def submit_scan(
     await _check_scan_submit(db, user, app)
 
     cursor = await db.execute(
-        """INSERT INTO scans (app_id, scanner_name, scan_date, authenticated, is_public, notes, cost, submitted_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (app_id, scanner_name, scan_date, authenticated, is_public, notes, cost, user["sub"]),
+        """INSERT INTO scans (app_id, scanner_name, scan_date, authenticated, is_public, notes, cost, tokens, submitted_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (app_id, scanner_name, scan_date, authenticated, is_public, notes, cost, tokens, user["sub"]),
     )
     scan_id = cursor.lastrowid
 
