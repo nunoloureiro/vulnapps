@@ -57,7 +57,12 @@ app.include_router(api_admin.router, prefix="/api/admin", tags=["admin"])
 
 
 @app.get("/api")
-async def api_root():
+async def api_root(request: Request):
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/api/docs")
+
     return {
         "name": "Vulnapps API",
         "version": "1.0.0",
