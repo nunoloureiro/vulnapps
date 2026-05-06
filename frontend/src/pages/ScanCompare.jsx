@@ -88,7 +88,35 @@ function ScanSelector({ scans, selected, onToggle, onCompare }) {
 }
 
 function ComparisonView({ data, appId }) {
-  const { scanners, matrix, fp_matrix, known_vuln_count } = data;
+  const { scanners, matrix, fp_matrix } = data;
+  const ALL_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
+  const [sevFilter, setSevFilter] = useState(new Set(ALL_SEVERITIES));
+
+  const toggleSev = (sev) => {
+    setSevFilter(prev => {
+      const next = new Set(prev);
+      if (next.has(sev)) { if (next.size > 1) next.delete(sev); }
+      else next.add(sev);
+      return next;
+    });
+  };
+
+  const filteredMatrix = matrix.filter(row => sevFilter.has(row.vuln.severity));
+
+  const computeMetrics = (scannerIdx) => {
+    const s = scanners[scannerIdx];
+    const tp = filteredMatrix.filter(row => row.detections[scannerIdx]).length;
+    const fn = filteredMatrix.filter(row => !row.detections[scannerIdx]).length;
+    const fp = s.metrics.fp;
+    const precision = (tp + fp) > 0 ? tp / (tp + fp) : 0;
+    const recall = (tp + fn) > 0 ? tp / (tp + fn) : 0;
+    const f1 = (precision + recall) > 0 ? 2 * precision * recall / (precision + recall) : 0;
+    return { tp, fn, fp, pending: s.metrics.pending, precision, recall, f1 };
+  };
+
+  const filteredMetrics = scanners.map((_, i) => computeMetrics(i));
+  const filteredVulnCount = filteredMatrix.length;
+  const isFiltered = sevFilter.size < ALL_SEVERITIES.length;
 
   const ScannerHeader = ({ s }) => (
     <>
@@ -106,8 +134,20 @@ function ComparisonView({ data, appId }) {
 
   return (
     <>
+      <div className="flex gap-1 items-center mb-2" style={{ flexWrap: 'wrap' }}>
+        <span className="text-muted text-sm" style={{ marginRight: '0.25rem' }}>Severity:</span>
+        {ALL_SEVERITIES.map(sev => (
+          <button key={sev} onClick={() => toggleSev(sev)}
+            className={`badge badge-${sev}`}
+            style={{ cursor: 'pointer', opacity: sevFilter.has(sev) ? 1 : 0.3, transition: 'opacity 0.15s' }}>
+            {sev}
+          </button>
+        ))}
+        {isFiltered && <span className="text-muted text-xs" style={{ marginLeft: '0.25rem' }}>({filteredVulnCount} of {matrix.length} vulns)</span>}
+      </div>
+
       <div className="card mb-2">
-        <h3 className="card-title mb-2">Metrics Comparison</h3>
+        <h3 className="card-title mb-2">Metrics Comparison{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}</h3>
         <div className="compare-scroll">
           <table>
             <thead>
@@ -120,24 +160,24 @@ function ComparisonView({ data, appId }) {
               {['tp', 'fp', 'fn', 'pending'].map(k => (
                 <tr key={k}>
                   <td className="detail-label sticky-col">{k === 'tp' ? 'True Positives' : k === 'fp' ? 'False Positives' : k === 'fn' ? 'False Negatives' : 'Pending'}</td>
-                  {scanners.map(s => (
-                    <td key={s.scan.id} className={`text-center font-mono ${k === 'tp' ? 'text-success' : k === 'fp' || k === 'fn' ? 'text-error' : 'text-warning'}`}>{s.metrics[k]}</td>
+                  {filteredMetrics.map((m, i) => (
+                    <td key={scanners[i].scan.id} className={`text-center font-mono ${k === 'tp' ? 'text-success' : k === 'fp' || k === 'fn' ? 'text-error' : 'text-warning'}`}>{m[k]}</td>
                   ))}
                 </tr>
               ))}
               {['precision', 'recall', 'f1'].map(k => (
                 <tr key={k}>
                   <td className="detail-label sticky-col">{k === 'f1' ? 'F1 Score' : k.charAt(0).toUpperCase() + k.slice(1)}</td>
-                  {scanners.map(s => (
-                    <td key={s.scan.id} className={`text-center font-mono ${pctColor(s.metrics[k])}`}>{(s.metrics[k] * 100).toFixed(1)}%</td>
+                  {filteredMetrics.map((m, i) => (
+                    <td key={scanners[i].scan.id} className={`text-center font-mono ${pctColor(m[k])}`}>{(m[k] * 100).toFixed(1)}%</td>
                   ))}
                 </tr>
               ))}
               <tr>
                 <td className="detail-label sticky-col">Detection Rate</td>
-                {scanners.map(s => {
-                  const rate = known_vuln_count > 0 ? s.metrics.tp / known_vuln_count : 0;
-                  return <td key={s.scan.id} className="text-center font-mono text-accent">{(rate * 100).toFixed(1)}% ({s.metrics.tp}/{known_vuln_count})</td>;
+                {filteredMetrics.map((m, i) => {
+                  const rate = filteredVulnCount > 0 ? m.tp / filteredVulnCount : 0;
+                  return <td key={scanners[i].scan.id} className="text-center font-mono text-accent">{(rate * 100).toFixed(1)}% ({m.tp}/{filteredVulnCount})</td>;
                 })}
               </tr>
               {scanners.some(s => s.scan.tokens != null) && (
@@ -162,7 +202,7 @@ function ComparisonView({ data, appId }) {
       </div>
 
       <div className="card mb-2">
-        <h3 className="card-title mb-2">Detection Matrix</h3>
+        <h3 className="card-title mb-2">Detection Matrix{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}</h3>
         <div className="compare-scroll">
           <table className="matrix-table">
             <thead>
@@ -175,7 +215,7 @@ function ComparisonView({ data, appId }) {
               </tr>
             </thead>
             <tbody>
-              {matrix.map((row, i) => (
+              {filteredMatrix.map((row, i) => (
                 <tr key={i}>
                   <td className="font-mono text-sm sticky-col" style={{ left: 0 }}>{row.vuln.vuln_id}</td>
                   <td className="sticky-col2" style={{ left: 70 }}>{row.vuln.title}</td>
