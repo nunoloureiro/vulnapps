@@ -6,7 +6,7 @@ export default function ScanSubmit() {
   const { id: appId } = useParams();
   const navigate = useNavigate();
   const [app, setApp] = useState(null);
-  const [form, setForm] = useState({ scanner_name: '', scan_date: '', authenticated: false, is_public: false, notes: '', labels: '', cost: '' });
+  const [form, setForm] = useState({ scanner_name: '', scan_date: '', authenticated: false, is_public: false, notes: '', labels: '', cost: '', tokens: '' });
   const [file, setFile] = useState(null);
   const [findings, setFindings] = useState([{ vuln_type: '', http_method: '', url: '', parameter: '', filename: '' }]);
   const [error, setError] = useState('');
@@ -55,6 +55,7 @@ export default function ScanSubmit() {
         labels: form.labels ? form.labels.split(',').map(l => l.trim()).filter(Boolean) : [],
       };
       if (form.cost) body.cost = parseFloat(form.cost);
+      if (form.tokens) body.tokens = parseInt(form.tokens);
 
       const result = await api.post(`/apps/${appId}/scans`, body);
       navigate(`/scans/${result.scan_id}`);
@@ -108,9 +109,15 @@ export default function ScanSubmit() {
             <label className="form-label">Labels <span className="text-muted text-xs">(optional, comma-separated)</span></label>
             <input className="form-input" value={form.labels} onChange={e => set('labels', e.target.value)} placeholder="e.g. baseline, quarterly" />
           </div>
-          <div className="form-group">
-            <label className="form-label">Cost <span className="text-muted text-xs">(optional, private)</span></label>
-            <input type="number" step="0.0001" min="0" className="form-input" value={form.cost} onChange={e => set('cost', e.target.value)} placeholder="e.g. 0.0432" />
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Tokens <span className="text-muted text-xs">(optional, private)</span></label>
+              <input type="number" min="0" className="form-input" value={form.tokens} onChange={e => set('tokens', e.target.value)} placeholder="e.g. 15420" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Cost <span className="text-muted text-xs">(optional, private)</span></label>
+              <input type="number" step="0.0001" min="0" className="form-input" value={form.cost} onChange={e => set('cost', e.target.value)} placeholder="e.g. 0.0432" />
+            </div>
           </div>
 
           <h3 className="card-title mt-3 mb-2">Upload Findings File</h3>
