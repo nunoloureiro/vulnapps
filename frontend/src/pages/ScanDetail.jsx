@@ -79,8 +79,13 @@ function EditableField({ label, value, canEdit, onSave, type = 'text', options }
             <button className="btn btn-outline btn-sm" onClick={() => { setDraft(value); setEditing(false); }} style={{ height: 24, padding: '0 0.4rem', fontSize: '0.7rem' }}>Cancel</button>
           </div>
         ) : (
-          <span onClick={() => { setDraft(value); setEditing(true); }} className="cell-editable" style={{ cursor: 'pointer' }}>
+          <span onClick={() => { setDraft(value); setEditing(true); }}
+            style={{ cursor: 'pointer', borderBottom: '1px dashed var(--border-hover)', paddingBottom: 1 }}
+            title="Click to edit">
             {type === 'checkbox' ? (value ? 'Yes' : 'No') : (value || '-')}
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" style={{ marginLeft: 6, verticalAlign: 'middle' }}>
+              <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>
+            </svg>
           </span>
         )}
       </span>
