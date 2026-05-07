@@ -418,7 +418,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Import scan results into Vulnapps with LLM-assisted vulnerability mapping"
     )
-    parser.add_argument("--url", required=True, help="Vulnapps instance URL")
+    parser.add_argument("--url", default=os.getenv("VULNAPPS_URL"), help="Vulnapps instance URL (or set VULNAPPS_URL)")
     parser.add_argument("--api-key", default=os.getenv("VULNAPPS_API_KEY"), help="API key (or set VULNAPPS_API_KEY)")
     parser.add_argument("--app-id", type=int, required=True, help="Target app ID")
     parser.add_argument("--dir", required=True, help="Directory with .md scan result files")
@@ -444,6 +444,10 @@ def main():
                         help="Google Cloud project ID (or set ANTHROPIC_VERTEX_PROJECT_ID)")
     parser.add_argument("--dry-run", action="store_true", help="Show mapping without submitting")
     args = parser.parse_args()
+
+    if not args.url:
+        print(f"  {colored('Error:', 'RED')} --url or VULNAPPS_URL environment variable required", file=sys.stderr)
+        sys.exit(1)
 
     if not args.api_key:
         print(f"  {colored('Error:', 'RED')} --api-key or VULNAPPS_API_KEY environment variable required", file=sys.stderr)

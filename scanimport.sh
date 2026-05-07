@@ -76,13 +76,8 @@ preflight() {
         errors=1
     fi
 
-    if [ -z "$VULNAPPS_URL" ] && ! echo "$@" | grep -q -- "--url"; then
-        echo -e "  ${RED}✗${NC} No Vulnapps URL. Set ${CYAN}VULNAPPS_URL${NC} or pass ${CYAN}--url${NC}"
-        errors=1
-    fi
-
-    if [ -z "$VULNAPPS_API_KEY" ] && ! echo "$@" | grep -q -- "--api-key"; then
-        echo -e "  ${RED}✗${NC} No API key. Set ${CYAN}VULNAPPS_API_KEY${NC} or pass ${CYAN}--api-key${NC}"
+    if [ -z "$VULNAPPS_URL" ] && [ -z "$VULNAPPS_API_KEY" ]; then
+        echo -e "  ${RED}✗${NC} Set ${CYAN}VULNAPPS_URL${NC} and ${CYAN}VULNAPPS_API_KEY${NC} environment variables"
         errors=1
     fi
 
@@ -107,12 +102,7 @@ case "$COMMAND" in
         header
         preflight "$@"
 
-        # Build args — inject --url from env if not explicitly passed
         ARGS=()
-        if ! echo "$@" | grep -q -- "--url"; then
-            ARGS+=(--url "$VULNAPPS_URL")
-        fi
-
         if [ "$COMMAND" = "dry-run" ]; then
             ARGS+=(--dry-run)
         fi
