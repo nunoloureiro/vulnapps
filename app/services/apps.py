@@ -119,11 +119,12 @@ async def list_apps(db, user, q: str = "", filter: str = "") -> list:
         extra_params.append(f"%{q}%")
 
     query = f"""
-        SELECT apps.*, users.name as creator_name,
+        SELECT apps.*, users.name as creator_name, teams.name as team_name,
                (SELECT COUNT(*) FROM vulnerabilities WHERE app_id=apps.id) as vuln_count,
                (SELECT COUNT(*) FROM scans WHERE app_id=apps.id) as scan_count
         FROM apps
         LEFT JOIN users ON apps.created_by=users.id
+        LEFT JOIN teams ON apps.team_id=teams.id
         WHERE {vis_clause}{extra_filters}
         ORDER BY apps.created_at DESC
     """

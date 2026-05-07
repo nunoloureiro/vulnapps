@@ -10,6 +10,7 @@ export default function AppsList() {
   const [apps, setApps] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [teams, setTeams] = useState([]);
 
   const q = searchParams.get('q') || '';
   const filter = searchParams.get('filter') || '';
@@ -32,6 +33,10 @@ export default function AppsList() {
   }, [q, filter]);
 
   useEffect(() => { fetchApps(); }, [fetchApps]);
+
+  useEffect(() => {
+    if (user) api.get('/teams').then(d => setTeams(d.teams || [])).catch(() => {});
+  }, [user]);
 
   function handleSearch(e) {
     const value = e.target.value;
@@ -71,7 +76,8 @@ export default function AppsList() {
               <option value="">All</option>
               <option value="public">Public</option>
               <option value="private">Private</option>
-              <option value="teams">My Teams</option>
+              {teams.length > 0 && <option value="teams" disabled style={{fontWeight:600}}>── Teams ──</option>}
+              {teams.map(t => <option key={t.id} value={`team:${t.id}`}>{t.name}</option>)}
             </select>
           )}
           {user && (
@@ -98,7 +104,7 @@ export default function AppsList() {
                       className={'badge badge-' + (a.visibility === 'team' ? 'medium' : 'low')}
                       style={{ fontSize: '0.65rem', marginLeft: '0.5rem' }}
                     >
-                      {a.visibility}
+                      {a.visibility === 'team' ? (a.team_name || 'team') : a.visibility}
                     </span>
                   )}
                 </h3>

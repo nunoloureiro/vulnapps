@@ -59,6 +59,7 @@ async def list_scans(
         "scanners": result["scanners"],
         "apps_list": [dict(a) for a in result["apps_list"]],
         "all_labels": result["all_labels"],
+        "user_teams": [dict(t) for t in result["user_teams"]],
     }
 
 

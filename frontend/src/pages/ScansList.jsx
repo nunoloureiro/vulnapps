@@ -11,6 +11,8 @@ export default function ScansList() {
   const [data, setData] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(true);
+  const [teams, setTeams] = useState([]);
+  const [bulkLabel, setBulkLabel] = useState('');
 
   const params = {
     app_id: searchParams.get('app_id') || '',
@@ -22,11 +24,17 @@ export default function ScansList() {
     filter: searchParams.get('filter') || '',
   };
 
-  useEffect(() => {
+  const fetchScans = () => {
     const qs = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => { if (v) qs.set(k, v); });
-    api.get(`/scans?${qs}`).then(d => { setData(d); setLoading(false); });
-  }, [searchParams.toString()]);
+    return api.get(`/scans?${qs}`).then(d => { setData(d); setLoading(false); });
+  };
+
+  useEffect(() => { fetchScans(); }, [searchParams.toString()]);
+
+  useEffect(() => {
+    if (user) api.get('/teams').then(d => setTeams(d.teams || [])).catch(() => {});
+  }, [user]);
 
   const setFilter = (key, val) => {
     const p = new URLSearchParams(searchParams);
@@ -58,6 +66,21 @@ export default function ScansList() {
     setData(d => ({ ...d, scans: d.scans.filter(s => s.id !== id) }));
   };
 
+  const bulkDelete = async () => {
+    if (!confirm(`Delete ${selected.size} scan(s) and all their findings?`)) return;
+    for (const id of selected) await api.del(`/scans/${id}`);
+    setSelected(new Set());
+    fetchScans();
+  };
+
+  const bulkAddLabel = async () => {
+    if (!bulkLabel.trim()) return;
+    for (const id of selected) await api.post(`/scans/${id}/labels`, { name: bulkLabel.trim() });
+    setBulkLabel('');
+    setSelected(new Set());
+    fetchScans();
+  };
+
   if (loading) return <p className="text-muted">Loading...</p>;
 
   return (
@@ -85,6 +108,12 @@ export default function ScansList() {
             <option value="">All labels</option>
             {(data?.all_labels || []).map(l => <option key={l} value={l}>{l}</option>)}
           </select>
+          {teams.length > 0 && (
+            <select className="form-select" value={params.filter} onChange={e => setFilter('filter', e.target.value)}>
+              <option value="">All teams</option>
+              {teams.map(t => <option key={t.id} value={`team:${t.id}`}>{t.name}</option>)}
+            </select>
+          )}
           <select className="form-select" value={params.app_id} onChange={e => setFilter('app_id', e.target.value)}>
             <option value="">All apps</option>
             {(data?.apps_list || []).map(a => <option key={a.id} value={a.id}>{a.name}{a.version ? ` v${a.version}` : ''}</option>)}
@@ -94,10 +123,16 @@ export default function ScansList() {
         </div>
       )}
 
-      {appId && selected.size >= 2 && (
+      {user && selected.size > 0 && (
         <div className="flex gap-1 items-center mb-2">
-          <button className="btn btn-primary btn-sm" onClick={compareSelected}>Compare {selected.size} Scans</button>
-          <button className="btn btn-outline btn-sm" onClick={() => setSelected(new Set())}>Clear Selection</button>
+          <span className="text-muted text-sm">{selected.size} selected</span>
+          {appId && selected.size >= 2 && (
+            <button className="btn btn-primary btn-sm" onClick={compareSelected}>Compare {selected.size} Scans</button>
+          )}
+          <button className="btn btn-danger btn-sm" onClick={bulkDelete}>Delete Selected</button>
+          <input className="form-input" placeholder="Add label..." value={bulkLabel} onChange={e => setBulkLabel(e.target.value)} style={{ width: 150 }} />
+          <button className="btn btn-primary btn-sm" onClick={bulkAddLabel}>Add Label</button>
+          <button className="btn btn-outline btn-sm" onClick={() => setSelected(new Set())}>Clear</button>
         </div>
       )}
 
@@ -107,7 +142,7 @@ export default function ScansList() {
             <table>
               <thead>
                 <tr>
-                  {appId && <th style={{ width: 36 }}>
+                  {user && <th style={{ width: 36 }}>
                     <input type="checkbox"
                       checked={selected.size > 0 && selected.size === scans.length}
                       onChange={() => {
@@ -131,7 +166,7 @@ export default function ScansList() {
                   const labels = labelsMap[scan.id] || [];
                   return (
                     <tr key={scan.id}>
-                      {appId && (
+                      {user && (
                         <td>
                           <input type="checkbox" checked={selected.has(scan.id)}
                             onChange={() => toggleSelect(scan.id)}

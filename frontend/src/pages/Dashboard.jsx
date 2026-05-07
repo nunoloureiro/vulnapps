@@ -20,15 +20,7 @@ const pctBarColor = (v) => (v >= 0.7 ? 'var(--success)' : v >= 0.4 ? 'var(--warn
 
 const fmt = (v) => (v * 100).toFixed(1) + '%';
 
-const fmtDuration = (s) => {
-  if (s == null) return '-';
-  if (s >= 60) return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
-  return `${Math.round(s)}s`;
-};
-
 const fmtCost = (c) => (c != null ? `$${c.toFixed(4)}` : '-');
-
-const fmtTokens = (t) => (t != null ? t.toLocaleString() : '-');
 
 function computeFilteredMetrics(scanner, selectedSeverities) {
   let tp = 0;
@@ -56,12 +48,14 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [sevFilter, setSevFilter] = useState(new Set(ALL_SEVERITIES));
+  const [teams, setTeams] = useState([]);
 
   const scanner = searchParams.get('scanner') || '';
   const label = searchParams.get('label') || '';
   const tech = searchParams.get('tech') || '';
   const auth = searchParams.get('auth') || '';
   const appFilter = searchParams.get('app') || '';
+  const teamFilter = searchParams.get('team') || '';
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -73,6 +67,7 @@ export default function Dashboard() {
       if (tech) params.set('tech', tech);
       if (auth) params.set('auth', auth);
       if (appFilter) params.set('app', appFilter);
+      if (teamFilter) params.set('team', teamFilter);
       const qs = params.toString();
       const result = await api.get('/dashboard' + (qs ? '?' + qs : ''));
       setData(result);
@@ -81,11 +76,17 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [scanner, label, tech, auth, appFilter]);
+  }, [scanner, label, tech, auth, appFilter, teamFilter]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    api.get('/teams').catch(() => ({ teams: [] })).then((res) => {
+      setTeams(res.teams || []);
+    });
+  }, []);
 
   const toggleSev = (sev) => {
     setSevFilter((prev) => {
@@ -153,6 +154,7 @@ export default function Dashboard() {
           onToggleSev={toggleSev}
           onUpdateFilter={updateFilter}
           isFiltered={isFiltered}
+          teams={teams}
         />
         <div className="empty-state">
           <h3>No scan data</h3>
@@ -177,14 +179,15 @@ export default function Dashboard() {
         onToggleSev={toggleSev}
         onUpdateFilter={updateFilter}
         isFiltered={isFiltered}
+        teams={teams}
       />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <SummaryTable scanners={filteredScanners} isFiltered={isFiltered} />
         <ScannerComparisonBars scanners={filteredScanners} isFiltered={isFiltered} />
         <SeverityBreakdown scanners={data.scanners} sevFilter={sevFilter} />
         <ScannerAppHeatmap scanners={data.scanners} sevFilter={sevFilter} />
         {hasCostData && <CostEfficiency scanners={filteredScanners} />}
-        <SummaryTable scanners={filteredScanners} isFiltered={isFiltered} />
       </div>
     </div>
   );
@@ -192,7 +195,7 @@ export default function Dashboard() {
 
 /* ---------- Filter Bar ---------- */
 
-function FilterBar({ filters, searchParams, sevFilter, onToggleSev, onUpdateFilter, isFiltered }) {
+function FilterBar({ filters, searchParams, sevFilter, onToggleSev, onUpdateFilter, isFiltered, teams }) {
   return (
     <div className="filter-bar mb-2" style={{ flexWrap: 'wrap' }}>
       <span className="text-muted text-sm" style={{ marginRight: '0.25rem' }}>
@@ -280,11 +283,24 @@ function FilterBar({ filters, searchParams, sevFilter, onToggleSev, onUpdateFilt
           ))}
         </select>
       )}
+
+      {teams?.length > 0 && (
+        <select
+          className="form-select"
+          value={searchParams.get('team') || ''}
+          onChange={(e) => onUpdateFilter('team', e.target.value)}
+        >
+          <option value="">All teams</option>
+          {teams.map((t) => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
+      )}
     </div>
   );
 }
 
-/* ---------- Scanner Comparison Bars ---------- */
+/* ---------- Scanner Comparison Bars (vertical, grouped by metric) ---------- */
 
 function ScannerComparisonBars({ scanners, isFiltered }) {
   const metrics = [
@@ -294,61 +310,59 @@ function ScannerComparisonBars({ scanners, isFiltered }) {
     { key: 'detRate', label: 'Det. Rate' },
   ];
 
+  const BAR_HEIGHT = 120;
+
   return (
     <div className="card">
       <h3 className="card-title mb-2">
         Scanner Comparison{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}
       </h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-        {scanners.map((s) => (
-          <div key={s.name}>
-            <div className="text-sm" style={{ fontWeight: 600, marginBottom: '0.5rem' }}>
-              {s.name}
-              <span className="text-muted text-xs" style={{ marginLeft: '0.5rem' }}>
-                {s.scan_count} scan{s.scan_count !== 1 ? 's' : ''} / {s.app_count} app{s.app_count !== 1 ? 's' : ''}
-              </span>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
+        {metrics.map((m) => (
+          <div key={m.key}>
+            <div className="text-sm" style={{ fontWeight: 600, marginBottom: '0.75rem', textAlign: 'center' }}>
+              {m.label}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-              {metrics.map((m) => {
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: '8px', height: BAR_HEIGHT }}>
+              {scanners.map((s) => {
                 const value = s.filtered[m.key];
+                const barH = Math.max(value * BAR_HEIGHT, 2);
+                const color = pctBarColor(value);
                 return (
-                  <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span
-                      className="text-xs text-muted"
-                      style={{ width: '70px', flexShrink: 0, textAlign: 'right' }}
-                    >
-                      {m.label}
-                    </span>
+                  <div key={s.name} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                    <span className="font-mono" style={{ fontSize: '0.625rem', color }}>{fmt(value)}</span>
                     <div
                       style={{
-                        flex: 1,
-                        height: '20px',
-                        background: 'var(--bg)',
-                        borderRadius: '4px',
-                        overflow: 'hidden',
-                        position: 'relative',
+                        width: 40,
+                        height: barH,
+                        background: color,
+                        borderRadius: '4px 4px 0 0',
+                        transition: 'height 0.3s ease',
                       }}
-                    >
-                      <div
-                        style={{
-                          width: `${Math.max(value * 100, 0.5)}%`,
-                          height: '100%',
-                          background: pctBarColor(value),
-                          borderRadius: '4px',
-                          transition: 'width 0.3s ease',
-                          minWidth: '2px',
-                        }}
-                      />
-                    </div>
-                    <span
-                      className={`font-mono text-xs ${pctColor(value)}`}
-                      style={{ width: '48px', flexShrink: 0, textAlign: 'right' }}
-                    >
-                      {fmt(value)}
-                    </span>
+                      title={`${s.name}: ${fmt(value)}`}
+                    />
                   </div>
                 );
               })}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '4px' }}>
+              {scanners.map((s) => (
+                <span
+                  key={s.name}
+                  className="text-muted"
+                  style={{
+                    width: 40,
+                    fontSize: '0.575rem',
+                    textAlign: 'center',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={s.name}
+                >
+                  {s.name}
+                </span>
+              ))}
             </div>
           </div>
         ))}
@@ -357,75 +371,93 @@ function ScannerComparisonBars({ scanners, isFiltered }) {
   );
 }
 
-/* ---------- Severity Breakdown ---------- */
+/* ---------- Severity Breakdown (vertical, grouped by severity) ---------- */
+
+const SCANNER_COLORS = ['var(--accent)', '#3b82f6', '#22c55e', '#8b5cf6', '#06b6d4', '#f97316', '#ec4899'];
 
 function SeverityBreakdown({ scanners, sevFilter }) {
   const activeSeverities = ALL_SEVERITIES.filter((s) => sevFilter.has(s));
+  const BAR_HEIGHT = 120;
 
   return (
     <div className="card">
       <h3 className="card-title mb-2">Severity Breakdown</h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-        {scanners.map((s) => (
-          <div key={s.name}>
-            <div className="text-sm" style={{ fontWeight: 600, marginBottom: '0.5rem' }}>
-              {s.name}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-              {activeSeverities.map((sev) => {
-                const sevData = s.by_severity?.[sev];
-                if (!sevData) return null;
-                const recall = sevData.recall ?? 0;
-                return (
-                  <div key={sev} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span
-                      className="text-xs"
-                      style={{
-                        width: '70px',
-                        flexShrink: 0,
-                        textAlign: 'right',
-                        color: SEV_COLORS[sev],
-                        textTransform: 'capitalize',
-                      }}
-                    >
-                      {sev}
-                    </span>
-                    <div
-                      style={{
-                        flex: 1,
-                        height: '18px',
-                        background: 'var(--bg)',
-                        borderRadius: '4px',
-                        overflow: 'hidden',
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${Math.max(recall * 100, 0.5)}%`,
-                          height: '100%',
-                          background: SEV_COLORS[sev],
-                          borderRadius: '4px',
-                          opacity: 0.8,
-                          transition: 'width 0.3s ease',
-                          minWidth: '2px',
-                        }}
-                      />
-                    </div>
-                    <span
-                      className="font-mono text-xs"
-                      style={{ width: '72px', flexShrink: 0, textAlign: 'right', color: SEV_COLORS[sev] }}
-                    >
-                      {fmt(recall)}
-                      <span className="text-muted" style={{ marginLeft: '0.25rem' }}>
-                        ({sevData.detected}/{sevData.total})
-                      </span>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+      {/* Scanner legend */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+        {scanners.map((s, i) => (
+          <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: SCANNER_COLORS[i % SCANNER_COLORS.length], flexShrink: 0 }} />
+            <span className="text-xs text-muted">{s.name}</span>
           </div>
         ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1.5rem' }}>
+        {activeSeverities.map((sev) => {
+          // Check if any scanner has data for this severity
+          const hasData = scanners.some((s) => s.by_severity?.[sev]?.total > 0);
+          if (!hasData) return null;
+          return (
+            <div key={sev}>
+              <div
+                className="text-sm"
+                style={{
+                  fontWeight: 600,
+                  marginBottom: '0.75rem',
+                  textAlign: 'center',
+                  color: SEV_COLORS[sev],
+                  textTransform: 'capitalize',
+                }}
+              >
+                {sev}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: '8px', height: BAR_HEIGHT }}>
+                {scanners.map((s, i) => {
+                  const sevData = s.by_severity?.[sev];
+                  const recall = sevData?.recall ?? 0;
+                  const barH = Math.max(recall * BAR_HEIGHT, 2);
+                  const color = SCANNER_COLORS[i % SCANNER_COLORS.length];
+                  return (
+                    <div key={s.name} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                      <span className="font-mono" style={{ fontSize: '0.625rem', color }}>
+                        {sevData ? fmt(recall) : '-'}
+                      </span>
+                      <div
+                        style={{
+                          width: 40,
+                          height: sevData ? barH : 2,
+                          background: sevData ? color : 'var(--border)',
+                          borderRadius: '4px 4px 0 0',
+                          transition: 'height 0.3s ease',
+                          opacity: sevData ? 1 : 0.3,
+                        }}
+                        title={sevData ? `${s.name}: ${fmt(recall)} (${sevData.detected}/${sevData.total})` : `${s.name}: no data`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '4px' }}>
+                {scanners.map((s) => (
+                  <span
+                    key={s.name}
+                    className="text-muted"
+                    style={{
+                      width: 40,
+                      fontSize: '0.575rem',
+                      textAlign: 'center',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                    title={s.name}
+                  >
+                    {s.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -697,9 +729,6 @@ function SummaryTable({ scanners, isFiltered }) {
               <th className="text-center">Recall</th>
               <th className="text-center">F1</th>
               <th className="text-center">Det. Rate</th>
-              <th className="text-center">Cost</th>
-              <th className="text-center">Tokens</th>
-              <th className="text-center">Duration</th>
             </tr>
           </thead>
           <tbody>
@@ -717,9 +746,6 @@ function SummaryTable({ scanners, isFiltered }) {
                   <td className={`text-center font-mono ${pctColor(m.recall)}`}>{fmt(m.recall)}</td>
                   <td className={`text-center font-mono ${pctColor(m.f1)}`}>{fmt(m.f1)}</td>
                   <td className={`text-center font-mono ${pctColor(m.detRate)}`}>{fmt(m.detRate)}</td>
-                  <td className="text-center font-mono text-secondary">{fmtCost(s.avg_cost)}</td>
-                  <td className="text-center font-mono text-secondary">{fmtTokens(s.avg_tokens)}</td>
-                  <td className="text-center font-mono text-secondary">{fmtDuration(s.avg_duration)}</td>
                 </tr>
               );
             })}

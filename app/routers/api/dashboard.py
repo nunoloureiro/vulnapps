@@ -14,6 +14,7 @@ async def dashboard(
     tech: str = "",
     app_id: str = "",
     authenticated: str = "",
+    team: str = "",
 ):
     user = request.state.user
     db = await get_connection()
@@ -26,6 +27,7 @@ async def dashboard(
             tech=tech or None,
             app_id=app_id or None,
             authenticated=authenticated or None,
+            team=team or None,
         )
     finally:
         await db.close()

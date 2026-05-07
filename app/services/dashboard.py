@@ -14,7 +14,7 @@ def _parse_csv(value: str | None) -> list[str] | None:
 async def get_dashboard(
     db, user,
     scanner=None, severity=None, label=None, tech=None,
-    app_id=None, authenticated=None,
+    app_id=None, authenticated=None, team=None,
 ) -> dict:
     """Aggregate scanner benchmarking data across all visible apps.
 
@@ -47,6 +47,14 @@ async def get_dashboard(
             f"SELECT app_id FROM app_technologies WHERE name IN ({placeholders}))"
         )
         apps_params.extend(techs_filter)
+
+    if team:
+        try:
+            team_id = int(team)
+            apps_sql += " AND apps.team_id = ?"
+            apps_params.append(team_id)
+        except ValueError:
+            pass
 
     cursor = await db.execute(apps_sql, apps_params)
     visible_apps = await cursor.fetchall()
@@ -347,9 +355,21 @@ async def _collect_filters(db, user) -> dict:
     )
     apps = [{"id": row["id"], "name": row["name"]} for row in await cursor.fetchall()]
 
+    # Teams (from visible team-scoped apps)
+    cursor = await db.execute(
+        f"""SELECT DISTINCT teams.id, teams.name
+            FROM teams
+            JOIN apps ON apps.team_id = teams.id
+            WHERE {app_vis_clause}
+            ORDER BY teams.name""",
+        app_vis_params,
+    )
+    teams = [{"id": row["id"], "name": row["name"]} for row in await cursor.fetchall()]
+
     return {
         "scanners": scanners,
         "labels": labels,
         "techs": techs,
         "apps": apps,
+        "teams": teams,
     }
