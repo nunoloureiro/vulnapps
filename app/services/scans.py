@@ -521,7 +521,12 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
 
     Returns {app, available_scans, scanners, matrix, fp_matrix, known_vuln_count, can_edit}.
     """
-    cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))
+    from app.visibility import app_visibility_filter
+    vis_clause, vis_params = app_visibility_filter(user)
+    cursor = await db.execute(
+        f"SELECT * FROM apps WHERE id = ? AND {vis_clause}",
+        [app_id] + vis_params,
+    )
     app = await cursor.fetchone()
     if not app:
         raise ValueError("App not found")
@@ -696,6 +701,14 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
 
 async def get_available_scans(db, user, app_id: int) -> list:
     """Get all visible scans for an app (for the scan selector)."""
+    from app.visibility import app_visibility_filter
+    app_vis, app_params = app_visibility_filter(user)
+    cursor = await db.execute(
+        f"SELECT id FROM apps WHERE id = ? AND {app_vis}", [app_id] + app_params
+    )
+    if not await cursor.fetchone():
+        raise ValueError("App not found")
+
     vis_clause, vis_params = scan_visibility_filter(user)
     cursor = await db.execute(
         f"""SELECT scans.*, users.name as submitter_name

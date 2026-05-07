@@ -99,6 +99,7 @@ async def update_scan(request: Request, scan_id: int):
 @router.delete("/{scan_id}")
 async def delete_scan(request: Request, scan_id: int):
     user = await require_user(request)
+    require_scope(user, "vuln-mapper")
     db = await get_connection()
     try:
         await scans_service.delete_scan(db, user, scan_id)
