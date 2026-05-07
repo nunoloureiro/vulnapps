@@ -146,7 +146,7 @@ function ComparisonView({ data, appId }) {
     const names = { tp: 'True Positives', fp: 'False Positives', fn: 'False Negatives', pending: 'Pending', precision: 'Precision', recall: 'Recall', f1: 'F1 Score' };
     const tip = METRIC_TOOLTIPS[k];
     return (
-      <>{names[k]}{tip && <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>ⓘ<span className="tooltip-text">{tip}</span></span>}</>
+      <>{names[k]}{tip && <span className="text-muted text-xs" style={{ marginLeft: 4, cursor: 'help' }} title={tip}>ⓘ</span>}</>
     );
   };
 
@@ -236,8 +236,8 @@ function ComparisonView({ data, appId }) {
             <thead>
               <tr>
                 <th className="sticky-col" style={{ left: 0, minWidth: 70 }}>ID</th>
-                <th className="sticky-col2" style={{ left: 70, minWidth: 180 }}>Vulnerability</th>
-                <th className="sticky-col2" style={{ left: 250, minWidth: 80 }}>Severity</th>
+                <th className="sticky-col" style={{ left: 70, minWidth: 200 }}>Vulnerability</th>
+                <th>Severity</th>
                 {scanners.map(s => <th key={s.scan.id} className="text-center matrix-header"><ScannerHeader s={s} /></th>)}
                 <th className="text-center">Found</th>
               </tr>
@@ -246,8 +246,8 @@ function ComparisonView({ data, appId }) {
               {filteredMatrix.map((row, i) => (
                 <tr key={i}>
                   <td className="font-mono text-sm sticky-col" style={{ left: 0 }}>{row.vuln.vuln_id}</td>
-                  <td className="sticky-col2" style={{ left: 70 }}>{row.vuln.title}</td>
-                  <td className="sticky-col2" style={{ left: 250 }}><Badge severity={row.vuln.severity} /></td>
+                  <td className="sticky-col" style={{ left: 70 }}>{row.vuln.title}</td>
+                  <td><Badge severity={row.vuln.severity} /></td>
                   {row.detections.map((d, j) => (
                     <td key={j} className={`text-center ${d ? 'matrix-hit' : 'matrix-miss'}`}>{d ? '✓' : '✗'}</td>
                   ))}
@@ -269,8 +269,8 @@ function ComparisonView({ data, appId }) {
               <thead>
                 <tr>
                   <th className="sticky-col" style={{ left: 0, minWidth: 120 }}>Type</th>
-                  <th className="sticky-col2" style={{ left: 120, minWidth: 160 }}>Location</th>
-                  <th className="sticky-col2" style={{ left: 280, minWidth: 90 }}>Parameter</th>
+                  <th>Location</th>
+                  <th>Parameter</th>
                   {scanners.map(s => <th key={s.scan.id} className="text-center matrix-header"><ScannerHeader s={s} /></th>)}
                   <th className="text-center">Flagged</th>
                 </tr>
@@ -279,8 +279,8 @@ function ComparisonView({ data, appId }) {
                 {fp_matrix.map((row, i) => (
                   <tr key={i}>
                     <td className="text-error sticky-col" style={{ left: 0 }}>{row.vuln_type}</td>
-                    <td className="font-mono text-sm sticky-col2" style={{ left: 120 }}>{row.location || '-'}</td>
-                    <td className="font-mono sticky-col2" style={{ left: 280 }}>{row.parameter || '-'}</td>
+                    <td className="font-mono text-sm">{row.location || '-'}</td>
+                    <td className="font-mono">{row.parameter || '-'}</td>
                     {row.flagged_by.map((f, j) => (
                       <td key={j} className={`text-center ${f ? 'matrix-hit' : 'matrix-miss'}`}>{f ? '✓' : '✗'}</td>
                     ))}

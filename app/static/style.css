@@ -32,7 +32,7 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { color: var(--accent-hover); }
 
 /* Layout */
-.container { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem; }
+.container { max-width: 1400px; margin: 0 auto; padding: 0 1.5rem; }
 
 /* Navbar */
 .navbar {
@@ -581,7 +581,7 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .matrix-miss { color: #3f3f46; font-size: 1.125rem; }
 .matrix-table td, .matrix-table th { padding: 0.5rem 0.75rem; }
 .matrix-header { min-width: 120px; max-width: 160px; word-wrap: break-word; vertical-align: top; }
-.compare-scroll { overflow-x: auto; overflow-y: visible; }
+.compare-scroll { overflow-x: auto; }
 .compare-scroll table { min-width: max-content; }
 .compare-scroll th.sticky-col,
 .compare-scroll td.sticky-col {
