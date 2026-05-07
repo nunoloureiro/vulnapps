@@ -217,11 +217,12 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
         <div className="card">
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Type</th><th>Location</th><th>Parameter</th><th>Status</th><th>Matched Vuln</th>{canEdit && <th></th>}</tr></thead>
+              <thead><tr><th>Type</th><th>Location</th><th>Parameter</th><th>Status</th><th>Matched Vuln</th><th></th></tr></thead>
               <tbody>
                 {findings.map(f => {
                   const location = f.url || f.filename || '-';
                   const locationDisplay = f.http_method ? `${f.http_method} ${location}` : location;
+                  const matchedVuln = f.matched_vuln_id ? knownVulns.find(v => v.id === f.matched_vuln_id) : null;
                   return (
                   <tr key={f.id}>
                     <td>{f.vuln_type}</td>
@@ -234,26 +235,34 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                     </td>
                     <td>
                       {canEdit ? (
-                        <select className="form-select" style={{ width: 'auto', padding: '2px 4px', fontSize: '0.8rem' }}
-                          value={f.matched_vuln_id || ''} onChange={e => matchFinding(f.id, e.target.value ? parseInt(e.target.value) : null)}>
-                          <option value="">-- Unmapped --</option>
-                          {knownVulns.map(v => <option key={v.id} value={v.id}>{v.vuln_id} - {v.title}</option>)}
-                        </select>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <select className="form-select" style={{ width: 'auto', padding: '2px 4px', fontSize: '0.8rem', flex: 1 }}
+                            value={f.matched_vuln_id || ''} onChange={e => matchFinding(f.id, e.target.value ? parseInt(e.target.value) : null)}>
+                            <option value="">-- Unmapped --</option>
+                            {knownVulns.map(v => <option key={v.id} value={v.id}>{v.vuln_id} - {v.title}</option>)}
+                          </select>
+                          {matchedVuln && (
+                            <Link to={`/apps/${appId}/vulns/${matchedVuln.id}`} title="View vulnerability" style={{ flexShrink: 0 }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            </Link>
+                          )}
+                        </div>
                       ) : (
-                        f.matched_vuln_id ? (() => {
-                          const v = knownVulns.find(v => v.id === f.matched_vuln_id);
-                          return v ? <Link to={`/apps/${appId}/vulns/${v.id}`}>{v.vuln_id} - {v.title}</Link> : 'Matched';
-                        })() :
+                        matchedVuln ? <Link to={`/apps/${appId}/vulns/${matchedVuln.id}`}>{matchedVuln.vuln_id} - {matchedVuln.title}</Link> :
                         f.is_false_positive ? <span className="text-muted">FP</span> : <span className="text-muted">Unmapped</span>
                       )}
                     </td>
-                    {canEdit && (
-                      <td>
-                        {!f.matched_vuln_id && !f.is_false_positive && (
-                          <button className="btn btn-outline btn-sm" onClick={() => markFP(f.id)}>FP</button>
+                    <td>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {canEdit && !f.is_false_positive && (
+                          <button className="btn btn-outline btn-sm" onClick={() => markFP(f.id)} title="Mark as False Positive">FP</button>
                         )}
-                      </td>
-                    )}
+                        {canEdit && !f.matched_vuln_id && !f.is_false_positive && (
+                          <Link to={`/apps/${appId}/vulns/new?vuln_type=${encodeURIComponent(f.vuln_type || '')}&http_method=${encodeURIComponent(f.http_method || '')}&url=${encodeURIComponent(f.url || '')}&parameter=${encodeURIComponent(f.parameter || '')}&filename=${encodeURIComponent(f.filename || '')}`}
+                            className="btn btn-outline btn-sm" title="Add as known vulnerability">+ Vuln</Link>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                   );
                 })}
