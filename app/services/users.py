@@ -20,7 +20,7 @@ async def update_user(db, admin_user: dict, target_user_id: int, updates: dict) 
         raise ValueError("No valid fields to update")
 
     # Validate role if being changed
-    if "role" in updates and updates["role"] not in ("user",):
+    if "role" in updates and updates["role"] not in ("user", "admin"):
         raise ValueError("Invalid role")
 
     # Look up target user
