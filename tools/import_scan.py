@@ -20,7 +20,6 @@ import time
 import threading
 from pathlib import Path
 
-import anthropic
 import httpx
 
 
@@ -246,6 +245,8 @@ def create_anthropic_client(provider: str, region: str | None, project_id: str |
     For Vertex, uses Google Application Default Credentials (ADC).
     Run `gcloud auth application-default login` to authenticate.
     """
+    import anthropic
+
     if provider == "vertex":
         if not region or not project_id:
             print(f"  {colored('Error:', 'RED')} --vertex-region and --vertex-project are required with --provider vertex", file=sys.stderr)
@@ -285,6 +286,60 @@ def run_llm_mapping(scan_content: str, vulns: list, model: str, client) -> dict:
     if hasattr(response, "usage") and response.usage:
         result["_llm_tokens"] = response.usage.input_tokens + response.usage.output_tokens
     return result
+
+
+def run_llm_mapping_cli(scan_content: str, vulns: list) -> dict:
+    """Use Claude Code CLI as fallback when no API key is available."""
+    import subprocess
+    import shutil
+
+    if not shutil.which("claude"):
+        print(f"  {colored('Error:', 'RED')} No LLM available. Set ANTHROPIC_API_KEY or install Claude Code CLI.", file=sys.stderr)
+        sys.exit(1)
+
+    vulns_text = format_vulns_for_prompt(vulns)
+    prompt = f"""{SYSTEM_PROMPT}
+
+## Known Vulnerabilities for this Application
+
+{vulns_text}
+
+## Scan Report
+
+{scan_content}
+
+Respond with ONLY valid JSON (no markdown fencing)."""
+
+    with Spinner("Analyzing scan with Claude CLI..."):
+        result = subprocess.run(
+            ["claude", "-p", prompt, "--output-format", "json", "--max-turns", "1"],
+            capture_output=True, text=True, timeout=300
+        )
+
+    if result.returncode != 0:
+        print(f"  {colored('Error:', 'RED')} Claude CLI failed: {result.stderr[:200]}", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse the CLI output - it returns JSON with a "result" field
+    try:
+        cli_output = json.loads(result.stdout)
+        # Claude CLI with --output-format json wraps the response
+        text = cli_output.get("result", result.stdout) if isinstance(cli_output, dict) else result.stdout
+        if isinstance(text, str):
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1]
+                if text.endswith("```"):
+                    text = text[:-3]
+            return json.loads(text)
+        return text
+    except (json.JSONDecodeError, KeyError):
+        # Try parsing stdout directly as the LLM response
+        text = result.stdout.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1]
+            if text.endswith("```"):
+                text = text[:-3]
+        return json.loads(text)
 
 
 def print_header(text: str, width: int = 60):
@@ -410,6 +465,125 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
     return scan_id
 
 
+# ── Probely ──────────────────────────────────────────────────
+
+class ProbelyClient:
+    """HTTP client for the Probely/Snyk API & Web API."""
+
+    def __init__(self, api_key: str):
+        self.client = httpx.Client(
+            base_url="https://api.probely.com",
+            headers={"Authorization": f"JWT {api_key}"},
+            timeout=30.0,
+        )
+
+    def get_scan(self, scan_id: str) -> dict:
+        # Try direct scan endpoint first
+        resp = self.client.get(f"/scans/{scan_id}/")
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_findings(self, target_id: str, scan_id: str) -> list:
+        """Fetch all findings for a scan, handling pagination."""
+        findings = []
+        page = 1
+        while True:
+            resp = self.client.get(
+                f"/targets/{target_id}/findings/",
+                params={"scan": scan_id, "length": 100, "page": page, "state": "notfixed"}
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            results = data.get("results", [])
+            findings.extend(results)
+            if len(results) < 100 or page >= data.get("page_total", 1):
+                break
+            page += 1
+        return findings
+
+
+def fetch_probely_scan(probely_client, scan_id: str) -> dict:
+    """Fetch scan metadata and findings from Probely."""
+    with Spinner(f"Fetching scan {scan_id} from Probely..."):
+        scan = probely_client.get_scan(scan_id)
+
+    target_id = scan.get("target", {}).get("id", "")
+    if not target_id:
+        print(f"  {colored('Error:', 'RED')} Could not determine target ID for scan {scan_id}", file=sys.stderr)
+        sys.exit(1)
+
+    with Spinner(f"Fetching findings for scan {scan_id}..."):
+        findings = probely_client.get_findings(target_id, scan_id)
+
+    return {"scan": scan, "findings": findings}
+
+
+def probely_to_vulnapps_findings(probely_findings: list) -> list:
+    """Convert Probely findings to Vulnapps finding format."""
+    findings = []
+    seen = set()
+
+    for f in probely_findings:
+        vuln_type = f.get("definition", {}).get("name", f.get("name", "Unknown"))
+        method = f.get("method", "")
+        url = f.get("url", "")
+        parameter = f.get("parameter", "")
+
+        # Deduplicate by vuln_type + url + parameter
+        key = (vuln_type.lower(), method.lower(), url.lower(), parameter.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+
+        findings.append({
+            "vuln_type": vuln_type,
+            "http_method": method,
+            "url": url,
+            "parameter": parameter,
+            "filename": "",
+        })
+
+    return findings
+
+
+def merge_probely_scans(scan_data_list: list) -> dict:
+    """Merge findings from multiple Probely scans into one."""
+    all_findings = []
+    scan_dates = []
+    durations = []
+
+    for sd in scan_data_list:
+        scan = sd["scan"]
+        all_findings.extend(sd["findings"])
+
+        started = scan.get("started", "")
+        if started:
+            scan_dates.append(started[:10])  # YYYY-MM-DD
+
+        # Calculate duration from started/completed
+        completed = scan.get("completed", "")
+        if started and completed:
+            from datetime import datetime as _dt
+            try:
+                t_start = _dt.fromisoformat(started.replace("Z", "+00:00"))
+                t_end = _dt.fromisoformat(completed.replace("Z", "+00:00"))
+                dur = int((t_end - t_start).total_seconds())
+                durations.append(dur)
+            except (ValueError, TypeError):
+                pass
+
+    # Convert and deduplicate findings
+    vulnapps_findings = probely_to_vulnapps_findings(all_findings)
+
+    return {
+        "findings": vulnapps_findings,
+        "scan_date": min(scan_dates) if scan_dates else "",
+        "duration": max(durations) if durations else None,
+        "scanner_name": "Probely",
+        "authenticated": True,
+    }
+
+
 # ── Main ─────────────────────────────────────────────────────
 
 def main():
@@ -421,8 +595,9 @@ def main():
     parser.add_argument("--url", default=os.getenv("VULNAPPS_URL"), help="Vulnapps instance URL (or set VULNAPPS_URL)")
     parser.add_argument("--api-key", default=os.getenv("VULNAPPS_API_KEY"), help="API key (or set VULNAPPS_API_KEY)")
     parser.add_argument("--app-id", type=int, required=True, help="Target app ID")
-    parser.add_argument("--dir", required=True, help="Directory with .md scan result files")
+    parser.add_argument("--dir", default=None, help="Directory with .md scan result files")
     parser.add_argument("--file", help="Single .md file to import (instead of --dir)")
+    parser.add_argument("--probely", default=None, help="Import from Probely: scan ID(s), comma-separated (max 2). Requires PROBELY_API_KEY env var.")
     parser.add_argument("--scanner", default=None, help="Scanner name (overrides LLM-detected name)")
     parser.add_argument("--scan-date", default=None, help="Scan date in YYYY-MM-DD (overrides LLM-detected date)")
     auth_group = parser.add_mutually_exclusive_group()
@@ -453,6 +628,10 @@ def main():
         print(f"  {colored('Error:', 'RED')} --api-key or VULNAPPS_API_KEY environment variable required", file=sys.stderr)
         sys.exit(1)
 
+    if not args.dir and not args.file and not args.probely:
+        print(f"  {colored('Error:', 'RED')} One of --dir, --file, or --probely is required", file=sys.stderr)
+        sys.exit(1)
+
     # Validate --scan-date format
     if args.scan_date:
         try:
@@ -462,21 +641,150 @@ def main():
             print(f"  {colored('Error:', 'RED')} --scan-date must be in YYYY-MM-DD format", file=sys.stderr)
             sys.exit(1)
 
-    # Auto-detect Vertex from env (same vars as Claude Code)
+    # Determine LLM mode
+    use_cli = False
+    llm_client = None
+
     if args.provider is None:
         args.provider = "vertex" if os.getenv("CLAUDE_CODE_USE_VERTEX") == "1" else "anthropic"
 
-    # Set default model
     if not args.model:
         args.model = "claude-sonnet-4-20250514"
 
-    # Validate LLM provider config
-    if args.provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
-        print(f"  {colored('Error:', 'RED')} ANTHROPIC_API_KEY required (or use --provider vertex)", file=sys.stderr)
+    # Only need LLM for markdown import (not for --probely)
+    need_llm = not args.probely
+
+    if need_llm:
+        if args.provider == "vertex" and args.vertex_project:
+            llm_client = create_anthropic_client("vertex", args.vertex_region, args.vertex_project)
+        elif args.provider == "anthropic" and os.getenv("ANTHROPIC_API_KEY"):
+            llm_client = create_anthropic_client("anthropic", None, None)
+        else:
+            # Fallback to Claude CLI
+            import shutil
+            if shutil.which("claude"):
+                use_cli = True
+            else:
+                print(f"  {colored('Error:', 'RED')} No LLM available. Set ANTHROPIC_API_KEY, configure Vertex, or install Claude Code CLI.", file=sys.stderr)
+                sys.exit(1)
+
+    is_public = args.public
+
+    # Connect to Vulnapps
+    client = VulnappsClient(args.url, args.api_key)
+
+    # Banner
+    print(f"\n  {colored('vulnapps', 'ORANGE')} {C.DIM}scan importer{C.RESET}")
+    print(f"  {C.DIM}{'─' * 40}{C.RESET}")
+
+    if use_cli:
+        print(f"  {colored('✓', 'GREEN')} LLM: {colored('Claude CLI', 'CYAN')}")
+    elif llm_client:
+        provider_label = f"vertex/{args.vertex_region}" if args.provider == "vertex" else "anthropic"
+        print(f"  {colored('✓', 'GREEN')} LLM: {colored(args.model, 'CYAN')} {C.DIM}via {provider_label}{C.RESET}")
+
+    # Verify access and get app info
+    try:
+        with Spinner("Connecting to Vulnapps..."):
+            app_info = client.get_app(args.app_id)
+        app = app_info["app"]
+        print(f"  {colored('✓', 'GREEN')} App: {colored(app['name'], 'BOLD')} {C.DIM}(v{app.get('version', '?')}){C.RESET}")
+    except httpx.HTTPStatusError as e:
+        print(f"  {colored('✗', 'RED')} Failed to access app {args.app_id}: {e.response.status_code}", file=sys.stderr)
         sys.exit(1)
-    if args.provider == "vertex" and not args.vertex_project:
-        print(f"  {colored('Error:', 'RED')} ANTHROPIC_VERTEX_PROJECT_ID or --vertex-project required", file=sys.stderr)
-        sys.exit(1)
+
+    # Get known vulnerabilities
+    vulns = client.get_vulns(args.app_id)
+    print(f"  {colored('✓', 'GREEN')} Known vulns: {colored(str(len(vulns)), 'BOLD')}")
+
+    # Resolve labels (new ones will be created at submission time)
+    label_names = [l.strip() for l in args.labels.split(",") if l.strip()] if args.labels else []
+    if label_names:
+        existing_labels = {l["name"]: l for l in client.get_labels()}
+        new_labels = [n for n in label_names if n not in existing_labels]
+        if new_labels:
+            print(f"  {colored('✓', 'GREEN')} Labels:      {colored(', '.join(label_names), 'CYAN')} {C.DIM}(new: {', '.join(new_labels)}){C.RESET}")
+        else:
+            print(f"  {colored('✓', 'GREEN')} Labels:      {colored(', '.join(label_names), 'CYAN')}")
+
+    if args.dry_run:
+        print(f"  {colored('⚑', 'YELLOW')} Dry run mode — no changes will be made")
+
+    if args.probely:
+        # ── Probely import flow ──
+        probely_key = os.getenv("PROBELY_API_KEY")
+        if not probely_key:
+            print(f"  {colored('Error:', 'RED')} PROBELY_API_KEY environment variable required for --probely", file=sys.stderr)
+            sys.exit(1)
+
+        scan_ids = [s.strip() for s in args.probely.split(",") if s.strip()]
+        if len(scan_ids) > 2:
+            print(f"  {colored('Error:', 'RED')} --probely accepts at most 2 scan IDs", file=sys.stderr)
+            sys.exit(1)
+
+        probely_client = ProbelyClient(probely_key)
+        print(f"  {colored('✓', 'GREEN')} Probely:     {colored(', '.join(scan_ids), 'CYAN')}")
+
+        # Fetch scan data from Probely
+        scan_data_list = []
+        for sid in scan_ids:
+            try:
+                sd = fetch_probely_scan(probely_client, sid)
+                n = len(sd["findings"])
+                print(f"  {colored('✓', 'GREEN')} Scan {colored(sid, 'BOLD')}: {colored(str(n), 'BOLD')} findings")
+                scan_data_list.append(sd)
+            except httpx.HTTPStatusError as e:
+                print(f"  {colored('✗', 'RED')} Failed to fetch scan {sid}: {e.response.status_code}", file=sys.stderr)
+                sys.exit(1)
+
+        # Merge findings
+        merged = merge_probely_scans(scan_data_list)
+
+        # Build mapping (same structure as LLM output, but without LLM)
+        mapping = {
+            "scanner_name": args.scanner or merged["scanner_name"],
+            "scan_date": args.scan_date or merged["scan_date"],
+            "authenticated": merged["authenticated"] if args.auth_override is None else args.auth_override,
+            "findings": [
+                {**f, "matched_vuln_db_id": None, "is_false_positive": False, "reasoning": "Direct import from Probely"}
+                for f in merged["findings"]
+            ],
+        }
+
+        duration = args.duration or merged.get("duration")
+
+        print_header(f"Probely Import — {len(merged['findings'])} findings")
+        print_mapping_table(mapping, vulns)
+
+        if args.dry_run:
+            print(f"\n  {colored('⚑', 'YELLOW')} Dry run — skipping submission\n")
+            return
+
+        if args.confirm:
+            try:
+                answer = input(f"\n  {colored('?', 'CYAN')} Submit this scan? [{colored('y', 'GREEN')}/N] ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print(f"\n  {colored('⏭', 'YELLOW')} Aborted")
+                return
+            if answer != "y":
+                print(f"  {colored('⏭', 'YELLOW')} Skipped")
+                return
+
+        try:
+            scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost, args.tokens, duration)
+            for label_name in label_names:
+                client.add_label(scan_id, label_name)
+            if label_names:
+                print(f"  {colored('✓', 'GREEN')} Labels: {colored(', '.join(label_names), 'CYAN')}")
+            print(f"  {colored('🔗', 'BLUE')} {args.url}/scans/{scan_id}")
+        except httpx.HTTPStatusError as e:
+            print(f"  {colored('✗', 'RED')} Submit failed: {e.response.status_code} {e.response.text}", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"\n  {colored('Done.', 'GREEN')}\n")
+        return  # Skip the markdown processing below
+
+    # ── Markdown import flow (existing) ──
 
     # Collect .md files
     if args.file:
@@ -492,47 +800,7 @@ def main():
         print(f"  {colored('Error:', 'RED')} No .md files found.", file=sys.stderr)
         sys.exit(1)
 
-    is_public = args.public
-
-    # Connect to Vulnapps
-    client = VulnappsClient(args.url, args.api_key)
-
-    # Create LLM client
-    llm_client = create_anthropic_client(args.provider, args.vertex_region, args.vertex_project)
-
-    # Banner
-    provider_label = f"vertex/{args.vertex_region}" if args.provider == "vertex" else "anthropic"
-    print(f"\n  {colored('vulnapps', 'ORANGE')} {C.DIM}scan importer{C.RESET}")
-    print(f"  {C.DIM}{'─' * 40}{C.RESET}")
-    print(f"  {colored('✓', 'GREEN')} LLM: {colored(args.model, 'CYAN')} {C.DIM}via {provider_label}{C.RESET}")
-
-    # Verify access and get app info
-    try:
-        with Spinner("Connecting to Vulnapps..."):
-            app_info = client.get_app(args.app_id)
-        app = app_info["app"]
-        print(f"  {colored('✓', 'GREEN')} App: {colored(app['name'], 'BOLD')} {C.DIM}(v{app.get('version', '?')}){C.RESET}")
-    except httpx.HTTPStatusError as e:
-        print(f"  {colored('✗', 'RED')} Failed to access app {args.app_id}: {e.response.status_code}", file=sys.stderr)
-        sys.exit(1)
-
-    # Get known vulnerabilities
-    vulns = client.get_vulns(args.app_id)
-    print(f"  {colored('✓', 'GREEN')} Known vulns: {colored(str(len(vulns)), 'BOLD')}")
     print(f"  {colored('✓', 'GREEN')} Scan files:  {colored(str(len(md_files)), 'BOLD')}")
-
-    # Resolve labels (new ones will be created at submission time)
-    label_names = [l.strip() for l in args.labels.split(",") if l.strip()] if args.labels else []
-    if label_names:
-        existing_labels = {l["name"]: l for l in client.get_labels()}
-        new_labels = [n for n in label_names if n not in existing_labels]
-        if new_labels:
-            print(f"  {colored('✓', 'GREEN')} Labels:      {colored(', '.join(label_names), 'CYAN')} {C.DIM}(new: {', '.join(new_labels)}){C.RESET}")
-        else:
-            print(f"  {colored('✓', 'GREEN')} Labels:      {colored(', '.join(label_names), 'CYAN')}")
-
-    if args.dry_run:
-        print(f"  {colored('⚑', 'YELLOW')} Dry run mode — no changes will be made")
 
     # Combine all .md files into one scan report (one LLM call, one scan)
     parts = []
@@ -554,12 +822,19 @@ def main():
 
     # Run LLM mapping
     try:
-        mapping = run_llm_mapping(combined_content, vulns, args.model, llm_client)
+        if use_cli:
+            mapping = run_llm_mapping_cli(combined_content, vulns)
+        else:
+            mapping = run_llm_mapping(combined_content, vulns, args.model, llm_client)
     except json.JSONDecodeError as e:
         print(f"  {colored('✗', 'RED')} LLM returned invalid JSON: {e}", file=sys.stderr)
         sys.exit(1)
-    except anthropic.APIError as e:
-        print(f"  {colored('✗', 'RED')} Claude API error: {e}", file=sys.stderr)
+    except Exception as e:
+        # Catch API errors from anthropic (may not be imported) or subprocess errors
+        if "anthropic" in type(e).__module__ if hasattr(type(e), '__module__') else False:
+            print(f"  {colored('✗', 'RED')} Claude API error: {e}", file=sys.stderr)
+        else:
+            print(f"  {colored('✗', 'RED')} LLM error: {e}", file=sys.stderr)
         sys.exit(1)
 
     if args.scanner:
