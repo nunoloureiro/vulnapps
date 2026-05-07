@@ -107,7 +107,15 @@ export default function ScansList() {
             <table>
               <thead>
                 <tr>
-                  {appId && <th style={{ width: 36 }}></th>}
+                  {appId && <th style={{ width: 36 }}>
+                    <input type="checkbox"
+                      checked={selected.size > 0 && selected.size === scans.length}
+                      onChange={() => {
+                        if (selected.size === scans.length) setSelected(new Set());
+                        else setSelected(new Set(scans.map(s => s.id)));
+                      }}
+                      style={{ accentColor: 'var(--accent)', width: 16, height: 16, cursor: 'pointer' }} />
+                  </th>}
                   <th>Scanner</th>
                   {!appId && <th>App</th>}
                   <th>Date</th>
