@@ -619,7 +619,11 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
             except (ValueError, TypeError):
                 dt = None
         if dt:
-            short_date = dt.strftime("%b %d") if dt.year == datetime.now().year else dt.strftime("%b %d, %Y")
+            has_time = dt.hour or dt.minute
+            if dt.year == datetime.now().year:
+                short_date = dt.strftime("%b %d %H:%M") if has_time else dt.strftime("%b %d")
+            else:
+                short_date = dt.strftime("%b %d, %Y %H:%M") if has_time else dt.strftime("%b %d, %Y")
         else:
             short_date = scan_date
 
