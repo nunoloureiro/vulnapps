@@ -132,6 +132,24 @@ function ComparisonView({ data, appId }) {
 
   const pctColor = v => v >= 0.7 ? 'text-success' : v >= 0.4 ? 'text-warning' : 'text-error';
 
+  const METRIC_TOOLTIPS = {
+    tp: 'Known vulnerabilities detected by the scanner (unique matched vulns)',
+    fp: 'Findings that don\'t correspond to any known vulnerability',
+    fn: 'Known vulnerabilities the scanner failed to detect',
+    pending: 'Findings not yet mapped to a known vulnerability',
+    precision: 'TP / (TP + FP) — How many of the scanner\'s findings are real vulnerabilities',
+    recall: 'TP / (TP + FN) — How many of the known vulnerabilities were found',
+    f1: 'Harmonic mean of Precision and Recall — Overall scanner accuracy',
+  };
+
+  const MetricLabel = ({ k }) => {
+    const names = { tp: 'True Positives', fp: 'False Positives', fn: 'False Negatives', pending: 'Pending', precision: 'Precision', recall: 'Recall', f1: 'F1 Score' };
+    const tip = METRIC_TOOLTIPS[k];
+    return (
+      <>{names[k]}{tip && <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>ⓘ<span className="tooltip-text">{tip}</span></span>}</>
+    );
+  };
+
   return (
     <>
       <div className="flex gap-1 items-center mb-2" style={{ flexWrap: 'wrap' }}>
@@ -159,7 +177,7 @@ function ComparisonView({ data, appId }) {
             <tbody>
               {['tp', 'fp', 'fn', 'pending'].map(k => (
                 <tr key={k}>
-                  <td className="detail-label sticky-col">{k === 'tp' ? 'True Positives' : k === 'fp' ? 'False Positives' : k === 'fn' ? 'False Negatives' : 'Pending'}</td>
+                  <td className="detail-label sticky-col"><MetricLabel k={k} /></td>
                   {filteredMetrics.map((m, i) => (
                     <td key={scanners[i].scan.id} className={`text-center font-mono ${k === 'tp' ? 'text-success' : k === 'fp' || k === 'fn' ? 'text-error' : 'text-warning'}`}>{m[k]}</td>
                   ))}
@@ -167,7 +185,7 @@ function ComparisonView({ data, appId }) {
               ))}
               {['precision', 'recall', 'f1'].map(k => (
                 <tr key={k}>
-                  <td className="detail-label sticky-col">{k === 'f1' ? 'F1 Score' : k.charAt(0).toUpperCase() + k.slice(1)}</td>
+                  <td className="detail-label sticky-col"><MetricLabel k={k} /></td>
                   {filteredMetrics.map((m, i) => (
                     <td key={scanners[i].scan.id} className={`text-center font-mono ${pctColor(m[k])}`}>{(m[k] * 100).toFixed(1)}%</td>
                   ))}

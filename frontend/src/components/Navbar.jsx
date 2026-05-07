@@ -21,6 +21,7 @@ export default function Navbar() {
           <li><Link to="/apps">Apps</Link></li>
           {user && (
             <>
+              <li><Link to="/dashboard">Dashboard</Link></li>
               <li><Link to="/scans">Scans</Link></li>
               <li><Link to="/teams">Teams</Link></li>
               <li><Link to="/account">Account</Link></li>

@@ -10,6 +10,7 @@ import AppDetail from './pages/AppDetail';
 import AppForm from './pages/AppForm';
 import VulnDetail from './pages/VulnDetail';
 import VulnForm from './pages/VulnForm';
+import Dashboard from './pages/Dashboard';
 import ScansList from './pages/ScansList';
 import ScanDetail from './pages/ScanDetail';
 import ScanSubmit from './pages/ScanSubmit';
@@ -31,6 +32,7 @@ export default function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/account" element={<Account />} />
+            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/apps" element={<AppsList />} />
             <Route path="/apps/new" element={<AppForm />} />
             <Route path="/apps/:id" element={<AppDetail />} />
