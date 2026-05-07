@@ -195,6 +195,10 @@ button.btn-icon, a.btn-icon, .btn-icon { background: transparent !important; bor
 .vuln-row:hover { background: var(--accent-dim); }
 .cell-editable { cursor: pointer; position: relative; }
 .cell-editable:hover { background: rgba(249, 115, 22, 0.12); }
+.editable-field { cursor: pointer; padding-bottom: 1px; }
+.editable-field:hover { border-bottom: 1px dashed var(--border-hover); }
+.editable-field .edit-icon { opacity: 0; margin-left: 6px; vertical-align: middle; transition: opacity 0.15s; }
+.editable-field:hover .edit-icon { opacity: 1; }
 .inline-input { background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 4px; padding: 0.2rem 0.4rem; font-size: 0.8125rem; font-family: var(--font); width: 100%; }
 .inline-input:focus { outline: none; border-color: var(--accent-hover); box-shadow: 0 0 0 2px var(--accent-dim); }
 select.inline-input { cursor: pointer; }
