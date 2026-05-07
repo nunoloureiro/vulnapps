@@ -32,7 +32,7 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { color: var(--accent-hover); }
 
 /* Layout */
-.container { max-width: 1400px; margin: 0 auto; padding: 0 1.5rem; }
+.container { max-width: 95%; margin: 0 auto; padding: 0 2rem; }
 
 /* Navbar */
 .navbar {
