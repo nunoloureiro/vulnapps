@@ -45,7 +45,19 @@ export default function TeamDetail() {
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">{team.name}</h1>
+        <h1 className="page-title">
+          {team.name}
+          {is_team_admin && (
+            <span className="editable-field" style={{ marginLeft: 8 }} title="Click to rename" onClick={() => {
+              const newName = prompt('Rename team:', team.name);
+              if (newName && newName.trim() && newName.trim() !== team.name) {
+                api.put(`/teams/${id}`, { name: newName.trim() }).then(load);
+              }
+            }}>
+              <svg className="edit-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+            </span>
+          )}
+        </h1>
         {is_team_admin && <button className="btn btn-danger btn-sm" onClick={deleteTeam}>Delete Team</button>}
       </div>
 

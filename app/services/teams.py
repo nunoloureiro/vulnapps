@@ -133,6 +133,18 @@ async def create_team(db, user, name: str) -> dict:
     return dict(team)
 
 
+async def rename_team(db, user, team_id: int, name: str) -> dict:
+    """Rename a team. Requires team admin permission."""
+    await _require_team_admin(db, user, team_id)
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Team name is required")
+    await db.execute("UPDATE teams SET name = ? WHERE id = ?", (name, team_id))
+    await db.commit()
+    cursor = await db.execute("SELECT * FROM teams WHERE id = ?", (team_id,))
+    return dict(await cursor.fetchone())
+
+
 async def delete_team(db, user, team_id: int) -> None:
     """Delete a team. Requires team admin permission."""
     await _require_team_admin(db, user, team_id)

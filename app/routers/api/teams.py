@@ -58,6 +58,24 @@ async def create_team(request: Request):
     return {"team": team}
 
 
+@router.put("/{team_id}")
+async def rename_team(request: Request, team_id: int):
+    user = request.state.user
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    body = await request.json()
+    db = await get_connection()
+    try:
+        team = await teams_service.rename_team(db, user, team_id, body.get("name", ""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+    return {"ok": True, "team": team}
+
+
 @router.delete("/{team_id}")
 async def delete_team(request: Request, team_id: int):
     user = request.state.user

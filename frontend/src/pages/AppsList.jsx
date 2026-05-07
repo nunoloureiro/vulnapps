@@ -81,7 +81,7 @@ export default function AppsList() {
             </select>
           )}
           {user && (
-            <Link to="/apps/new" className="btn btn-primary">Add App</Link>
+            <Link to="/apps/new" className="btn btn-primary btn-sm" style={{ whiteSpace: 'nowrap' }}>Add App</Link>
           )}
         </div>
       </div>
