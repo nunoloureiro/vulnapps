@@ -6,7 +6,7 @@ export default function ScanSubmit() {
   const { id: appId } = useParams();
   const navigate = useNavigate();
   const [app, setApp] = useState(null);
-  const [form, setForm] = useState({ scanner_name: '', scan_date: '', authenticated: false, is_public: false, notes: '', labels: '', cost: '', tokens: '' });
+  const [form, setForm] = useState({ scanner_name: '', scan_date: '', authenticated: false, is_public: false, notes: '', labels: '', cost: '', tokens: '', duration: '' });
   const [file, setFile] = useState(null);
   const [findings, setFindings] = useState([{ vuln_type: '', http_method: '', url: '', parameter: '', filename: '' }]);
   const [error, setError] = useState('');
@@ -56,6 +56,7 @@ export default function ScanSubmit() {
       };
       if (form.cost) body.cost = parseFloat(form.cost);
       if (form.tokens) body.tokens = parseInt(form.tokens);
+      if (form.duration) body.duration = parseInt(form.duration);
 
       const result = await api.post(`/apps/${appId}/scans`, body);
       navigate(`/scans/${result.scan_id}`);
@@ -110,7 +111,11 @@ export default function ScanSubmit() {
             <input className="form-input" value={form.labels} onChange={e => set('labels', e.target.value)} placeholder="e.g. baseline, quarterly" />
           </div>
           {app.visibility !== 'public' && (
-            <div className="form-row">
+            <div className="form-row" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+              <div className="form-group">
+                <label className="form-label">Duration <span className="text-muted text-xs">(seconds, private)</span></label>
+                <input type="number" min="0" className="form-input" value={form.duration} onChange={e => set('duration', e.target.value)} placeholder="e.g. 120" />
+              </div>
               <div className="form-group">
                 <label className="form-label">Tokens <span className="text-muted text-xs">(optional, private)</span></label>
                 <input type="number" min="0" className="form-input" value={form.tokens} onChange={e => set('tokens', e.target.value)} placeholder="e.g. 15420" />

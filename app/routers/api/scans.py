@@ -239,6 +239,12 @@ async def submit_scan(request: Request, app_id: int):
             tokens = int(tokens)
         except (TypeError, ValueError):
             tokens = None
+    duration = body.get("duration")
+    if duration is not None:
+        try:
+            duration = int(duration)
+        except (TypeError, ValueError):
+            duration = None
     findings_data = body.get("findings", [])
     scan_labels = body.get("labels")
 
@@ -253,6 +259,7 @@ async def submit_scan(request: Request, app_id: int):
             notes=notes,
             cost=cost,
             tokens=tokens,
+            duration=duration,
             findings_data=findings_data,
             labels=scan_labels,
         )

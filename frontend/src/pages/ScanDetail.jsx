@@ -144,6 +144,12 @@ function ScanMeta({ scan, app, labels, canEdit, canViewCost, scanId, onUpdate })
             )}
           </div>
         </span>
+        {canViewCost && scan.duration != null && (
+          <>
+            <span className="detail-label">Duration <span className="text-muted text-xs">(private)</span></span>
+            <span className="detail-value font-mono">{scan.duration >= 60 ? `${Math.floor(scan.duration / 60)}m ${scan.duration % 60}s` : `${scan.duration}s`}</span>
+          </>
+        )}
         {canViewCost && scan.tokens != null && (
           <>
             <span className="detail-label">Tokens <span className="text-muted text-xs">(private)</span></span>

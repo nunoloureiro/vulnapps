@@ -180,6 +180,16 @@ function ComparisonView({ data, appId }) {
                   return <td key={scanners[i].scan.id} className="text-center font-mono text-accent">{(rate * 100).toFixed(1)}% ({m.tp}/{filteredVulnCount})</td>;
                 })}
               </tr>
+              {scanners.some(s => s.scan.duration != null) && (
+                <tr>
+                  <td className="detail-label sticky-col">Duration</td>
+                  {scanners.map(s => (
+                    <td key={s.scan.id} className="text-center font-mono text-secondary">
+                      {s.scan.duration != null ? (s.scan.duration >= 60 ? `${Math.floor(s.scan.duration / 60)}m ${s.scan.duration % 60}s` : `${s.scan.duration}s`) : '-'}
+                    </td>
+                  ))}
+                </tr>
+              )}
               {scanners.some(s => s.scan.tokens != null) && (
                 <tr>
                   <td className="detail-label sticky-col">Tokens</td>

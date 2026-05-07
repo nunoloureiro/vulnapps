@@ -347,7 +347,7 @@ def print_mapping_table(mapping: dict, vulns: list):
     print(f"\n  {C.DIM}Summary:{C.RESET} {' / '.join(parts)}")
 
 
-def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_public: bool, notes: str, cost: float | None = None, tokens: int | None = None):
+def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_public: bool, notes: str, cost: float | None = None, tokens: int | None = None, duration: int | None = None):
     """Submit the scan and apply LLM-corrected matches."""
     findings_payload = []
     for f in mapping.get("findings", []):
@@ -371,6 +371,8 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
         scan_data["cost"] = cost
     if tokens is not None:
         scan_data["tokens"] = tokens
+    if duration is not None:
+        scan_data["duration"] = duration
 
     with Spinner("Submitting scan..."):
         result = client.submit_scan(app_id, scan_data)
@@ -431,6 +433,7 @@ def main():
     parser.add_argument("--confirm", action="store_true", help="Ask for confirmation before submitting each scan")
     parser.add_argument("--cost", type=float, default=None, help="Scan cost in USD (optional, private — for LLM-based scanners)")
     parser.add_argument("--tokens", type=int, default=None, help="Token count (optional, private — auto-captured from LLM if not set)")
+    parser.add_argument("--duration", type=int, default=None, help="Scan duration in seconds (optional, private)")
     parser.add_argument("--notes", default="", help="Notes to attach to the scan")
     parser.add_argument("--model", default=None, help="Claude model (default: claude-sonnet-4-20250514)")
     parser.add_argument("--provider", choices=["anthropic", "vertex"], default=None,
@@ -581,7 +584,7 @@ def main():
 
     try:
         tokens = args.tokens or mapping.get("_llm_tokens")
-        scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost, tokens)
+        scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost, tokens, args.duration)
         for label_name in label_names:
             client.add_label(scan_id, label_name)
         if label_names:
