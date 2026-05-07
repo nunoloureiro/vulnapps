@@ -63,14 +63,13 @@ function ScanSelector({ scans, selected, onToggle, onCompare }) {
         <>
           <div className="table-wrap">
             <table>
-              <thead><tr><th style={{ width: 40 }}></th><th>Scanner</th><th>Date</th><th>Auth</th><th>Submitted by</th></tr></thead>
+              <thead><tr><th style={{ width: 40 }}></th><th>Scanner</th><th>Date</th><th>Submitted by</th></tr></thead>
               <tbody>
                 {scans.map(s => (
                   <tr key={s.id}>
                     <td><input type="checkbox" checked={selected.has(s.id)} onChange={() => onToggle(s.id)} style={{ accentColor: 'var(--accent)', width: 16, height: 16, cursor: 'pointer' }} /></td>
                     <td><strong>{s.scanner_name}</strong></td>
                     <td>{s.scan_date}</td>
-                    <td>{s.authenticated ? 'Yes' : 'No'}</td>
                     <td className="text-secondary">{s.submitter_name || s.submitted_by}</td>
                   </tr>
                 ))}

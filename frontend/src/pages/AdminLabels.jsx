@@ -72,7 +72,12 @@ export default function AdminLabels() {
                         ))}
                       </div>
                     </td>
-                    <td>{l.name}</td>
+                    <td className="editable-field" onClick={() => {
+                      const newName = prompt('Rename label:', l.name);
+                      if (newName && newName.trim() && newName.trim() !== l.name) updateLabel(l.id, { name: newName.trim() });
+                    }} title="Click to rename">{l.name}
+                      <svg className="edit-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                    </td>
                     <td><LabelBadge label={l} /></td>
                     <td className="text-muted">{l.scan_count}</td>
                     <td>

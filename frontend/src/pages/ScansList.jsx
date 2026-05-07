@@ -19,7 +19,6 @@ export default function ScansList() {
     scanner: searchParams.get('scanner') || '',
     latest: searchParams.get('latest') || '',
     q: searchParams.get('q') || '',
-    authenticated: searchParams.get('authenticated') || '',
     label: searchParams.get('label') || '',
     filter: searchParams.get('filter') || '',
   };
@@ -99,11 +98,6 @@ export default function ScansList() {
             <option value="">All scanners</option>
             {(data?.scanners || []).map(s => <option key={s} value={s}>{s}</option>)}
           </select>
-          <select className="form-select" value={params.authenticated} onChange={e => setFilter('authenticated', e.target.value)}>
-            <option value="">All auth</option>
-            <option value="1">Authenticated</option>
-            <option value="0">Unauthenticated</option>
-          </select>
           <select className="form-select" value={params.label} onChange={e => setFilter('label', e.target.value)}>
             <option value="">All labels</option>
             {(data?.all_labels || []).map(l => <option key={l} value={l}>{l}</option>)}
@@ -154,7 +148,6 @@ export default function ScansList() {
                   <th>Scanner</th>
                   {!appId && <th>App</th>}
                   <th>Date</th>
-                  <th>Auth</th>
                   <th>TP</th>
                   <th>FP</th>
                   <th>Labels</th>
@@ -181,7 +174,6 @@ export default function ScansList() {
                         </td>
                       )}
                       <td>{scan.scan_date}</td>
-                      <td>{scan.authenticated ? 'Yes' : 'No'}</td>
                       <td className="text-success">{scan.tp_count ?? '-'}</td>
                       <td className="text-error">{scan.fp_count ?? '-'}</td>
                       <td>

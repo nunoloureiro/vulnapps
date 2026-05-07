@@ -261,16 +261,6 @@ function FilterBar({ filters, searchParams, sevFilter, onToggleSev, onUpdateFilt
         </select>
       )}
 
-      <select
-        className="form-select"
-        value={searchParams.get('auth') || ''}
-        onChange={(e) => onUpdateFilter('auth', e.target.value)}
-      >
-        <option value="">All auth</option>
-        <option value="yes">Authenticated</option>
-        <option value="no">Unauthenticated</option>
-      </select>
-
       {filters?.apps?.length > 0 && (
         <select
           className="form-select"

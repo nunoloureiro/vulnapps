@@ -126,7 +126,6 @@ function ScanMeta({ scan, app, labels, canEdit, canViewCost, scanId, onUpdate })
         <span className="detail-label">App</span>
         <span className="detail-value"><Link to={`/apps/${app.id}`}>{app.name}</Link></span>
         <EditableField label="Scan Date" value={scan.scan_date} canEdit={canEdit} type="date" onSave={v => updateField('scan_date', v)} />
-        <EditableField label="Authenticated" value={scan.authenticated} canEdit={canEdit} type="checkbox" onSave={v => updateField('authenticated', v)} />
         <span className="detail-label">Submitted By</span>
         <span className="detail-value text-secondary">{scan.submitter_name || scan.submitted_by}</span>
         <span className="detail-label">Labels</span>

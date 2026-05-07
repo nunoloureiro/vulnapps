@@ -14,7 +14,7 @@ def _parse_csv(value: str | None) -> list[str] | None:
 async def get_dashboard(
     db, user,
     scanner=None, severity=None, label=None, tech=None,
-    app_id=None, authenticated=None, team=None,
+    app_id=None, team=None,
 ) -> dict:
     """Aggregate scanner benchmarking data across all visible apps.
 
@@ -112,10 +112,6 @@ async def get_dashboard(
         )
         extra_params.extend(labels_filter)
 
-    if authenticated == "1":
-        extra_filters += " AND scans.authenticated = 1"
-    elif authenticated == "0":
-        extra_filters += " AND scans.authenticated = 0"
 
     ranked_sql = f"""
         WITH ranked AS (

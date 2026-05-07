@@ -6,7 +6,7 @@ export default function ScanSubmit() {
   const { id: appId } = useParams();
   const navigate = useNavigate();
   const [app, setApp] = useState(null);
-  const [form, setForm] = useState({ scanner_name: '', scan_date: '', authenticated: false, is_public: false, notes: '', labels: '', cost: '', tokens: '', duration: '' });
+  const [form, setForm] = useState({ scanner_name: '', scan_date: '', is_public: false, notes: '', labels: '', cost: '', tokens: '', duration: '' });
   const [file, setFile] = useState(null);
   const [findings, setFindings] = useState([{ vuln_type: '', http_method: '', url: '', parameter: '', filename: '' }]);
   const [error, setError] = useState('');
@@ -48,7 +48,6 @@ export default function ScanSubmit() {
       const body = {
         scanner_name: form.scanner_name,
         scan_date: form.scan_date,
-        authenticated: form.authenticated,
         is_public: form.is_public,
         notes: form.notes,
         findings: findingsData,
@@ -87,12 +86,6 @@ export default function ScanSubmit() {
             </div>
           </div>
           <div className="form-row">
-            <div className="form-group">
-              <div className="form-check mt-2">
-                <input type="checkbox" checked={form.authenticated} onChange={e => set('authenticated', e.target.checked)} />
-                <label className="form-label" style={{ marginBottom: 0 }}>Authenticated Scan</label>
-              </div>
-            </div>
             {app.visibility === 'public' && (
               <div className="form-group">
                 <div className="form-check mt-2">

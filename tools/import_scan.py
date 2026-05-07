@@ -140,7 +140,6 @@ Respond with ONLY valid JSON (no markdown fencing) in this exact format:
 {
     "scanner_name": "string",
     "scan_date": "YYYY-MM-DD",
-    "authenticated": false,
     "findings": [
         {
             "vuln_type": "string - canonical vulnerability type",
@@ -417,7 +416,6 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
     scan_data = {
         "scanner_name": mapping.get("scanner_name", "unknown"),
         "scan_date": mapping.get("scan_date", ""),
-        "authenticated": mapping.get("authenticated", False),
         "is_public": is_public,
         "notes": notes,
         "findings": findings_payload,
@@ -580,7 +578,6 @@ def merge_probely_scans(scan_data_list: list) -> dict:
         "scan_date": min(scan_dates) if scan_dates else "",
         "duration": max(durations) if durations else None,
         "scanner_name": "Probely",
-        "authenticated": True,
     }
 
 
@@ -600,9 +597,6 @@ def main():
     parser.add_argument("--probely", default=None, help="Import from Probely: scan ID(s), comma-separated (max 2). Requires PROBELY_API_KEY env var.")
     parser.add_argument("--scanner", default=None, help="Scanner name (overrides LLM-detected name)")
     parser.add_argument("--scan-date", default=None, help="Scan date in YYYY-MM-DD (overrides LLM-detected date)")
-    auth_group = parser.add_mutually_exclusive_group()
-    auth_group.add_argument("--authenticated", dest="auth_override", action="store_const", const=True, help="Mark scan as authenticated (overrides LLM detection)")
-    auth_group.add_argument("--unauthenticated", dest="auth_override", action="store_const", const=False, help="Mark scan as unauthenticated (overrides LLM detection)")
     parser.add_argument("--public", action="store_true", help="Make scan public (default: private)")
     parser.add_argument("--labels", default="", help="Comma-separated labels (auto-created if missing)")
     parser.add_argument("--confirm", action="store_true", help="Ask for confirmation before submitting each scan")
@@ -744,7 +738,6 @@ def main():
         mapping = {
             "scanner_name": args.scanner or merged["scanner_name"],
             "scan_date": args.scan_date or merged["scan_date"],
-            "authenticated": merged["authenticated"] if args.auth_override is None else args.auth_override,
             "findings": [
                 {**f, "matched_vuln_db_id": None, "is_false_positive": False, "reasoning": "Direct import from Probely"}
                 for f in merged["findings"]
@@ -841,8 +834,7 @@ def main():
         mapping["scanner_name"] = args.scanner
     if args.scan_date:
         mapping["scan_date"] = args.scan_date
-    if args.auth_override is not None:
-        mapping["authenticated"] = args.auth_override
+    if False is not None:
 
     print_mapping_table(mapping, vulns)
 

@@ -22,7 +22,6 @@ async def list_scans(
     scanner: str = "",
     latest: str = "",
     q: str = "",
-    authenticated: str = "",
     label: str = "",
     filter: str = "",
 ):
@@ -42,7 +41,6 @@ async def list_scans(
             scanner=scanner,
             latest=latest,
             q=q,
-            authenticated=authenticated,
             label=label,
             filter=filter,
         )
@@ -226,7 +224,6 @@ async def submit_scan(request: Request, app_id: int):
 
     scanner_name = body.get("scanner_name", "")
     scan_date = body.get("scan_date", "")
-    authenticated = 1 if body.get("authenticated") else 0
     is_public = 1 if body.get("is_public", True) else 0
     notes = body.get("notes")
     cost = body.get("cost")
@@ -256,7 +253,6 @@ async def submit_scan(request: Request, app_id: int):
             db, user, app_id,
             scanner_name=scanner_name,
             scan_date=scan_date,
-            authenticated=authenticated,
             is_public=is_public,
             notes=notes,
             cost=cost,

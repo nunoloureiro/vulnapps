@@ -90,7 +90,7 @@ def _compute_metrics(findings, all_vulns):
 async def list_scans(
     db, user,
     app_id=None, scanner="", latest="", q="",
-    authenticated="", label="", filter="",
+    label="", filter="",
 ) -> dict:
     """List scans with filters. Returns dict with scans, metadata, and filter options."""
     extra_filters = ""
@@ -121,10 +121,6 @@ async def list_scans(
         extra_filters += " AND scans.scanner_name = ?"
         extra_params.append(scanner)
 
-    if authenticated == "1":
-        extra_filters += " AND scans.authenticated = 1"
-    elif authenticated == "0":
-        extra_filters += " AND scans.authenticated = 0"
 
     if label:
         extra_filters += (
@@ -341,7 +337,6 @@ async def submit_scan(
     app_id: int,
     scanner_name: str,
     scan_date: str,
-    authenticated: int,
     is_public: int,
     notes: str | None,
     cost: float | None,
@@ -359,9 +354,9 @@ async def submit_scan(
     await _check_scan_submit(db, user, app)
 
     cursor = await db.execute(
-        """INSERT INTO scans (app_id, scanner_name, scan_date, authenticated, is_public, notes, cost, tokens, duration, submitted_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (app_id, scanner_name, scan_date, authenticated, is_public, notes, cost, tokens, duration, user["sub"]),
+        """INSERT INTO scans (app_id, scanner_name, scan_date, is_public, notes, cost, tokens, duration, submitted_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (app_id, scanner_name, scan_date, is_public, notes, cost, tokens, duration, user["sub"]),
     )
     scan_id = cursor.lastrowid
 
@@ -422,14 +417,12 @@ async def delete_scan(db, user, scan_id: int) -> None:
 
 
 async def update_scan(db, user, scan_id: int, updates: dict) -> dict:
-    """Update scan metadata (scanner_name, scan_date, authenticated, notes)."""
+    """Update scan metadata (scanner_name, scan_date, notes)."""
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
-    allowed = {"scanner_name", "scan_date", "authenticated", "notes", "cost", "tokens", "duration"}
+    allowed = {"scanner_name", "scan_date", "notes", "cost", "tokens", "duration"}
     clean = {k: v for k, v in updates.items() if k in allowed and v is not None}
-    if "authenticated" in clean:
-        clean["authenticated"] = 1 if clean["authenticated"] else 0
 
     if not clean:
         return dict(scan)

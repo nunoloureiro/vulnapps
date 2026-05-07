@@ -13,7 +13,6 @@ async def dashboard(
     label: str = "",
     tech: str = "",
     app_id: str = "",
-    authenticated: str = "",
     team: str = "",
 ):
     user = request.state.user
@@ -26,7 +25,6 @@ async def dashboard(
             label=label or None,
             tech=tech or None,
             app_id=app_id or None,
-            authenticated=authenticated or None,
             team=team or None,
         )
     finally:
