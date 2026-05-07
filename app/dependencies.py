@@ -18,11 +18,13 @@ SCOPE_LEVELS = {"read": 0, "vuln-mapper": 1, "full": 2}
 
 
 async def get_current_user(request: Request) -> dict | None:
-    token = request.cookies.get("token")
+    # Prefer Authorization header (SPA/API), fall back to cookie (legacy)
+    token = None
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[7:]
     if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
+        token = request.cookies.get("token")
     if not token:
         return None
 

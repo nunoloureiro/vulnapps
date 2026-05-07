@@ -27,6 +27,8 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     const data = await api.post('/auth/login', { email, password });
+    // Clear any stale cookie from the old Jinja login
+    document.cookie = 'token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT';
     api.setToken(data.token);
     setUser(data.user);
     return data;
