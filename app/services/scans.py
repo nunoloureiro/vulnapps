@@ -613,11 +613,14 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
         scan_date = scan["scan_date"]
         try:
             dt = datetime.strptime(scan_date, "%Y-%m-%d")
-            if dt.year == datetime.now().year:
-                short_date = dt.strftime("%b %d")
-            else:
-                short_date = dt.strftime("%b %d, %Y")
         except (ValueError, TypeError):
+            try:
+                dt = datetime.strptime(scan_date[:19], "%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                dt = None
+        if dt:
+            short_date = dt.strftime("%b %d") if dt.year == datetime.now().year else dt.strftime("%b %d, %Y")
+        else:
             short_date = scan_date
 
         scanners.append({
