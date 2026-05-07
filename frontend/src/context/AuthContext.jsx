@@ -11,7 +11,13 @@ export function AuthProvider({ children }) {
     const token = api.getToken();
     if (token) {
       api.get('/auth/me', { noRedirect: true })
-        .then(data => setUser(data.user))
+        .then(data => {
+          if (data && data.user) {
+            setUser(data.user);
+          } else {
+            api.setToken(null);
+          }
+        })
         .catch(() => api.setToken(null))
         .finally(() => setLoading(false));
     } else {

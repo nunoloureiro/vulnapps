@@ -28,7 +28,6 @@ async function request(method, path, body = null, options = {}) {
   if (response.status === 401) {
     if (!options.noRedirect) {
       setToken(null);
-      window.location.href = '/login';
     }
     throw new Error('Unauthorized');
   }
