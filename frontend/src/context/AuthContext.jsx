@@ -8,6 +8,8 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    api.setOnUnauthorized(() => setUser(null));
+
     const token = api.getToken();
     if (token) {
       api.get('/auth/me', { noRedirect: true })

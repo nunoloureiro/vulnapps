@@ -1,5 +1,7 @@
 const API_BASE = '/api';
 
+let onUnauthorized = null;
+
 function getToken() {
   return localStorage.getItem('token');
 }
@@ -28,6 +30,7 @@ async function request(method, path, body = null, options = {}) {
   if (response.status === 401) {
     if (!options.noRedirect) {
       setToken(null);
+      onUnauthorized?.();
     }
     throw new Error('Unauthorized');
   }
@@ -48,4 +51,5 @@ export const api = {
   del: (path, options) => request('DELETE', path, null, options),
   getToken,
   setToken,
+  setOnUnauthorized: (cb) => { onUnauthorized = cb; },
 };
