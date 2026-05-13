@@ -192,6 +192,15 @@ function Metrics({ metrics }) {
 function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
   const [promoting, setPromoting] = useState(null);
   const [promoteError, setPromoteError] = useState('');
+  const [expanded, setExpanded] = useState(() => new Set());
+
+  const toggleExpanded = (fid) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(fid)) next.delete(fid); else next.add(fid);
+      return next;
+    });
+  };
 
   const matchFinding = async (findingId, vulnId) => {
     await api.post(`/scans/${scanId}/findings/${findingId}/match`, { vuln_id: vulnId });
@@ -261,13 +270,28 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                   const locationDisplay = f.http_method ? `${f.http_method} ${location}` : location;
                   const matchedVuln = f.matched_vuln_id ? knownVulns.find(v => v.id === f.matched_vuln_id) : null;
                   const isPromoting = promoting && promoting.findingId === f.id;
+                  const hasDetails = !!(f.title || f.severity || f.description || f.poc || f.remediation || f.code_location);
+                  const isExpanded = expanded.has(f.id);
                   return (
                   <React.Fragment key={f.id}>
                   <tr>
                     <td>
-                      <div>{f.vuln_type}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {hasDetails && (
+                          <button
+                            type="button"
+                            onClick={() => toggleExpanded(f.id)}
+                            title={isExpanded ? 'Hide details' : 'Show finding details'}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-muted)', display: 'flex' }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.1s' }}>
+                              <polyline points="9 18 15 12 9 6"/>
+                            </svg>
+                          </button>
+                        )}
+                        <span>{f.vuln_type}</span>
+                      </div>
                       {f.title && f.title !== f.vuln_type && (
-                        <div className="text-muted text-xs" style={{ marginTop: 2 }}>{f.title}</div>
+                        <div className="text-muted text-xs" style={{ marginTop: 2, marginLeft: hasDetails ? 18 : 0 }}>{f.title}</div>
                       )}
                     </td>
                     <td className="font-mono text-sm">{locationDisplay}</td>
@@ -311,16 +335,28 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                       </div>
                     </td>
                   </tr>
+                  {isExpanded && hasDetails && (
+                    <tr>
+                      <td colSpan="6" style={{ padding: '0.75rem 0' }}>
+                        <div className="card">
+                          <FindingDetails finding={f} />
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                   {isPromoting && (
                     <tr>
-                      <td colSpan="6" style={{ background: 'var(--bg-elevated, #f8f9fb)', padding: '12px 16px' }}>
-                        <PromoteForm
-                          draft={promoting.draft}
-                          onChange={updateDraft}
-                          onSubmit={submitPromote}
-                          onCancel={() => setPromoting(null)}
-                          error={promoteError}
-                        />
+                      <td colSpan="6" style={{ padding: '0.75rem 0' }}>
+                        <div className="card">
+                          <h3 className="card-title mb-2">Promote to Vulnerability</h3>
+                          <PromoteForm
+                            draft={promoting.draft}
+                            onChange={updateDraft}
+                            onSubmit={submitPromote}
+                            onCancel={() => setPromoting(null)}
+                            error={promoteError}
+                          />
+                        </div>
                       </td>
                     </tr>
                   )}
@@ -338,62 +374,165 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 
+function FindingDetails({ finding }) {
+  const hasGrid = !!(finding.severity || finding.code_location);
+  return (
+    <>
+      {hasGrid && (
+        <div className="detail-grid">
+          {finding.severity && (
+            <>
+              <span className="detail-label">Severity</span>
+              <span className="detail-value">
+                <span className={'badge badge-' + finding.severity}>{finding.severity}</span>
+              </span>
+            </>
+          )}
+          {finding.code_location && (
+            <>
+              <span className="detail-label">Code Location</span>
+              <span className="detail-value font-mono">{finding.code_location}</span>
+            </>
+          )}
+        </div>
+      )}
+
+      {finding.description && (
+        <div className="mt-2">
+          <h3 className="card-title mb-1">Description</h3>
+          <p className="text-sm" style={{ whiteSpace: 'pre-wrap' }}>{finding.description}</p>
+        </div>
+      )}
+
+      {finding.poc && (
+        <div className="mt-2">
+          <h3 className="card-title mb-1">Proof of Concept</h3>
+          <pre style={{
+            background: 'var(--bg)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)',
+            padding: '0.75rem',
+            overflowX: 'auto',
+            margin: 0,
+          }}>
+            <code className="font-mono text-sm">{finding.poc}</code>
+          </pre>
+        </div>
+      )}
+
+      {finding.remediation && (
+        <div className="mt-2">
+          <h3 className="card-title mb-1">Remediation</h3>
+          <p className="text-sm" style={{ whiteSpace: 'pre-wrap' }}>{finding.remediation}</p>
+        </div>
+      )}
+    </>
+  );
+}
+
 function PromoteForm({ draft, onChange, onSubmit, onCancel, error }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: 8 }}>
-        <label className="text-xs">
-          <div className="text-muted">Title</div>
-          <input className="form-input" value={draft.title}
-            onChange={e => onChange({ title: e.target.value })}
-            placeholder="Required" />
-        </label>
-        <label className="text-xs">
-          <div className="text-muted">Severity</div>
-          <select className="form-select" value={draft.severity}
-            onChange={e => onChange({ severity: e.target.value })}>
-            {SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </label>
-        <label className="text-xs">
-          <div className="text-muted">Vuln ID</div>
-          <input className="form-input" value={draft.vuln_id}
+    <form onSubmit={e => { e.preventDefault(); onSubmit(); }}>
+      <div className="form-row">
+        <div className="form-group">
+          <label className="form-label" htmlFor="promote-vuln-id">Vuln ID</label>
+          <input
+            type="text"
+            id="promote-vuln-id"
+            className="form-input"
+            value={draft.vuln_id}
             onChange={e => onChange({ vuln_id: e.target.value })}
-            placeholder="auto (DISC-NNN)" />
-        </label>
+            placeholder="auto (DISC-NNN)"
+          />
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="promote-title">Title</label>
+          <input
+            type="text"
+            id="promote-title"
+            className="form-input"
+            value={draft.title}
+            onChange={e => onChange({ title: e.target.value })}
+            required
+          />
+        </div>
       </div>
-      <label className="text-xs">
-        <div className="text-muted">Description</div>
-        <textarea className="form-textarea" value={draft.description}
+
+      <div className="form-row">
+        <div className="form-group">
+          <label className="form-label" htmlFor="promote-severity">Severity</label>
+          <select
+            id="promote-severity"
+            className="form-select"
+            value={draft.severity}
+            onChange={e => onChange({ severity: e.target.value })}
+            required
+          >
+            {SEVERITIES.map(s => (
+              <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="promote-vuln-type">Vulnerability Type</label>
+          <input
+            type="text"
+            id="promote-vuln-type"
+            className="form-input"
+            value={draft.vuln_type}
+            onChange={e => onChange({ vuln_type: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label" htmlFor="promote-description">Description</label>
+        <textarea
+          id="promote-description"
+          className="form-textarea"
+          value={draft.description}
           onChange={e => onChange({ description: e.target.value })}
-          style={{ minHeight: 60 }} />
-      </label>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <label className="text-xs">
-          <div className="text-muted">PoC</div>
-          <textarea className="form-textarea" value={draft.poc}
-            onChange={e => onChange({ poc: e.target.value })}
-            style={{ minHeight: 60 }} />
-        </label>
-        <label className="text-xs">
-          <div className="text-muted">Remediation</div>
-          <textarea className="form-textarea" value={draft.remediation}
-            onChange={e => onChange({ remediation: e.target.value })}
-            style={{ minHeight: 60 }} />
-        </label>
+        />
       </div>
-      <label className="text-xs">
-        <div className="text-muted">Code location</div>
-        <input className="form-input" value={draft.code_location}
-          onChange={e => onChange({ code_location: e.target.value })} />
-      </label>
-      {error && <div className="alert alert-error" style={{ padding: '4px 8px', fontSize: '0.8rem' }}>{error}</div>}
-      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-        <button className="btn btn-outline btn-sm" onClick={onCancel}>Cancel</button>
-        <button className="btn btn-primary btn-sm" onClick={onSubmit}
-          disabled={!draft.title.trim()}>Promote</button>
+
+      <div className="form-group">
+        <label className="form-label" htmlFor="promote-code-location">Code Location</label>
+        <input
+          type="text"
+          id="promote-code-location"
+          className="form-input"
+          value={draft.code_location}
+          onChange={e => onChange({ code_location: e.target.value })}
+        />
       </div>
-    </div>
+
+      <div className="form-group">
+        <label className="form-label" htmlFor="promote-poc">Proof of Concept</label>
+        <textarea
+          id="promote-poc"
+          className="form-textarea"
+          value={draft.poc}
+          onChange={e => onChange({ poc: e.target.value })}
+        />
+      </div>
+
+      <div className="form-group">
+        <label className="form-label" htmlFor="promote-remediation">Remediation</label>
+        <textarea
+          id="promote-remediation"
+          className="form-textarea"
+          value={draft.remediation}
+          onChange={e => onChange({ remediation: e.target.value })}
+        />
+      </div>
+
+      {error && <div className="alert alert-error">{error}</div>}
+
+      <div className="flex gap-1">
+        <button type="submit" className="btn btn-primary" disabled={!draft.title.trim()}>Promote</button>
+        <button type="button" className="btn btn-outline" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
   );
 }
 
