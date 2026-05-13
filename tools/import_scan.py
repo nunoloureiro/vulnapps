@@ -135,6 +135,12 @@ Do not force matches.
 - Extract the scanner name and scan date from the report if available.
 - For vuln_type, use a short canonical type (e.g., "XSS", "SQLi", "IDOR", \
 "Missing Security Headers", "CSRF", etc.)
+- For findings that do NOT map to a known vulnerability (matched_vuln_db_id=null) \
+and are NOT false positives, fill in the rich detail fields below from the scan \
+report (description, severity, poc, remediation, code_location). These let the \
+user one-click "promote" the finding into a documented vulnerability later. \
+Leave them empty for findings that already match a known vulnerability.
+- severity must be one of: "critical", "high", "medium", "low", "info".
 
 Respond with ONLY valid JSON (no markdown fencing) in this exact format:
 {
@@ -150,7 +156,12 @@ Respond with ONLY valid JSON (no markdown fencing) in this exact format:
             "filename": "string - affected source file or empty string",
             "matched_vuln_db_id": 123 or null,
             "is_false_positive": false,
-            "reasoning": "string - brief explanation of why this maps (or doesn't) to the known vuln"
+            "reasoning": "string - brief explanation of why this maps (or doesn't) to the known vuln",
+            "severity": "critical|high|medium|low|info — required for unmapped findings, empty otherwise",
+            "description": "string — what the issue is, why it matters (unmapped only)",
+            "poc": "string — proof-of-concept / reproduction steps (unmapped only)",
+            "remediation": "string — how to fix (unmapped only)",
+            "code_location": "string — file:line or function name if known (unmapped only)"
         }
     ]
 }"""
@@ -173,6 +184,20 @@ class VulnappsClient:
         resp = self.client.get(f"/api/apps/{app_id}")
         resp.raise_for_status()
         return resp.json()
+
+    def find_app(self, name: str, version: str) -> dict | None:
+        """Return the first app matching name+version exactly, else None."""
+        resp = self.client.get("/api/apps", params={"q": name})
+        resp.raise_for_status()
+        for a in resp.json().get("apps", []):
+            if a.get("name") == name and (a.get("version") or "") == (version or ""):
+                return a
+        return None
+
+    def create_app(self, payload: dict) -> dict:
+        resp = self.client.post("/api/apps", json=payload)
+        resp.raise_for_status()
+        return resp.json()["app"]
 
     def get_vulns(self, app_id: int) -> list:
         resp = self.client.get(f"/api/apps/{app_id}/vulns")
@@ -405,13 +430,18 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
     """Submit the scan and apply LLM-corrected matches."""
     findings_payload = []
     for f in mapping.get("findings", []):
-        findings_payload.append({
+        item = {
             "vuln_type": f.get("vuln_type", ""),
             "http_method": f.get("http_method", ""),
             "url": f.get("url", ""),
             "parameter": f.get("parameter", ""),
             "filename": f.get("filename", ""),
-        })
+        }
+        for k in ("title", "severity", "description", "poc", "remediation", "code_location"):
+            v = f.get(k)
+            if v:
+                item[k] = v
+        findings_payload.append(item)
 
     scan_data = {
         "scanner_name": mapping.get("scanner_name", "unknown"),
@@ -591,7 +621,18 @@ def main():
     )
     parser.add_argument("--url", default=os.getenv("VULNAPPS_URL"), help="Vulnapps instance URL (or set VULNAPPS_URL)")
     parser.add_argument("--api-key", default=os.getenv("VULNAPPS_API_KEY"), help="API key (or set VULNAPPS_API_KEY)")
-    parser.add_argument("--app-id", type=int, required=True, help="Target app ID")
+    parser.add_argument("--app-id", type=int, default=None,
+                        help="Target app ID. If omitted, --app-name is required and the app is looked up by name+version (created if missing).")
+    parser.add_argument("--app-name", default=None,
+                        help="App name for lookup/creation when --app-id is omitted")
+    parser.add_argument("--app-version", default="",
+                        help="App version for lookup/creation (default: empty)")
+    parser.add_argument("--app-url", default=None, help="App URL (used only when creating)")
+    parser.add_argument("--app-description", default=None, help="App description (used only when creating)")
+    parser.add_argument("--app-tech", default="", help="Comma-separated tech stack (used only when creating)")
+    parser.add_argument("--app-visibility", default="private",
+                        choices=["public", "private", "team"],
+                        help="Visibility when creating the app (default: private)")
     parser.add_argument("--dir", default=None, help="Directory with .md scan result files")
     parser.add_argument("--file", help="Single .md file to import (instead of --dir)")
     parser.add_argument("--probely", default=None, help="Import from Probely: scan ID(s), comma-separated (max 2). Requires PROBELY_API_KEY env var.")
@@ -624,6 +665,10 @@ def main():
 
     if not args.dir and not args.file and not args.probely:
         print(f"  {colored('Error:', 'RED')} One of --dir, --file, or --probely is required", file=sys.stderr)
+        sys.exit(1)
+
+    if args.app_id is None and not args.app_name:
+        print(f"  {colored('Error:', 'RED')} Either --app-id or --app-name is required", file=sys.stderr)
         sys.exit(1)
 
     # Validate --scan-date format
@@ -676,6 +721,38 @@ def main():
     elif llm_client:
         provider_label = f"vertex/{args.vertex_region}" if args.provider == "vertex" else "anthropic"
         print(f"  {colored('✓', 'GREEN')} LLM: {colored(args.model, 'CYAN')} {C.DIM}via {provider_label}{C.RESET}")
+
+    # Resolve app_id: lookup or create from --app-name if not given explicitly
+    if args.app_id is None:
+        try:
+            with Spinner(f"Looking up app '{args.app_name}'..."):
+                existing = client.find_app(args.app_name, args.app_version)
+        except httpx.HTTPStatusError as e:
+            print(f"  {colored('✗', 'RED')} App lookup failed: {e.response.status_code}", file=sys.stderr)
+            sys.exit(1)
+
+        if existing:
+            args.app_id = existing["id"]
+            print(f"  {colored('✓', 'GREEN')} Found existing app: {colored(args.app_name, 'BOLD')} {C.DIM}(id {args.app_id}){C.RESET}")
+        else:
+            payload = {
+                "name": args.app_name,
+                "version": args.app_version,
+                "visibility": args.app_visibility,
+                "tech_stack": args.app_tech,
+            }
+            if args.app_url:
+                payload["url"] = args.app_url
+            if args.app_description:
+                payload["description"] = args.app_description
+            try:
+                with Spinner(f"Creating app '{args.app_name}'..."):
+                    new_app = client.create_app(payload)
+                args.app_id = new_app["id"]
+                print(f"  {colored('✓', 'GREEN')} Created app: {colored(args.app_name, 'BOLD')} {C.DIM}(id {args.app_id}){C.RESET}")
+            except httpx.HTTPStatusError as e:
+                print(f"  {colored('✗', 'RED')} App creation failed: {e.response.status_code} {e.response.text}", file=sys.stderr)
+                sys.exit(1)
 
     # Verify access and get app info
     try:
@@ -834,7 +911,6 @@ def main():
         mapping["scanner_name"] = args.scanner
     if args.scan_date:
         mapping["scan_date"] = args.scan_date
-    if False is not None:
 
     print_mapping_table(mapping, vulns)
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
@@ -190,6 +190,9 @@ function Metrics({ metrics }) {
 }
 
 function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
+  const [promoting, setPromoting] = useState(null);
+  const [promoteError, setPromoteError] = useState('');
+
   const matchFinding = async (findingId, vulnId) => {
     await api.post(`/scans/${scanId}/findings/${findingId}/match`, { vuln_id: vulnId });
     onUpdate();
@@ -204,6 +207,41 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
     if (!confirm('Re-run automatic matching for all findings?')) return;
     await api.post(`/scans/${scanId}/rematch`, {});
     onUpdate();
+  };
+
+  const openPromote = (f) => {
+    setPromoteError('');
+    setPromoting({
+      findingId: f.id,
+      draft: {
+        vuln_id: '',
+        title: f.title || f.vuln_type || '',
+        severity: (f.severity || 'medium').toLowerCase(),
+        vuln_type: f.vuln_type || '',
+        http_method: f.http_method || '',
+        url: f.url || '',
+        parameter: f.parameter || '',
+        filename: f.filename || '',
+        description: f.description || '',
+        poc: f.poc || '',
+        remediation: f.remediation || '',
+        code_location: f.code_location || '',
+      },
+    });
+  };
+
+  const updateDraft = (patch) => setPromoting(p => ({ ...p, draft: { ...p.draft, ...patch } }));
+
+  const submitPromote = async () => {
+    const overrides = { ...promoting.draft };
+    if (!overrides.vuln_id) delete overrides.vuln_id;
+    try {
+      await api.post(`/scans/${scanId}/findings/${promoting.findingId}/promote`, overrides);
+      setPromoting(null);
+      onUpdate();
+    } catch (e) {
+      setPromoteError(e.message);
+    }
   };
 
   return (
@@ -222,9 +260,16 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                   const location = f.url || f.filename || '-';
                   const locationDisplay = f.http_method ? `${f.http_method} ${location}` : location;
                   const matchedVuln = f.matched_vuln_id ? knownVulns.find(v => v.id === f.matched_vuln_id) : null;
+                  const isPromoting = promoting && promoting.findingId === f.id;
                   return (
-                  <tr key={f.id}>
-                    <td>{f.vuln_type}</td>
+                  <React.Fragment key={f.id}>
+                  <tr>
+                    <td>
+                      <div>{f.vuln_type}</div>
+                      {f.title && f.title !== f.vuln_type && (
+                        <div className="text-muted text-xs" style={{ marginTop: 2 }}>{f.title}</div>
+                      )}
+                    </td>
                     <td className="font-mono text-sm">{locationDisplay}</td>
                     <td className="font-mono">{f.parameter || '-'}</td>
                     <td>
@@ -257,12 +302,29 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                           <button className="btn btn-outline btn-sm" onClick={() => markFP(f.id)} title="Mark as False Positive">FP</button>
                         )}
                         {canEdit && !f.matched_vuln_id && !f.is_false_positive && (
-                          <Link to={`/apps/${appId}/vulns/new?vuln_type=${encodeURIComponent(f.vuln_type || '')}&http_method=${encodeURIComponent(f.http_method || '')}&url=${encodeURIComponent(f.url || '')}&parameter=${encodeURIComponent(f.parameter || '')}&filename=${encodeURIComponent(f.filename || '')}`}
-                            className="btn btn-outline btn-sm" title="Add as known vulnerability">+ Vuln</Link>
+                          <button className="btn btn-outline btn-sm"
+                            onClick={() => isPromoting ? setPromoting(null) : openPromote(f)}
+                            title="Promote to known vulnerability">
+                            {isPromoting ? 'Cancel' : '+ Vuln'}
+                          </button>
                         )}
                       </div>
                     </td>
                   </tr>
+                  {isPromoting && (
+                    <tr>
+                      <td colSpan="6" style={{ background: 'var(--bg-elevated, #f8f9fb)', padding: '12px 16px' }}>
+                        <PromoteForm
+                          draft={promoting.draft}
+                          onChange={updateDraft}
+                          onSubmit={submitPromote}
+                          onCancel={() => setPromoting(null)}
+                          error={promoteError}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                   );
                 })}
               </tbody>
@@ -271,6 +333,67 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
         </div>
       ) : <div className="empty-state"><p>No findings in this scan.</p></div>}
     </>
+  );
+}
+
+const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
+
+function PromoteForm({ draft, onChange, onSubmit, onCancel, error }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: 8 }}>
+        <label className="text-xs">
+          <div className="text-muted">Title</div>
+          <input className="form-input" value={draft.title}
+            onChange={e => onChange({ title: e.target.value })}
+            placeholder="Required" />
+        </label>
+        <label className="text-xs">
+          <div className="text-muted">Severity</div>
+          <select className="form-select" value={draft.severity}
+            onChange={e => onChange({ severity: e.target.value })}>
+            {SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </label>
+        <label className="text-xs">
+          <div className="text-muted">Vuln ID</div>
+          <input className="form-input" value={draft.vuln_id}
+            onChange={e => onChange({ vuln_id: e.target.value })}
+            placeholder="auto (DISC-NNN)" />
+        </label>
+      </div>
+      <label className="text-xs">
+        <div className="text-muted">Description</div>
+        <textarea className="form-textarea" value={draft.description}
+          onChange={e => onChange({ description: e.target.value })}
+          style={{ minHeight: 60 }} />
+      </label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <label className="text-xs">
+          <div className="text-muted">PoC</div>
+          <textarea className="form-textarea" value={draft.poc}
+            onChange={e => onChange({ poc: e.target.value })}
+            style={{ minHeight: 60 }} />
+        </label>
+        <label className="text-xs">
+          <div className="text-muted">Remediation</div>
+          <textarea className="form-textarea" value={draft.remediation}
+            onChange={e => onChange({ remediation: e.target.value })}
+            style={{ minHeight: 60 }} />
+        </label>
+      </div>
+      <label className="text-xs">
+        <div className="text-muted">Code location</div>
+        <input className="form-input" value={draft.code_location}
+          onChange={e => onChange({ code_location: e.target.value })} />
+      </label>
+      {error && <div className="alert alert-error" style={{ padding: '4px 8px', fontSize: '0.8rem' }}>{error}</div>}
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+        <button className="btn btn-outline btn-sm" onClick={onCancel}>Cancel</button>
+        <button className="btn btn-primary btn-sm" onClick={onSubmit}
+          disabled={!draft.title.trim()}>Promote</button>
+      </div>
+    </div>
   );
 }
 

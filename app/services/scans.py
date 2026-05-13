@@ -27,6 +27,23 @@ async def _check_scan_write(db, user, scan, app) -> None:
     raise PermissionError("You don't have write access to this scan")
 
 
+async def _check_app_write(db, user, app) -> None:
+    """Raise PermissionError if user lacks app-write access (mirrors vulns._require_app_write)."""
+    if not user:
+        raise PermissionError("Authentication required")
+    if user["role"] == "admin":
+        return
+    if app["visibility"] == "public":
+        raise PermissionError("Only admins can edit public apps")
+    if app["created_by"] == user["sub"]:
+        return
+    if app["visibility"] == "team" and app["team_id"]:
+        team_role = await get_team_role(db, user["sub"], app["team_id"])
+        if team_role in ("admin", "contributor"):
+            return
+    raise PermissionError("You don't have write access to this app")
+
+
 async def _check_scan_submit(db, user, app) -> None:
     """Raise PermissionError if user cannot submit scans on this app."""
     if not user:
@@ -368,8 +385,11 @@ async def submit_scan(
     for f in findings_data:
         matched_vuln_id, is_false_positive = match_finding_algo(f, known_vulns)
         await db.execute(
-            """INSERT INTO scan_findings (scan_id, vuln_type, http_method, url, parameter, filename, matched_vuln_id, is_false_positive)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO scan_findings
+               (scan_id, vuln_type, http_method, url, parameter, filename,
+                matched_vuln_id, is_false_positive,
+                title, severity, description, poc, remediation, code_location)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 scan_id,
                 f.get("vuln_type", ""),
@@ -379,6 +399,12 @@ async def submit_scan(
                 f.get("filename", ""),
                 matched_vuln_id,
                 is_false_positive,
+                f.get("title"),
+                f.get("severity"),
+                f.get("description"),
+                f.get("poc"),
+                f.get("remediation"),
+                f.get("code_location"),
             ),
         )
 
@@ -470,6 +496,102 @@ async def mark_finding_fp(db, user, scan_id: int, finding_id: int) -> None:
         (finding_id, scan_id),
     )
     await db.commit()
+
+
+_VALID_SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+
+async def _next_disc_slug(db, app_id: int) -> str:
+    """Return the next DISC-NNN slug for the app (zero-padded, starts at 001)."""
+    cursor = await db.execute(
+        "SELECT vuln_id FROM vulnerabilities WHERE app_id = ? AND vuln_id LIKE 'DISC-%'",
+        (app_id,),
+    )
+    max_n = 0
+    for row in await cursor.fetchall():
+        suffix = row["vuln_id"][5:]
+        if suffix.isdigit():
+            n = int(suffix)
+            if n > max_n:
+                max_n = n
+    return f"DISC-{max_n + 1:03d}"
+
+
+async def promote_finding(
+    db, user, scan_id: int, finding_id: int, overrides: dict | None = None,
+) -> dict:
+    """Create a vuln on the scan's app from a pending finding's details, then
+    link the finding to the new vuln.
+
+    *overrides* may supply or replace any of: vuln_id, title, severity, vuln_type,
+    description, poc, remediation, code_location, http_method, url, parameter,
+    filename. Anything missing falls back to the finding's stored values; severity
+    defaults to "medium" and vuln_id auto-generates as the next DISC-NNN.
+
+    Requires app-write (creating a vuln is an app-level action).
+
+    Returns {ok, vuln, finding_id}.
+    """
+    overrides = overrides or {}
+    scan, app = await _get_scan_and_app(db, scan_id)
+    await _check_app_write(db, user, app)
+
+    cursor = await db.execute(
+        "SELECT * FROM scan_findings WHERE id = ? AND scan_id = ?",
+        (finding_id, scan_id),
+    )
+    finding = await cursor.fetchone()
+    if not finding:
+        raise ValueError("Finding not found")
+
+    def _pick(key: str, default=None):
+        if key in overrides and overrides[key] not in (None, ""):
+            return overrides[key]
+        val = finding[key] if key in finding.keys() else None
+        return val if val not in (None, "") else default
+
+    title = _pick("title") or _pick("vuln_type") or "Untitled finding"
+    severity = (_pick("severity") or "medium").lower()
+    if severity not in _VALID_SEVERITIES:
+        severity = "medium"
+
+    vuln_id_slug = overrides.get("vuln_id") or await _next_disc_slug(db, app["id"])
+
+    cursor = await db.execute(
+        """INSERT INTO vulnerabilities
+           (app_id, vuln_id, title, severity, vuln_type, http_method, url,
+            parameter, filename, description, code_location, poc, remediation,
+            created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            app["id"],
+            vuln_id_slug,
+            title,
+            severity,
+            _pick("vuln_type"),
+            _pick("http_method"),
+            _pick("url"),
+            _pick("parameter"),
+            _pick("filename"),
+            _pick("description"),
+            _pick("code_location"),
+            _pick("poc"),
+            _pick("remediation"),
+            user["sub"],
+        ),
+    )
+    new_vuln_id = cursor.lastrowid
+
+    await db.execute(
+        "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = 0 WHERE id = ?",
+        (new_vuln_id, finding_id),
+    )
+    await db.commit()
+
+    cursor = await db.execute("SELECT * FROM vulnerabilities WHERE id = ?", (new_vuln_id,))
+    vuln_row = await cursor.fetchone()
+
+    return {"ok": True, "vuln": dict(vuln_row), "finding_id": finding_id}
 
 
 async def rematch_scan(db, user, scan_id: int) -> dict:

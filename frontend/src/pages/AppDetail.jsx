@@ -352,6 +352,14 @@ export default function AppDetail() {
       ) : (
         <div className="empty-state">
           <p>No vulnerabilities documented yet.</p>
+          {scan_count > 0 && (
+            <>
+              <p className="text-muted text-sm">
+                This app has {scan_count} scan{scan_count === 1 ? '' : 's'}. Open a scan to promote pending findings into documented vulnerabilities.
+              </p>
+              <Link to={'/scans?app_id=' + id} className="btn btn-outline">View scans</Link>
+            </>
+          )}
         </div>
       )}
     </div>

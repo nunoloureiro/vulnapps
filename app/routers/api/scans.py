@@ -153,6 +153,34 @@ async def mark_finding_fp(request: Request, scan_id: int, finding_id: int):
     return {"ok": True}
 
 
+@router.post("/{scan_id}/findings/{finding_id}/promote")
+async def promote_finding(request: Request, scan_id: int, finding_id: int):
+    user = await require_user(request)
+    require_scope(user, "vuln-mapper")
+    raw = await request.body()
+    overrides = {}
+    if raw:
+        import json
+        try:
+            overrides = json.loads(raw) or {}
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    db = await get_connection()
+    try:
+        result = await scans_service.promote_finding(
+            db, user, scan_id, finding_id, overrides=overrides,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+
+    return result
+
+
 @router.post("/{scan_id}/rematch")
 async def rematch_scan(request: Request, scan_id: int):
     user = await require_user(request)

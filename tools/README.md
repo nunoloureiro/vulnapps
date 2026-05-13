@@ -7,7 +7,9 @@ The key advantage over heuristic matching: the LLM understands that "Missing CSP
 ## Prerequisites
 
 - Python 3.8+
-- A Vulnapps API key (generate from Account > API Keys with `vuln-mapper` scope)
+- A Vulnapps API key:
+  - **`vuln-mapper` scope** — submit scans, match findings, promote findings to vulns
+  - **`full` scope** — required additionally if you want this tool to *create* the target app on the fly via `--app-name` (instead of pre-creating it and passing `--app-id`)
 - Access to Claude via either:
   - **Anthropic API key** (`sk-ant-...` from [console.anthropic.com](https://console.anthropic.com))
   - **Google Vertex AI** with `gcloud` auth
@@ -20,15 +22,20 @@ pip install httpx "anthropic[vertex]"
 
 ## Configuration
 
-### Vulnapps API Key
+### Vulnapps URL and API Key
 
-Generate one from your Vulnapps account page (Account > API Keys). Choose the `vuln-mapper` scope — it grants read access plus the ability to submit scans and match findings.
+Point the tool at your Vulnapps instance and authenticate with an API key.
+Generate the key from your Vulnapps account page (Account > API Keys) — pick the
+`vuln-mapper` scope to submit scans and match findings, or `full` if you also
+want the tool to create the target app on the fly via `--app-name`.
 
 ```bash
+export VULNAPPS_URL="https://vulnapps.example.com"
 export VULNAPPS_API_KEY="va_..."
 ```
 
-Or pass it directly with `--api-key`.
+The examples below assume both are set. You can override either per-invocation
+with `--url` / `--api-key`.
 
 ### LLM Provider
 
@@ -61,7 +68,16 @@ The tool auto-detects Vertex when `CLAUDE_CODE_USE_VERTEX=1` is set — no extra
 ## Usage
 
 ```
-python tools/import_scan.py --url <vulnapps-url> --app-id <id> --dir <scan-results-dir>
+python tools/import_scan.py --app-id <id> --dir <scan-results-dir>
+```
+
+Or, for discovery-mode scanning where you want the tool to create the target app
+on the fly:
+
+```
+python tools/import_scan.py \
+  --app-name "WordPress" --app-version "6.4" \
+  --dir <scan-results-dir>
 ```
 
 ### Options
@@ -70,12 +86,17 @@ python tools/import_scan.py --url <vulnapps-url> --app-id <id> --dir <scan-resul
 |------|-------------|---------|
 | `--url` | Vulnapps instance URL | (required) |
 | `--api-key` | Vulnapps API key | `$VULNAPPS_API_KEY` |
-| `--app-id` | Target app ID in Vulnapps | (required) |
-| `--dir` | Directory containing `.md` scan files | (required) |
+| `--app-id` | Target app ID in Vulnapps | *(required unless `--app-name` is given)* |
+| `--app-name` | App name to look up or create when `--app-id` is omitted | |
+| `--app-version` | App version used together with `--app-name` for lookup/creation | `""` |
+| `--app-url` | App URL — only used when creating a new app | |
+| `--app-description` | App description — only used when creating a new app | |
+| `--app-tech` | Comma-separated tech stack — only used when creating a new app | |
+| `--app-visibility` | `public`, `private`, or `team` — only used when creating | `private` |
+| `--dir` | Directory containing `.md` scan files | (required if no `--file`/`--probely`) |
 | `--file` | Single `.md` file (instead of `--dir`) | |
 | `--scanner` | Scanner name (overrides LLM-detected name) | |
 | `--scan-date` | Scan date in YYYY-MM-DD (overrides LLM-detected date) | |
-| `--authenticated` / `--unauthenticated` | Mark scan as authenticated / unauthenticated (overrides LLM detection) | |
 | `--model` | Claude model to use | `claude-sonnet-4-20250514` |
 | `--provider` | `anthropic` or `vertex` | auto-detected |
 | `--vertex-region` | Vertex AI region | `$ANTHROPIC_VERTEX_LOCATION` |
@@ -86,13 +107,17 @@ python tools/import_scan.py --url <vulnapps-url> --app-id <id> --dir <scan-resul
 | `--notes` | Notes to attach to the scan | |
 | `--dry-run` | Show LLM mapping without submitting | |
 
+When `--app-id` is omitted, the tool looks up an existing app by exact
+`name`+`version`. If none is found, it creates one (requires `full` API-key
+scope) using `--app-url`, `--app-description`, `--app-tech`, and
+`--app-visibility`.
+
 ## Examples
 
 ### Dry run — preview mapping without submitting
 
 ```bash
 python tools/import_scan.py \
-  --url https://vulnapps.example.com \
   --app-id 1 \
   --dir ./scan-results/ \
   --dry-run
@@ -102,7 +127,6 @@ python tools/import_scan.py \
 
 ```bash
 python tools/import_scan.py \
-  --url https://vulnapps.example.com \
   --app-id 1 \
   --file ./scan-results/zap-scan-2026-03-15.md
 ```
@@ -111,7 +135,6 @@ python tools/import_scan.py \
 
 ```bash
 python tools/import_scan.py \
-  --url https://vulnapps.example.com \
   --app-id 1 \
   --dir ./scan-results/ \
   --notes "Q1 2026 scan batch"
@@ -125,7 +148,6 @@ export ANTHROPIC_VERTEX_PROJECT_ID=my-project-123
 export ANTHROPIC_VERTEX_LOCATION=global
 
 python tools/import_scan.py \
-  --url https://vulnapps.example.com \
   --app-id 1 \
   --dir ./scan-results/ \
   --public \
@@ -136,21 +158,47 @@ python tools/import_scan.py \
 
 ```bash
 python tools/import_scan.py \
-  --url https://vulnapps.example.com \
   --app-id 1 \
   --dir ./scan-results/ \
   --model claude-opus-4-20250514
 ```
 
+### Discovery-mode: scan a popular app, creating it on the fly
+
+When you're hunting 0-days in a third-party app that doesn't exist in Vulnapps
+yet, the tool can create it for you. Findings that don't map to anything (which
+is most of them, since the app has no known vulns) get extra context — title,
+severity, description, PoC, remediation, code location — which you can later
+one-click "Promote to vuln" on the scan page.
+
+```bash
+python tools/import_scan.py \
+  --app-name "WordPress" --app-version "6.4.2" \
+  --app-url "https://wordpress.org" \
+  --app-tech "PHP,MySQL" \
+  --app-visibility private \
+  --dir ./wp-scan/ \
+  --labels "discovery"
+```
+
+If an app named "WordPress" version "6.4.2" already exists, it's reused.
+Otherwise it's created (requires `full` scope on the API key).
+
 ## How It Works
 
 For each `.md` file:
 
-1. Fetches the app's known vulnerabilities from the Vulnapps API
-2. Sends the scan report + vulnerability list to Claude
-3. Claude extracts findings and semantically maps each one to a known vulnerability (or marks it as unmatched/false positive)
-4. Displays the mapping in the terminal for review
-5. On confirmation, submits the scan to Vulnapps (heuristic matching runs first, then LLM corrections are applied on top)
+1. Resolves the target app — either `--app-id` directly, or by looking up (and
+   optionally creating) by `--app-name`+`--app-version`
+2. Fetches the app's known vulnerabilities from the Vulnapps API
+3. Sends the scan report + vulnerability list to Claude
+4. Claude extracts findings and semantically maps each one to a known
+   vulnerability (or marks it as unmatched/false positive). For unmapped
+   findings, Claude also emits rich detail (severity, description, PoC,
+   remediation, code location) so you can promote them later
+5. Displays the mapping in the terminal for review
+6. On confirmation, submits the scan to Vulnapps (heuristic matching runs
+   first, then LLM corrections are applied on top)
 
 ## Scan Report Format
 

@@ -256,7 +256,7 @@ Uses `python-dotenv` to load `.env` file.
 
 ---
 
-## Database Schema (migrations 001-016)
+## Database Schema (migrations 001-019)
 
 ```sql
 PRAGMA journal_mode=WAL;
@@ -329,7 +329,16 @@ CREATE TABLE IF NOT EXISTS scan_findings (
     parameter       TEXT,
     filename        TEXT,                         -- SAST finding filename
     matched_vuln_id INTEGER REFERENCES vulnerabilities(id),
-    is_false_positive INTEGER NOT NULL DEFAULT 0
+    is_false_positive INTEGER NOT NULL DEFAULT 0,
+    -- Rich detail fields (migration 019) — populated by scanners that emit full
+    -- vuln-like reports (e.g. LLM-assisted scans). All nullable. Used to
+    -- one-click "promote" an unmapped finding into a documented vulnerability.
+    title           TEXT,
+    severity        TEXT,
+    description     TEXT,
+    poc             TEXT,
+    remediation     TEXT,
+    code_location   TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_vulns_app ON vulnerabilities(app_id);
@@ -541,9 +550,10 @@ All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT 
 | GET | `/api/scans/{id}` | Varies / read | Scan detail with metrics, findings, missed vulns, labels |
 | PUT | `/api/scans/{id}` | Scan write / vuln-mapper | Update scan metadata: `{scanner_name, scan_date, authenticated, notes}` |
 | DELETE | `/api/scans/{id}` | Scan write | Delete scan |
-| POST | `/api/apps/{id}/scans` | User+ / vuln-mapper | Submit scan. Body: `{scanner_name, scan_date, authenticated, is_public, notes, cost, tokens, findings, labels}` |
+| POST | `/api/apps/{id}/scans` | User+ / vuln-mapper | Submit scan. Body: `{scanner_name, scan_date, authenticated, is_public, notes, cost, tokens, findings, labels}`. Each finding may include `{vuln_type, http_method, url, parameter, filename, title, severity, description, poc, remediation, code_location}` — the last six are optional rich details preserved for later promotion |
 | POST | `/api/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Map finding to vuln: `{vuln_id: int\|null}` |
 | POST | `/api/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive |
+| POST | `/api/scans/{id}/findings/{fid}/promote` | App write / vuln-mapper | Promote a pending finding into a new vuln on the scan's app. Body (all optional): `{vuln_id, title, severity, vuln_type, http_method, url, parameter, filename, description, poc, remediation, code_location}` — missing fields fall back to the finding's stored values; `vuln_id` auto-generates as the next `DISC-NNN` slug if blank. The finding is linked to the new vuln on success |
 | POST | `/api/scans/{id}/rematch` | Scan write / vuln-mapper | Re-run automatic matching for all findings |
 | POST | `/api/scans/{id}/labels` | Scan write | Add label to scan: `{name, color}`. Upserts label, links to scan |
 | DELETE | `/api/scans/{id}/labels/{label_id}` | Scan write | Remove label from scan |
