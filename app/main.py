@@ -44,6 +44,7 @@ async def inject_user(request: Request, call_next):
 from app.routers.api import auth as api_auth, account as api_account, admin as api_admin  # noqa: E402
 from app.routers.api import apps as api_apps, vulns as api_vulns, scans as api_scans  # noqa: E402
 from app.routers.api import teams as api_teams, dashboard as api_dashboard  # noqa: E402
+from app.routers.api import scanners as api_scanners  # noqa: E402
 
 app.include_router(api_auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(api_account.router, prefix="/api/account", tags=["account"])
@@ -55,6 +56,7 @@ app.include_router(api_scans.labels_router, prefix="/api/labels", tags=["labels"
 app.include_router(api_teams.router, prefix="/api/teams", tags=["teams"])
 app.include_router(api_admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(api_dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+app.include_router(api_scanners.router, prefix="/api/scanners", tags=["scanners"])
 
 
 @app.get("/api")

@@ -15,6 +15,8 @@ import ScansList from './pages/ScansList';
 import ScanDetail from './pages/ScanDetail';
 import ScanSubmit from './pages/ScanSubmit';
 import ScanCompare from './pages/ScanCompare';
+import ScannersList from './pages/ScannersList';
+import ScannerDetail from './pages/ScannerDetail';
 import TeamsList from './pages/TeamsList';
 import TeamDetail from './pages/TeamDetail';
 import TeamForm from './pages/TeamForm';
@@ -44,6 +46,8 @@ export default function App() {
             <Route path="/apps/:id/compare" element={<ScanCompare />} />
             <Route path="/scans" element={<ScansList />} />
             <Route path="/scans/:id" element={<ScanDetail />} />
+            <Route path="/scanners" element={<ScannersList />} />
+            <Route path="/scanners/:name" element={<ScannerDetail />} />
             <Route path="/teams" element={<TeamsList />} />
             <Route path="/teams/new" element={<TeamForm />} />
             <Route path="/teams/:id" element={<TeamDetail />} />

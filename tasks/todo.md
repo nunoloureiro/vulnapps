@@ -79,3 +79,41 @@ All five phases complete. End-to-end discovery-mode workflow now works:
 - `frontend/src/pages/AppDetail.jsx` — empty-state hint
 - `tools/import_scan.py` — find-or-create app flow, extended LLM prompt, payload pass-through, dead-block fix
 - `AppBuilder.md`, `tools/README.md` — docs
+
+---
+
+# Scanners: multi-select filter + dedicated Scanners page
+
+## Phase A — Dashboard multi-select scanners
+- [ ] `frontend/src/pages/Dashboard.jsx`: replace the single `<select>` for "All scanners" with a multi-select widget. The URL param `scanner` becomes comma-separated. Backend already parses CSV (`dashboard.py:_parse_csv`), so no API changes.
+- [ ] Reuse a small inline multi-select dropdown (checkbox list in a popover) rather than the native `<select multiple>`, which is ugly. Keep it minimal — match `filter-bar` styling.
+
+## Phase B — Scanners list page
+- [ ] New service `app/services/scanners.py` with `list_scanners(db, user)` returning per-scanner aggregates: apps, scans, tp, fp, fn, precision, recall, f1, det_rate. Lift the aggregation logic shared with `dashboard.compute_dashboard` (refactor a private helper if useful, but don't rewrite the dashboard).
+- [ ] New API: `GET /api/scanners` — returns `{scanners: [...]}` shaped like the dashboard summary rows.
+- [ ] New page `frontend/src/pages/ScannersList.jsx`: table mirroring the Dashboard summary table, each row linking to `/scanners/<name>`.
+- [ ] Add `"Scanners"` to `Navbar.jsx` between Scans and Teams.
+- [ ] Add `/scanners` route in `App.jsx`.
+
+## Phase C — Scanner detail page
+- [ ] New service function `get_scanner_detail(db, user, name)` returning:
+  - Overall metrics (same as list row)
+  - Time series: for each scan of this scanner the user can see, `{scan_id, app_id, app_name, scan_date, tp, fp, fn, precision, recall, f1, cost, tokens, duration}`
+  - Per-app breakdown: for each app this scanner ran on, the latest scan's metrics
+  - Labels frequency: `[{name, color, count}]` over scans for this scanner
+- [ ] New API: `GET /api/scanners/{name}` (URL-encode name).
+- [ ] New page `frontend/src/pages/ScannerDetail.jsx`:
+  - Header: name + small back-to-list + overall metric pills
+  - Chart 1: Precision/Recall/F1 over time (line chart with 3 series, x = scan_date)
+  - Chart 2: TP/FP/FN stacked bar per scan (x = scan_date)
+  - Chart 3 (if any scan has cost/tokens/duration): cost & duration over time, dual-axis or stacked
+  - Per-app breakdown table (App | Latest scan date | TP | FP | FN | Precision | Recall | F1) — link App name to app page
+  - Labels: chips with frequency
+  - Scans list at the bottom — same shape as ScansList but pre-filtered
+- [ ] Reuse the existing SVG-based chart components from Dashboard.jsx if any; if not, build small inline SVG charts (no extra dependencies). Look at `ScannerComparisonBars`/`SeverityBreakdown` in Dashboard.jsx for the patterns already in use.
+- [ ] Add `/scanners/:name` route.
+
+## Phase D — Verify
+- [ ] `npm run build` clean.
+- [ ] Manual: scanner with one scan, scanner with many scans, scanner with cost data, scanner without cost data.
+- [ ] Existing Dashboard still works (scanner CSV filter accepted by backend).
