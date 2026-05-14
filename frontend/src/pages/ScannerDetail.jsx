@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { LabelBadge } from '../components/LabelBadge';
@@ -68,7 +68,7 @@ export default function ScannerDetail() {
 
   const { summary, time_series: rawTs, labels, available_apps: availableApps = [] } = data;
   const isFiltered = selectedAppIds.length > 0;
-  const ts = useMemo(() => buildXLabels(rawTs), [rawTs]);
+  const ts = buildXLabels(rawTs);
   const m = summary.metrics;
   const total = m.tp + m.fn;
   const dr = total > 0 ? m.tp / total : 0;
