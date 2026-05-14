@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { LabelBadge } from '../components/LabelBadge';
@@ -66,8 +66,9 @@ export default function ScannerDetail() {
     );
   }
 
-  const { summary, time_series: ts, labels, available_apps: availableApps = [] } = data;
+  const { summary, time_series: rawTs, labels, available_apps: availableApps = [] } = data;
   const isFiltered = selectedAppIds.length > 0;
+  const ts = useMemo(() => buildXLabels(rawTs), [rawTs]);
   const m = summary.metrics;
   const total = m.tp + m.fn;
   const dr = total > 0 ? m.tp / total : 0;
@@ -275,6 +276,26 @@ export default function ScannerDetail() {
   );
 }
 
+/* Disambiguate x-axis labels: when multiple scans share a date, suffix each
+ * with #N in chronological order. (The point's tooltip still surfaces the
+ * app name, so #N is enough — the user can hover for context.) */
+function buildXLabels(ts) {
+  if (!Array.isArray(ts) || ts.length === 0) return [];
+  const datePart = (s) => String(s.scan_date || '').slice(0, 10);
+  const dateCounts = {};
+  for (const s of ts) {
+    const d = datePart(s);
+    dateCounts[d] = (dateCounts[d] || 0) + 1;
+  }
+  const perDateIdx = {};
+  return ts.map((s) => {
+    const d = datePart(s);
+    if (dateCounts[d] <= 1) return { ...s, x_label: d };
+    perDateIdx[d] = (perDateIdx[d] || 0) + 1;
+    return { ...s, x_label: `${d} #${perDateIdx[d]}` };
+  });
+}
+
 /* ---------- Tiny SVG charts ---------- */
 
 const CHART_W = 800;
@@ -352,7 +373,7 @@ function LineChart({ title, data, series, yMax, formatY, autoscalePerSeries }) {
                       r="3"
                       fill={s.color}
                     >
-                      <title>{`${d.scan_date} (${d.app_name}) — ${s.label}: ${formatY ? formatY(v) : v}`}</title>
+                      <title>{`${d.x_label} (${d.app_name}) — ${s.label}: ${formatY ? formatY(v) : v}`}</title>
                     </circle>
                   );
                 })}
@@ -374,7 +395,7 @@ function LineChart({ title, data, series, yMax, formatY, autoscalePerSeries }) {
                 fontSize="10"
                 fill="var(--text-muted)"
               >
-                {d.scan_date}
+                {d.x_label}
               </text>
             );
           })}
@@ -433,7 +454,7 @@ function StackedBarChart({ title, data, series }) {
                       height={h}
                       fill={s.color}
                     >
-                      <title>{`${d.scan_date} (${d.app_name}) — ${s.label}: ${v}`}</title>
+                      <title>{`${d.x_label} (${d.app_name}) — ${s.label}: ${v}`}</title>
                     </rect>
                   );
                 })}
@@ -455,7 +476,7 @@ function StackedBarChart({ title, data, series }) {
                 fontSize="10"
                 fill="var(--text-muted)"
               >
-                {d.scan_date}
+                {d.x_label}
               </text>
             );
           })}

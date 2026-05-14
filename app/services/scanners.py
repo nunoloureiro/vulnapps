@@ -120,6 +120,7 @@ async def get_scanner_detail(db, user, name: str, app_id: str | None = None) -> 
             "app_id": s["app_id"],
             "app_name": s["app_name"],
             "scan_date": s["scan_date"],
+            "created_at": s["created_at"],
             "tp": tp,
             "fp": fp,
             "fn": fn,
