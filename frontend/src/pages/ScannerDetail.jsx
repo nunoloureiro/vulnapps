@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { LabelBadge } from '../components/LabelBadge';
+import { MultiSelect } from '../components/MultiSelect';
 
 const pctColor = (v) => (v >= 0.7 ? 'text-success' : v >= 0.4 ? 'text-warning' : 'text-error');
 const fmt = (v) => (v * 100).toFixed(1) + '%';
@@ -26,14 +27,26 @@ const COLORS = {
 
 export default function ScannerDetail() {
   const { name } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
+  const appParam = searchParams.get('app') || '';
+  const selectedAppIds = appParam.split(',').filter(Boolean).map((v) => parseInt(v, 10));
+
   useEffect(() => {
-    api.get('/scanners/' + encodeURIComponent(name))
+    const qs = appParam ? '?app=' + encodeURIComponent(appParam) : '';
+    api.get('/scanners/' + encodeURIComponent(name) + qs)
       .then(setData)
       .catch((err) => setError(err.message || 'Failed to load scanner'));
-  }, [name]);
+  }, [name, appParam]);
+
+  const updateAppFilter = (ids) => {
+    const next = new URLSearchParams(searchParams);
+    if (ids.length === 0) next.delete('app');
+    else next.set('app', ids.join(','));
+    setSearchParams(next, { replace: true });
+  };
 
   if (error) {
     return (
@@ -53,7 +66,8 @@ export default function ScannerDetail() {
     );
   }
 
-  const { summary, time_series: ts, labels } = data;
+  const { summary, time_series: ts, labels, available_apps: availableApps = [] } = data;
+  const isFiltered = selectedAppIds.length > 0;
   const m = summary.metrics;
   const total = m.tp + m.fn;
   const dr = total > 0 ? m.tp / total : 0;
@@ -68,9 +82,29 @@ export default function ScannerDetail() {
         <Link to="/scanners" className="btn btn-outline">Back to scanners</Link>
       </div>
 
+      {availableApps.length > 1 && (
+        <div className="filter-bar mb-2" style={{ flexWrap: 'wrap' }}>
+          <span className="text-muted text-sm" style={{ marginRight: '0.25rem' }}>App:</span>
+          <MultiSelect
+            options={availableApps.map((a) => ({ value: String(a.id), label: a.name }))}
+            selected={selectedAppIds.map(String)}
+            onChange={(vals) => updateAppFilter(vals.map((v) => parseInt(v, 10)))}
+            allLabel="All apps"
+            minWidth={180}
+          />
+          {isFiltered && (
+            <span className="text-muted text-xs">
+              (filtered to {selectedAppIds.length === 1 ? '1 app' : `${selectedAppIds.length} apps`})
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Overall metrics */}
       <div className="card mb-2">
-        <h3 className="card-title mb-2">Overall</h3>
+        <h3 className="card-title mb-2">
+          Overall{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}
+        </h3>
         <div className="detail-grid">
           <span className="detail-label">Apps</span>
           <span className="detail-value font-mono">{summary.app_count}</span>

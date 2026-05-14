@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import { Badge } from '../components/Badge';
+import { MultiSelect } from '../components/MultiSelect';
 
 const ALL_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 
@@ -189,97 +190,6 @@ export default function Dashboard() {
         <ScannerAppHeatmap scanners={data.scanners} sevFilter={sevFilter} />
         {hasCostData && <CostEfficiency scanners={filteredScanners} />}
       </div>
-    </div>
-  );
-}
-
-/* ---------- Multi-select Popover ---------- */
-
-function MultiSelect({ options, selected, onChange, allLabel }) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e) => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
-
-  const toggle = (value) => {
-    if (selected.includes(value)) onChange(selected.filter((v) => v !== value));
-    else onChange([...selected, value]);
-  };
-
-  const label = selected.length === 0
-    ? allLabel
-    : selected.length === 1
-      ? selected[0]
-      : `${selected.length} selected`;
-
-  return (
-    <div ref={containerRef} style={{ position: 'relative', display: 'inline-block' }}>
-      <button
-        type="button"
-        className="form-select"
-        onClick={() => setOpen((o) => !o)}
-        style={{ textAlign: 'left', cursor: 'pointer', minWidth: 140 }}
-      >
-        {label}
-      </button>
-      {open && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            marginTop: 4,
-            background: 'var(--bg-panel)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)',
-            padding: '0.5rem',
-            zIndex: 10,
-            minWidth: 200,
-            maxHeight: 280,
-            overflowY: 'auto',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-            <button
-              type="button"
-              className="text-xs text-muted"
-              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-              onClick={() => onChange([])}
-            >
-              Clear
-            </button>
-            <button
-              type="button"
-              className="text-xs text-muted"
-              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-              onClick={() => onChange([...options])}
-            >
-              Select all
-            </button>
-          </div>
-          {options.map((opt) => (
-            <label
-              key={opt}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.1rem', cursor: 'pointer', fontSize: '0.875rem' }}
-            >
-              <input
-                type="checkbox"
-                checked={selected.includes(opt)}
-                onChange={() => toggle(opt)}
-              />
-              <span>{opt}</span>
-            </label>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

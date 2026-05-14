@@ -19,11 +19,13 @@ async def list_scanners(request: Request):
 
 
 @router.get("/{name}")
-async def get_scanner(request: Request, name: str):
+async def get_scanner(request: Request, name: str, app: str = ""):
     user = request.state.user
     db = await get_connection()
     try:
-        result = await scanners_service.get_scanner_detail(db, user, name)
+        result = await scanners_service.get_scanner_detail(
+            db, user, name, app_id=app or None,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     finally:

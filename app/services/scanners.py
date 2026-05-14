@@ -13,30 +13,58 @@ async def list_scanners(db, user) -> list:
     return data["scanners"]
 
 
-async def get_scanner_detail(db, user, name: str) -> dict:
+async def get_scanner_detail(db, user, name: str, app_id: str | None = None) -> dict:
     """Detailed view of a single scanner.
+
+    *app_id* (CSV) filters every section: summary metrics, charts, per-app table,
+    scans table — so all numbers stay internally consistent.
 
     Returns:
         summary: same shape as one entry from list_scanners() — overall metrics +
             severity breakdown + per-app latest-scan breakdown.
-        time_series: every visible scan for this scanner, oldest first, with
-            tp/fp/fn/precision/recall/f1 computed per scan plus cost/tokens/duration.
-        labels: distinct labels applied to this scanner's scans, with frequency.
+        time_series: every visible scan for this scanner (or only those on the
+            selected apps if filtered), oldest first, with tp/fp/fn/precision/
+            recall/f1 computed per scan plus cost/tokens/duration.
+        labels: distinct labels applied to this scanner's scans (after the app
+            filter), with frequency.
+        available_apps: every app this scanner has ever scanned that the user
+            can see (full list, unfiltered) — used to populate the filter UI.
 
     Raises ValueError if no scans for this scanner are visible.
     """
-    overall = await get_dashboard(db, user, scanner=name)
+    overall = await get_dashboard(db, user, scanner=name, app_id=app_id)
     summary = next((s for s in overall["scanners"] if s["name"] == name), None)
     if not summary:
         raise ValueError("Scanner not found")
 
     scan_vis, scan_params = scan_visibility_filter(user)
+
+    # Available apps (unfiltered) for the filter UI
+    cursor = await db.execute(
+        f"""SELECT DISTINCT apps.id, apps.name
+            FROM scans LEFT JOIN apps ON scans.app_id = apps.id
+            WHERE scans.scanner_name = ? AND {scan_vis}
+            ORDER BY apps.name""",
+        [name] + scan_params,
+    )
+    available_apps = [{"id": r["id"], "name": r["name"]} for r in await cursor.fetchall()]
+
+    # Time-series scans (filtered)
+    app_filter_sql = ""
+    app_filter_params: list = []
+    if app_id:
+        ids = [int(x) for x in app_id.split(",") if x.strip().isdigit()]
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            app_filter_sql = f" AND scans.app_id IN ({placeholders})"
+            app_filter_params = ids
+
     cursor = await db.execute(
         f"""SELECT scans.*, apps.name as app_name
             FROM scans LEFT JOIN apps ON scans.app_id = apps.id
-            WHERE scans.scanner_name = ? AND {scan_vis}
+            WHERE scans.scanner_name = ? AND {scan_vis}{app_filter_sql}
             ORDER BY scans.scan_date, scans.created_at""",
-        [name] + scan_params,
+        [name] + scan_params + app_filter_params,
     )
     scans = await cursor.fetchall()
 
@@ -119,4 +147,5 @@ async def get_scanner_detail(db, user, name: str) -> dict:
         "summary": summary,
         "time_series": time_series,
         "labels": labels,
+        "available_apps": available_apps,
     }
