@@ -117,8 +117,26 @@ function ComparisonView({ data, appId }) {
   const filteredVulnCount = filteredMatrix.length;
   const isFiltered = sevFilter.size < ALL_SEVERITIES.length;
 
-  const ScannerHeader = ({ s }) => (
+  // F1 winner — the scanner with the highest F1 (only if it's strictly better
+  // than the runner-up; on ties we don't crown anyone).
+  const winnerIdx = (() => {
+    if (filteredMetrics.length < 2) return -1;
+    let bestIdx = 0;
+    let bestF1 = filteredMetrics[0].f1;
+    let tie = false;
+    for (let i = 1; i < filteredMetrics.length; i++) {
+      const f1 = filteredMetrics[i].f1;
+      if (f1 > bestF1) { bestF1 = f1; bestIdx = i; tie = false; }
+      else if (f1 === bestF1) { tie = true; }
+    }
+    return bestF1 > 0 && !tie ? bestIdx : -1;
+  })();
+
+  const ScannerHeader = ({ s, isWinner }) => (
     <>
+      {isWinner && (
+        <div title="Highest F1" style={{ fontSize: '1rem', lineHeight: 1, marginBottom: '0.15rem' }}>🏆</div>
+      )}
       <Link to={`/scans/${s.scan.id}`}>{s.scan.scanner_name}</Link><br />
       <span className="text-muted text-xs">{s.short_date}</span>
       {s.labels && s.labels.length > 0 && (
@@ -170,7 +188,15 @@ function ComparisonView({ data, appId }) {
             <thead>
               <tr>
                 <th className="sticky-col">Metric</th>
-                {scanners.map(s => <th key={s.scan.id} className="text-center"><ScannerHeader s={s} /></th>)}
+                {scanners.map((s, i) => (
+                  <th
+                    key={s.scan.id}
+                    className="text-center"
+                    style={i === winnerIdx ? { background: 'rgba(249, 115, 22, 0.08)' } : undefined}
+                  >
+                    <ScannerHeader s={s} isWinner={i === winnerIdx} />
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -185,9 +211,18 @@ function ComparisonView({ data, appId }) {
               {['precision', 'recall', 'f1'].map(k => (
                 <tr key={k}>
                   <td className="detail-label sticky-col"><MetricLabel k={k} /></td>
-                  {filteredMetrics.map((m, i) => (
-                    <td key={scanners[i].scan.id} className={`text-center font-mono ${pctColor(m[k])}`}>{(m[k] * 100).toFixed(1)}%</td>
-                  ))}
+                  {filteredMetrics.map((m, i) => {
+                    const isWinnerF1 = k === 'f1' && i === winnerIdx;
+                    return (
+                      <td
+                        key={scanners[i].scan.id}
+                        className={`text-center font-mono ${pctColor(m[k])}`}
+                        style={isWinnerF1 ? { fontWeight: 700, background: 'rgba(249, 115, 22, 0.08)' } : undefined}
+                      >
+                        {(m[k] * 100).toFixed(1)}%
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
               <tr>

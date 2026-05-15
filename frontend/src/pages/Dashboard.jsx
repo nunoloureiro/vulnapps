@@ -723,7 +723,9 @@ function SummaryTable({ scanners, isFiltered }) {
               const m = s.filtered;
               return (
                 <tr key={s.name}>
-                  <td className="sticky-col" style={{ fontWeight: 600 }}>{s.name}</td>
+                  <td className="sticky-col" style={{ fontWeight: 600 }}>
+                    <Link to={'/scanners/' + encodeURIComponent(s.name)}>{s.name}</Link>
+                  </td>
                   <td className="text-center font-mono">{s.app_count}</td>
                   <td className="text-center font-mono">{s.scan_count}</td>
                   <td className="text-center font-mono text-success">{m.tp}</td>

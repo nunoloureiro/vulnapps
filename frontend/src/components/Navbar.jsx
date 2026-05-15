@@ -18,12 +18,11 @@ export default function Navbar() {
           vulnapps
         </Link>
         <ul className="navbar-nav">
+          {user && <li><Link to="/dashboard">Dashboard</Link></li>}
           <li><Link to="/apps">Apps</Link></li>
           {user && (
             <>
-              <li><Link to="/dashboard">Dashboard</Link></li>
               <li><Link to="/scans">Scans</Link></li>
-              <li><Link to="/scanners">Scanners</Link></li>
               <li><Link to="/teams">Teams</Link></li>
               <li><Link to="/account">Account</Link></li>
               {user.role === 'admin' && (
