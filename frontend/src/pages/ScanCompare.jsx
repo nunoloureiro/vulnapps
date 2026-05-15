@@ -163,9 +163,20 @@ function ComparisonView({ data, appId }) {
     const names = { tp: 'True Positives', fp: 'False Positives', fn: 'False Negatives', pending: 'Pending', precision: 'Precision', recall: 'Recall', f1: 'F1 Score' };
     const tip = METRIC_TOOLTIPS[k];
     return (
-      <>{names[k]}{tip && <span className="text-muted text-xs" style={{ marginLeft: 4, cursor: 'help' }} title={tip}>ⓘ</span>}</>
+      <>
+        {names[k]}
+        {tip && (
+          <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>
+            ⓘ
+            <span className="tooltip-text">{tip}</span>
+          </span>
+        )}
+      </>
     );
   };
+
+  const WINNER_BG = 'rgba(249, 115, 22, 0.08)';
+  const winnerStyle = (i) => (i === winnerIdx ? { background: WINNER_BG } : undefined);
 
   return (
     <>
@@ -192,7 +203,7 @@ function ComparisonView({ data, appId }) {
                   <th
                     key={s.scan.id}
                     className="text-center"
-                    style={i === winnerIdx ? { background: 'rgba(249, 115, 22, 0.08)' } : undefined}
+                    style={winnerStyle(i)}
                   >
                     <ScannerHeader s={s} isWinner={i === winnerIdx} />
                   </th>
@@ -204,7 +215,13 @@ function ComparisonView({ data, appId }) {
                 <tr key={k}>
                   <td className="detail-label sticky-col"><MetricLabel k={k} /></td>
                   {filteredMetrics.map((m, i) => (
-                    <td key={scanners[i].scan.id} className={`text-center font-mono ${k === 'tp' ? 'text-success' : k === 'fp' || k === 'fn' ? 'text-error' : 'text-warning'}`}>{m[k]}</td>
+                    <td
+                      key={scanners[i].scan.id}
+                      className={`text-center font-mono ${k === 'tp' ? 'text-success' : k === 'fp' || k === 'fn' ? 'text-error' : 'text-warning'}`}
+                      style={winnerStyle(i)}
+                    >
+                      {m[k]}
+                    </td>
                   ))}
                 </tr>
               ))}
@@ -213,11 +230,13 @@ function ComparisonView({ data, appId }) {
                   <td className="detail-label sticky-col"><MetricLabel k={k} /></td>
                   {filteredMetrics.map((m, i) => {
                     const isWinnerF1 = k === 'f1' && i === winnerIdx;
+                    const baseStyle = winnerStyle(i);
+                    const style = isWinnerF1 ? { ...baseStyle, fontWeight: 700 } : baseStyle;
                     return (
                       <td
                         key={scanners[i].scan.id}
                         className={`text-center font-mono ${pctColor(m[k])}`}
-                        style={isWinnerF1 ? { fontWeight: 700, background: 'rgba(249, 115, 22, 0.08)' } : undefined}
+                        style={style}
                       >
                         {(m[k] * 100).toFixed(1)}%
                       </td>
@@ -225,18 +244,11 @@ function ComparisonView({ data, appId }) {
                   })}
                 </tr>
               ))}
-              <tr>
-                <td className="detail-label sticky-col">Detection Rate</td>
-                {filteredMetrics.map((m, i) => {
-                  const rate = filteredVulnCount > 0 ? m.tp / filteredVulnCount : 0;
-                  return <td key={scanners[i].scan.id} className="text-center font-mono text-accent">{(rate * 100).toFixed(1)}% ({m.tp}/{filteredVulnCount})</td>;
-                })}
-              </tr>
               {scanners.some(s => s.scan.duration != null) && (
                 <tr>
                   <td className="detail-label sticky-col">Duration</td>
-                  {scanners.map(s => (
-                    <td key={s.scan.id} className="text-center font-mono text-secondary">
+                  {scanners.map((s, i) => (
+                    <td key={s.scan.id} className="text-center font-mono text-secondary" style={winnerStyle(i)}>
                       {s.scan.duration != null ? (s.scan.duration >= 60 ? `${Math.floor(s.scan.duration / 60)}m ${s.scan.duration % 60}s` : `${s.scan.duration}s`) : '-'}
                     </td>
                   ))}
@@ -245,16 +257,16 @@ function ComparisonView({ data, appId }) {
               {scanners.some(s => s.scan.tokens != null) && (
                 <tr>
                   <td className="detail-label sticky-col">Tokens</td>
-                  {scanners.map(s => (
-                    <td key={s.scan.id} className="text-center font-mono text-secondary">{s.scan.tokens != null ? s.scan.tokens.toLocaleString() : '-'}</td>
+                  {scanners.map((s, i) => (
+                    <td key={s.scan.id} className="text-center font-mono text-secondary" style={winnerStyle(i)}>{s.scan.tokens != null ? s.scan.tokens.toLocaleString() : '-'}</td>
                   ))}
                 </tr>
               )}
               {scanners.some(s => s.scan.cost != null) && (
                 <tr>
                   <td className="detail-label sticky-col">Cost</td>
-                  {scanners.map(s => (
-                    <td key={s.scan.id} className="text-center font-mono text-secondary">{s.scan.cost != null ? `$${s.scan.cost.toFixed(4)}` : '-'}</td>
+                  {scanners.map((s, i) => (
+                    <td key={s.scan.id} className="text-center font-mono text-secondary" style={winnerStyle(i)}>{s.scan.cost != null ? `$${s.scan.cost.toFixed(4)}` : '-'}</td>
                   ))}
                 </tr>
               )}
