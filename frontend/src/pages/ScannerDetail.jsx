@@ -70,8 +70,6 @@ export default function ScannerDetail() {
   const isFiltered = selectedAppIds.length > 0;
   const ts = buildXLabels(rawTs);
   const m = summary.metrics;
-  const total = m.tp + m.fn;
-  const dr = total > 0 ? m.tp / total : 0;
   const hasCost = ts.some((s) => s.cost != null);
   const hasTokens = ts.some((s) => s.tokens != null);
   const hasDuration = ts.some((s) => s.duration != null);
@@ -123,8 +121,6 @@ export default function ScannerDetail() {
           <span className={`detail-value font-mono ${pctColor(m.recall)}`}>{fmt(m.recall)}</span>
           <span className="detail-label">F1</span>
           <span className={`detail-value font-mono ${pctColor(m.f1)}`}>{fmt(m.f1)}</span>
-          <span className="detail-label">Detection Rate</span>
-          <span className={`detail-value font-mono ${pctColor(dr)}`}>{fmt(dr)}</span>
           {summary.avg_cost != null && (
             <>
               <span className="detail-label">Avg Cost</span>

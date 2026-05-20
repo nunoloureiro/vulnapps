@@ -37,8 +37,7 @@ function computeFilteredMetrics(scanner, selectedSeverities) {
   const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
   const f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
   const total = tp + fn;
-  const detRate = total > 0 ? tp / total : 0;
-  return { tp, fp, fn, precision, recall, f1, detRate, total };
+  return { tp, fp, fn, precision, recall, f1, total };
 }
 
 export default function Dashboard() {
@@ -294,7 +293,6 @@ function ScannerComparisonBars({ scanners, isFiltered }) {
     { key: 'precision', label: 'Precision' },
     { key: 'recall', label: 'Recall' },
     { key: 'f1', label: 'F1 Score' },
-    { key: 'detRate', label: 'Det. Rate' },
   ];
 
   const BAR_HEIGHT = 120;
@@ -715,7 +713,6 @@ function SummaryTable({ scanners, isFiltered }) {
               <th className="text-center">Precision</th>
               <th className="text-center">Recall</th>
               <th className="text-center">F1</th>
-              <th className="text-center">Det. Rate</th>
             </tr>
           </thead>
           <tbody>
@@ -734,7 +731,6 @@ function SummaryTable({ scanners, isFiltered }) {
                   <td className={`text-center font-mono ${pctColor(m.precision)}`}>{fmt(m.precision)}</td>
                   <td className={`text-center font-mono ${pctColor(m.recall)}`}>{fmt(m.recall)}</td>
                   <td className={`text-center font-mono ${pctColor(m.f1)}`}>{fmt(m.f1)}</td>
-                  <td className={`text-center font-mono ${pctColor(m.detRate)}`}>{fmt(m.detRate)}</td>
                 </tr>
               );
             })}
