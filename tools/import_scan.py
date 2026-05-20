@@ -313,7 +313,8 @@ def run_llm_mapping(scan_content: str, vulns: list, model: str, client) -> dict:
 
 
 def run_llm_mapping_cli(scan_content: str, vulns: list) -> dict:
-    """Use Claude Code CLI as fallback when no API key is available."""
+    """Run mapping via the local `claude` CLI. Used when --use-cli is set, or
+    as a fallback when no API key/Vertex config is available."""
     import subprocess
     import shutil
 
@@ -336,7 +337,10 @@ Respond with ONLY valid JSON (no markdown fencing)."""
 
     with Spinner("Analyzing scan with Claude CLI..."):
         result = subprocess.run(
-            ["claude", "-p", prompt, "--output-format", "json", "--max-turns", "1"],
+            ["claude", "-p", prompt,
+             "--output-format", "json",
+             "--max-turns", "1",
+             "--allowedTools", "Read,Glob,Grep"],
             capture_output=True, text=True, timeout=300
         )
 
@@ -652,6 +656,10 @@ def main():
                              "--labels claude-opus-4-6,greybox.")
     parser.add_argument("--provider", choices=["anthropic", "vertex"], default=None,
                         help="LLM provider. Auto-detected from CLAUDE_CODE_USE_VERTEX=1 env var")
+    parser.add_argument("--use-cli", action="store_true",
+                        help="Force using the local `claude` CLI for mapping (with "
+                             "--allowedTools Read,Glob,Grep) instead of the Anthropic/Vertex "
+                             "API. Useful when you don't want to use an API key.")
     parser.add_argument("--vertex-region", default=os.getenv("ANTHROPIC_VERTEX_LOCATION", "us-east5"),
                         help="Vertex AI region (or set ANTHROPIC_VERTEX_LOCATION)")
     parser.add_argument("--vertex-project", default=os.getenv("ANTHROPIC_VERTEX_PROJECT_ID"),
@@ -698,7 +706,13 @@ def main():
     need_llm = not args.probely
 
     if need_llm:
-        if args.provider == "vertex" and args.vertex_project:
+        if args.use_cli:
+            import shutil
+            if not shutil.which("claude"):
+                print(f"  {colored('Error:', 'RED')} --use-cli requested but `claude` binary not found on PATH.", file=sys.stderr)
+                sys.exit(1)
+            use_cli = True
+        elif args.provider == "vertex" and args.vertex_project:
             llm_client = create_anthropic_client("vertex", args.vertex_region, args.vertex_project)
         elif args.provider == "anthropic" and os.getenv("ANTHROPIC_API_KEY"):
             llm_client = create_anthropic_client("anthropic", None, None)
