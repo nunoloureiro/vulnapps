@@ -645,7 +645,11 @@ def main():
     parser.add_argument("--tokens", type=int, default=None, help="Token count (optional, private — auto-captured from LLM if not set)")
     parser.add_argument("--duration", type=int, default=None, help="Scan duration in seconds (optional, private)")
     parser.add_argument("--notes", default="", help="Notes to attach to the scan")
-    parser.add_argument("--model", default=None, help="Claude model (default: claude-sonnet-4-20250514)")
+    parser.add_argument("--model", default=None,
+                        help="Claude model used by the importer for finding-to-vuln mapping "
+                             "(default: claude-sonnet-4-20250514). NOT the model used to run "
+                             "the scan itself — record that with a label, e.g. "
+                             "--labels claude-opus-4-6,greybox.")
     parser.add_argument("--provider", choices=["anthropic", "vertex"], default=None,
                         help="LLM provider. Auto-detected from CLAUDE_CODE_USE_VERTEX=1 env var")
     parser.add_argument("--vertex-region", default=os.getenv("ANTHROPIC_VERTEX_LOCATION", "us-east5"),
