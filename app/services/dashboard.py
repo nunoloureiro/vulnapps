@@ -134,6 +134,19 @@ async def get_dashboard(
             "filters": await _collect_filters(db, user),
         }
 
+    # Total visible scan count per scanner (all history, not just latest-per-app).
+    # Metrics still use latest-per-app to avoid double-counting findings; this
+    # count is just the user-facing "Scans" column so it matches what shows up
+    # on the scanner detail time series and scans list.
+    cursor = await db.execute(
+        f"""SELECT scanner_name, COUNT(*) as cnt
+            FROM scans LEFT JOIN apps ON scans.app_id = apps.id
+            WHERE {scan_vis_clause}{extra_filters}
+            GROUP BY scanner_name""",
+        scan_vis_params + extra_params,
+    )
+    total_scan_counts = {row["scanner_name"]: row["cnt"] for row in await cursor.fetchall()}
+
     # ------------------------------------------------------------------
     # 4. Fetch findings for selected scans
     # ------------------------------------------------------------------
@@ -286,7 +299,7 @@ async def get_dashboard(
 
         scanner_results.append({
             "name": scanner_name,
-            "scan_count": len(scans),
+            "scan_count": total_scan_counts.get(scanner_name, len(scans)),
             "app_count": len(per_app),
             "metrics": {
                 "tp": tp,
