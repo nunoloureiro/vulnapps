@@ -684,7 +684,15 @@ def main():
                         help="Scan start time in 'YYYY-MM-DD HH:MM' (overrides LLM-detected date). "
                              "Plain 'YYYY-MM-DD' also accepted.")
     parser.add_argument("--public", action="store_true", help="Make scan public (default: private)")
-    parser.add_argument("--labels", default="", help="Comma-separated labels (auto-created if missing)")
+    parser.add_argument("--labels", default="",
+                        help="Comma-separated labels (auto-created if missing). "
+                             "Suggested conventions: "
+                             "methodology — blackbox, greybox; "
+                             "model — claude-opus-4-6, claude-opus-4-7, "
+                             "gpt-5.5-cyber-preview, gpt-5.4-cyber; "
+                             "judge — judge-claude-opus-4-7; "
+                             "thinking budget — thinking-medium, thinking-high; "
+                             "tools — used-dast, used-sast.")
     parser.add_argument("--confirm", action="store_true", help="Ask for confirmation before submitting each scan")
     parser.add_argument("--cost", type=float, default=None, help="Scan cost in USD (optional, private — for LLM-based scanners)")
     parser.add_argument("--tokens", type=int, default=None, help="Token count (optional, private — auto-captured from LLM if not set)")
