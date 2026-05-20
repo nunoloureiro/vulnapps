@@ -657,10 +657,95 @@ def parse_scan_start(s: str) -> str:
     raise ValueError(f"--scan-start must be 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD' (got {s!r})")
 
 
+# ── Help ─────────────────────────────────────────────────────
+
+def show_pretty_help():
+    """Colored, grouped help — printed when called with no args or --help."""
+    b, d, r = C.BOLD, C.DIM, C.RESET
+    g, c, y, o = C.GREEN, C.CYAN, C.YELLOW, C.ORANGE
+    print(f"""
+  {b}{c}🛡 Vulnapps Scan Importer{r}
+  {d}─────────────────────────{r}
+
+  {b}Usage:{r} ./scanimport.sh {d}[options]{r}
+
+  {b}Target app{r} {d}(one of){r}{b}:{r}
+    {c}--app-id{r} {d}<id>{r}              Existing app ID in Vulnapps
+    {c}--create-app{r} {d}<dict>{r}        Look up by name+version, create if missing
+                              {d}'{{name:Test, version:1.1, url:..., description:...,{r}
+                              {d} tech:php,mysql, visibility:private}}'{r}
+                              {d}(JSON also accepted; visibility default: private){r}
+
+  {b}Scan source{r} {d}(one of){r}{b}:{r}
+    {c}--dir{r} {d}<path>{r}               Directory containing .md scan files
+    {c}--file{r} {d}<path>{r}              Single .md file
+    {c}--probely{r} {d}<ids>{r}            Probely scan ID(s), comma-separated (max 2)
+
+  {b}Connection:{r}
+    {c}--url{r} {d}<url>{r}                Vulnapps URL (default: $VULNAPPS_URL)
+    {c}--api-key{r} {d}<key>{r}            API key (default: $VULNAPPS_API_KEY)
+
+  {b}Scan metadata:{r}
+    {c}--scanner{r} {d}<name>{r}           Override LLM-detected scanner name
+    {c}--scanner-version{r} {d}<v>{r}      Scanner version, e.g. "2.14.0"
+    {c}--scan-start{r} {d}<when>{r}        Scan start: 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD'
+    {c}--public{r}                    Make scan public (default: private)
+    {c}--labels{r} {d}<list>{r}            Comma-separated labels {d}(auto-created if missing){r}
+                              {d}Conventions:{r}
+                                {d}methodology:{r} {c}blackbox{r}, {c}greybox{r}
+                                {d}model:{r}       {c}claude-opus-4-6{r}, {c}claude-opus-4-7{r},
+                                              {c}gpt-5.5-cyber-preview{r}, {c}gpt-5.4-cyber{r}
+                                {d}judge:{r}       {c}judge-claude-opus-4-7{r}
+                                {d}thinking:{r}    {c}thinking-medium{r}, {c}thinking-high{r}
+                                {d}tools:{r}       {c}used-dast{r}, {c}used-sast{r}
+    {c}--notes{r} {d}<text>{r}             Notes to attach to the scan
+    {c}--cost{r} {d}<usd>{r}               Scan cost in USD {d}(private, for LLM-based scans){r}
+    {c}--tokens{r} {d}<n>{r}               Token count {d}(private, auto-captured if omitted){r}
+    {c}--duration{r} {d}<min>{r}           Scan duration in minutes {d}(private){r}
+
+  {b}LLM mapping{r} {d}(used by the importer to map findings to known vulns){r}{b}:{r}
+    {c}--model{r} {d}<model>{r}            Claude model used by the importer for mapping
+                              {d}(default: claude-sonnet-4-20250514){r}
+                              {d}This is NOT the model used to run the scan itself —{r}
+                              {d}record that with a label (see conventions above).{r}
+    {c}--provider{r} {d}<p>{r}             anthropic|vertex {d}(default: auto from CLAUDE_CODE_USE_VERTEX){r}
+    {c}--vertex-region{r} {d}<r>{r}        Vertex region (default: $ANTHROPIC_VERTEX_LOCATION or us-east5)
+    {c}--vertex-project{r} {d}<p>{r}       GCP project ID (default: $ANTHROPIC_VERTEX_PROJECT_ID)
+    {c}--use-cli{r}                   Force local {y}claude{r} CLI for mapping {d}(--allowedTools{r}
+                              {d}Read,Glob,Grep). No API key required.{r}
+
+  {b}Flow:{r}
+    {c}--dry-run{r}                   Preview the LLM mapping without submitting
+    {c}--confirm{r}                   Ask for confirmation before submitting
+
+  {b}Environment:{r}
+    {d}VULNAPPS_URL{r}                  Vulnapps instance URL
+    {d}VULNAPPS_API_KEY{r}              API key (vuln-mapper scope)
+    {d}ANTHROPIC_API_KEY{r}             Anthropic API key
+    {d}CLAUDE_CODE_USE_VERTEX=1{r}      Use Vertex AI instead
+    {d}ANTHROPIC_VERTEX_PROJECT_ID{r}   GCP project for Vertex
+    {d}ANTHROPIC_VERTEX_LOCATION{r}     Vertex region
+    {d}PROBELY_API_KEY{r}               Probely API key (required for --probely)
+
+  {b}Examples:{r}
+    ./scanimport.sh --dry-run --app-id 1 --dir ./scan-results/
+    ./scanimport.sh --app-id 1 --file ./zap-scan.md
+    ./scanimport.sh --create-app {o}'{{name:juice-shop, version:14}}'{r} --file ./scan.md
+    ./scanimport.sh --app-id 1 --dir ./scans/ --labels {o}"claude-opus-4-7,greybox,used-sast"{r}
+    ./scanimport.sh --app-id 1 --probely abc123,def456
+""")
+
+
 # ── Main ─────────────────────────────────────────────────────
 
 def main():
     C.init()
+
+    # Intercept no-args and --help/-h so we can show a colored grouped help
+    # (argparse's default formatter is plain and ungrouped).
+    if len(sys.argv) == 1 or any(a in ("-h", "--help") for a in sys.argv[1:]):
+        show_pretty_help()
+        return
 
     parser = argparse.ArgumentParser(
         description="Import scan results into Vulnapps with LLM-assisted vulnerability mapping"
