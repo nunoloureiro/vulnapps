@@ -620,28 +620,14 @@ def merge_probely_scans(scan_data_list: list) -> dict:
 # ── Helpers ──────────────────────────────────────────────────
 
 def parse_create_app(s: str) -> dict:
-    """Parse --create-app: accepts JSON or `{key:val, key:val}` shorthand.
+    """Parse --create-app: a JSON object string.
 
-    Shorthand splits on commas, then on the first colon — so values containing
-    colons (e.g. `url:http://example.com`) work correctly.
+    Example: '{"name":"Test","version":"1.1","url":"http://example.com"}'
     """
-    s = s.strip()
     try:
         return json.loads(s)
-    except json.JSONDecodeError:
-        pass
-    if s.startswith("{") and s.endswith("}"):
-        s = s[1:-1]
-    out = {}
-    for pair in s.split(","):
-        pair = pair.strip()
-        if not pair:
-            continue
-        if ":" not in pair:
-            raise ValueError(f"Invalid --create-app entry (need key:value): {pair!r}")
-        k, v = pair.split(":", 1)
-        out[k.strip()] = v.strip()
-    return out
+    except json.JSONDecodeError as e:
+        raise ValueError(f"--create-app must be a JSON object: {e}")
 
 
 def parse_scan_start(s: str) -> str:
@@ -671,10 +657,10 @@ def show_pretty_help():
 
   {b}Target app{r} {d}(one of){r}{b}:{r}
     {c}--app-id{r} {d}<id>{r}              Existing app ID in Vulnapps
-    {c}--create-app{r} {d}<dict>{r}        Look up by name+version, create if missing
-                              {d}'{{name:Test, version:1.1, url:..., description:...,{r}
-                              {d} tech:php,mysql, visibility:private}}'{r}
-                              {d}(JSON also accepted; visibility default: private){r}
+    {c}--create-app{r} {d}<json>{r}        Look up by name+version, create if missing.
+                              {d}JSON object with keys: name (required), version,{r}
+                              {d}url, description, tech, visibility (default: private).{r}
+                              {d}Example:{r} {o}'{{"name":"Test","version":"1.1"}}'{r}
 
   {b}Scan source{r} {d}(one of){r}{b}:{r}
     {c}--dir{r} {d}<path>{r}               Directory containing .md scan files
@@ -730,7 +716,7 @@ def show_pretty_help():
   {b}Examples:{r}
     ./scanimport.sh --dry-run --app-id 1 --dir ./scan-results/
     ./scanimport.sh --app-id 1 --file ./zap-scan.md
-    ./scanimport.sh --create-app {o}'{{name:juice-shop, version:14}}'{r} --file ./scan.md
+    ./scanimport.sh --create-app {o}'{{"name":"juice-shop","version":"14"}}'{r} --file ./scan.md
     ./scanimport.sh --app-id 1 --dir ./scans/ --labels {o}"claude-opus-4-7,greybox,used-sast"{r}
     ./scanimport.sh --app-id 1 --probely abc123,def456
 """)
@@ -755,11 +741,11 @@ def main():
     parser.add_argument("--app-id", type=int, default=None,
                         help="Target app ID. If omitted, --create-app is required and the app is looked up by name+version (created if missing).")
     parser.add_argument("--create-app", default=None,
-                        help="Look-up-or-create app from JSON or shorthand dict, "
-                             "e.g. '{name:Test, version:1.1, url:http://example.com, "
-                             "description:..., tech:php,mysql, visibility:private}'. "
-                             "Keys: name (required), version, url, description, tech, "
-                             "visibility (public|private|team, default private).")
+                        help='Look-up-or-create app from a JSON object, e.g. '
+                             '\'{"name":"Test","version":"1.1","url":"http://example.com",'
+                             '"description":"...","tech":"php,mysql","visibility":"private"}\'. '
+                             'Keys: name (required), version, url, description, tech, '
+                             'visibility (public|private|team, default private).')
     parser.add_argument("--dir", default=None, help="Directory with .md scan result files")
     parser.add_argument("--file", help="Single .md file to import (instead of --dir)")
     parser.add_argument("--probely", default=None, help="Import from Probely: scan ID(s), comma-separated (max 2). Requires PROBELY_API_KEY env var.")
