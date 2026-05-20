@@ -3,6 +3,27 @@ from __future__ import annotations
 from app.visibility import app_visibility_filter, scan_visibility_filter
 
 
+# Label family taxonomy. Mirrors the conventions documented in
+# tools/import_scan.py:--labels help. Keep in sync.
+LABEL_FAMILIES = ("methodology", "model", "judge", "thinking", "tools")
+
+
+def _label_family(label_name: str) -> str | None:
+    """Map a label name to its family, or None if it doesn't match any."""
+    n = (label_name or "").lower()
+    if n in ("blackbox", "greybox"):
+        return "methodology"
+    if n.startswith("judge-"):
+        return "judge"
+    if n.startswith("claude-") or n.startswith("gpt-"):
+        return "model"
+    if n.startswith("thinking-"):
+        return "thinking"
+    if n.startswith("used-"):
+        return "tools"
+    return None
+
+
 def _parse_csv(value: str | None) -> list[str] | None:
     """Parse a comma-separated string into a list, or return None."""
     if not value:
@@ -14,18 +35,25 @@ def _parse_csv(value: str | None) -> list[str] | None:
 async def get_dashboard(
     db, user,
     scanner=None, severity=None, label=None, tech=None,
-    app_id=None, team=None,
+    app_id=None, team=None, group_by=None,
 ) -> dict:
     """Aggregate scanner benchmarking data across all visible apps.
 
     Returns per-scanner metrics (TP/FP/FN/precision/recall/F1),
     breakdowns by severity and app, and available filter options.
+
+    *group_by* (optional): a label family name (methodology, model, judge,
+    thinking, tools). When set, results are keyed by (scanner_name, family_value)
+    instead of just scanner_name — i.e. a scanner that's been run with two
+    different models shows up as two rows. Scans that have no label in the
+    chosen family are dropped from the comparison.
     """
     scanners_filter = _parse_csv(scanner)
     severities_filter = _parse_csv(severity)
     labels_filter = _parse_csv(label)
     techs_filter = _parse_csv(tech)
     app_ids_filter = _parse_csv(app_id)
+    grouping = group_by if group_by in LABEL_FAMILIES else None
 
     # ------------------------------------------------------------------
     # 1. Visible apps (with optional tech / app_id filters)
@@ -113,20 +141,64 @@ async def get_dashboard(
         extra_params.extend(labels_filter)
 
 
-    ranked_sql = f"""
-        WITH ranked AS (
-            SELECT scans.*, ROW_NUMBER() OVER (
-                PARTITION BY scans.scanner_name, scans.app_id
-                ORDER BY scans.scan_date DESC, scans.created_at DESC
-            ) as rn
-            FROM scans
-            LEFT JOIN apps ON scans.app_id = apps.id
-            WHERE {scan_vis_clause}{extra_filters}
-        )
-        SELECT * FROM ranked WHERE rn = 1
+    # Fetch all scans matching filters (ordered newest first). We need this
+    # full set both for the "scan_count" column (all history) and to drive the
+    # latest-per-(scanner, app[, family]) dedup below.
+    all_matching_sql = f"""
+        SELECT scans.*
+        FROM scans
+        LEFT JOIN apps ON scans.app_id = apps.id
+        WHERE {scan_vis_clause}{extra_filters}
+        ORDER BY scans.scan_date DESC, scans.created_at DESC
     """
-    cursor = await db.execute(ranked_sql, scan_vis_params + extra_params)
-    latest_scans = await cursor.fetchall()
+    cursor = await db.execute(all_matching_sql, scan_vis_params + extra_params)
+    all_matching = await cursor.fetchall()
+
+    if not all_matching:
+        return {
+            "scanners": [],
+            "filters": await _collect_filters(db, user),
+        }
+
+    # Derive family_value per scan if grouping. Scans with no label in the
+    # chosen family get None and are excluded from the grouped comparison.
+    family_value_by_scan: dict[int, str] = {}
+    if grouping:
+        all_scan_ids = [s["id"] for s in all_matching]
+        ph = ",".join("?" * len(all_scan_ids))
+        cursor = await db.execute(
+            f"""SELECT sl.scan_id, l.name
+                FROM scan_labels sl JOIN labels l ON sl.label_id = l.id
+                WHERE sl.scan_id IN ({ph})""",
+            all_scan_ids,
+        )
+        labels_by_scan: dict[int, list[str]] = {}
+        for row in await cursor.fetchall():
+            labels_by_scan.setdefault(row["scan_id"], []).append(row["name"])
+        for sid, names in labels_by_scan.items():
+            for name in names:
+                if _label_family(name) == grouping:
+                    family_value_by_scan[sid] = name
+                    break
+
+    # Dedup to latest scan per group key:
+    #   group_by=None     -> key = (scanner_name, app_id)
+    #   group_by=<family> -> key = (scanner_name, app_id, family_value)
+    # all_matching is already in newest-first order, so first-seen wins.
+    latest_scans = []
+    seen_keys: set[tuple] = set()
+    for s in all_matching:
+        if grouping:
+            fv = family_value_by_scan.get(s["id"])
+            if fv is None:
+                continue
+            key = (s["scanner_name"], s["app_id"], fv)
+        else:
+            key = (s["scanner_name"], s["app_id"])
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        latest_scans.append(s)
 
     if not latest_scans:
         return {
@@ -134,18 +206,19 @@ async def get_dashboard(
             "filters": await _collect_filters(db, user),
         }
 
-    # Total visible scan count per scanner (all history, not just latest-per-app).
-    # Metrics still use latest-per-app to avoid double-counting findings; this
-    # count is just the user-facing "Scans" column so it matches what shows up
-    # on the scanner detail time series and scans list.
-    cursor = await db.execute(
-        f"""SELECT scanner_name, COUNT(*) as cnt
-            FROM scans LEFT JOIN apps ON scans.app_id = apps.id
-            WHERE {scan_vis_clause}{extra_filters}
-            GROUP BY scanner_name""",
-        scan_vis_params + extra_params,
-    )
-    total_scan_counts = {row["scanner_name"]: row["cnt"] for row in await cursor.fetchall()}
+    # Total visible scan count per group key (all history, not just latest-per-app).
+    # Metrics still use latest-per-(scanner, app[, family]) to avoid double-counting
+    # findings; this count is just the user-facing "Scans" column.
+    total_scan_counts: dict[tuple, int] = {}
+    for s in all_matching:
+        if grouping:
+            fv = family_value_by_scan.get(s["id"])
+            if fv is None:
+                continue
+            k = (s["scanner_name"], fv)
+        else:
+            k = (s["scanner_name"],)
+        total_scan_counts[k] = total_scan_counts.get(k, 0) + 1
 
     # ------------------------------------------------------------------
     # 4. Fetch findings for selected scans
@@ -164,18 +237,23 @@ async def get_dashboard(
         findings_by_scan.setdefault(f["scan_id"], []).append(f)
 
     # ------------------------------------------------------------------
-    # 5. Aggregate per scanner
+    # 5. Aggregate per group (scanner_name, or (scanner_name, family_value))
     # ------------------------------------------------------------------
-    # Group scans by scanner_name
-    scans_by_scanner: dict[str, list] = {}
+    scans_by_group: dict[tuple, list] = {}
     for s in latest_scans:
-        scans_by_scanner.setdefault(s["scanner_name"], []).append(s)
+        if grouping:
+            gk = (s["scanner_name"], family_value_by_scan[s["id"]])
+        else:
+            gk = (s["scanner_name"],)
+        scans_by_group.setdefault(gk, []).append(s)
 
     # Build app lookup
     app_map = {a["id"]: a for a in visible_apps}
 
     scanner_results = []
-    for scanner_name, scans in sorted(scans_by_scanner.items()):
+    for group_key, scans in sorted(scans_by_group.items()):
+        scanner_name = group_key[0]
+        mode_value = group_key[1] if grouping else None
         # Collect all matched vuln ids across all scans for this scanner
         # keyed by (app_id, matched_vuln_id)
         tp_pairs: set[tuple[int, int]] = set()
@@ -297,9 +375,14 @@ async def get_dashboard(
                 "recall": s["recall"],
             }
 
-        scanner_results.append({
+        avg_cost = round(total_cost / cost_count, 4) if cost_count > 0 else None
+        # value = F1 per $1k (cost-aware quality). None when cost data is missing
+        # or zero (avoid divide-by-zero / spurious infinity).
+        value = round(f1 / (avg_cost / 1000.0), 4) if (avg_cost and avg_cost > 0) else None
+
+        entry = {
             "name": scanner_name,
-            "scan_count": total_scan_counts.get(scanner_name, len(scans)),
+            "scan_count": total_scan_counts.get(group_key, len(scans)),
             "app_count": len(per_app),
             "metrics": {
                 "tp": tp,
@@ -309,14 +392,18 @@ async def get_dashboard(
                 "recall": round(recall, 4),
                 "f1": round(f1, 4),
             },
-            "avg_cost": round(total_cost / cost_count, 4) if cost_count > 0 else None,
+            "avg_cost": avg_cost,
             "avg_tokens": round(total_tokens / tokens_count) if tokens_count > 0 else None,
             "avg_duration": round(total_duration / duration_count) if duration_count > 0 else None,
+            "value": value,
             "by_severity": sev_dict,
             "by_app": sorted(per_app.values(), key=lambda x: x["app_name"]),
-        })
+        }
+        if mode_value is not None:
+            entry["mode"] = mode_value
+        scanner_results.append(entry)
 
-    # Sort scanners by F1 descending
+    # Sort by F1 descending
     scanner_results.sort(key=lambda s: -s["metrics"]["f1"])
 
     return {

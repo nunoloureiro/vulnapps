@@ -23,6 +23,34 @@ const fmt = (v) => (v * 100).toFixed(1) + '%';
 
 const fmtCost = (c) => (c != null ? `$${c.toFixed(4)}` : '-');
 
+const fmtValue = (v) => (v != null ? v.toFixed(2) : '—');
+
+const GROUP_BY_OPTIONS = [
+  { value: '', label: 'No grouping' },
+  { value: 'methodology', label: 'Methodology' },
+  { value: 'model', label: 'Model' },
+  { value: 'judge', label: 'Judge' },
+  { value: 'thinking', label: 'Thinking budget' },
+  { value: 'tools', label: 'Tools used' },
+];
+
+const rowKey = (s) => (s.mode ? `${s.name}|${s.mode}` : s.name);
+const rowLabel = (s) => (s.mode ? `${s.name} · ${s.mode}` : s.name);
+
+/* Pareto frontier on (cost asc, F1 desc): a point is on the frontier if no
+ * other point has BOTH lower cost AND higher F1. Sort by cost asc and keep
+ * points whose F1 strictly exceeds the max F1 seen so far. */
+function paretoFrontier(points) {
+  const valid = points.filter(p => p.cost != null && p.cost > 0 && p.f1 != null);
+  const sorted = [...valid].sort((a, b) => a.cost - b.cost || b.f1 - a.f1);
+  const frontier = [];
+  let bestF1 = -Infinity;
+  for (const p of sorted) {
+    if (p.f1 > bestF1) { frontier.push(p); bestF1 = p.f1; }
+  }
+  return frontier;
+}
+
 function computeFilteredMetrics(scanner, selectedSeverities) {
   let tp = 0;
   let fn = 0;
@@ -56,6 +84,7 @@ export default function Dashboard() {
   const auth = searchParams.get('auth') || '';
   const appFilter = searchParams.get('app') || '';
   const teamFilter = searchParams.get('team') || '';
+  const groupBy = searchParams.get('group_by') || '';
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -68,6 +97,7 @@ export default function Dashboard() {
       if (auth) params.set('auth', auth);
       if (appFilter) params.set('app', appFilter);
       if (teamFilter) params.set('team', teamFilter);
+      if (groupBy) params.set('group_by', groupBy);
       const qs = params.toString();
       const result = await api.get('/dashboard' + (qs ? '?' + qs : ''));
       setData(result);
@@ -76,7 +106,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [scanner, label, tech, auth, appFilter, teamFilter]);
+  }, [scanner, label, tech, auth, appFilter, teamFilter, groupBy]);
 
   useEffect(() => {
     fetchData();
@@ -183,11 +213,11 @@ export default function Dashboard() {
       />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <SummaryTable scanners={filteredScanners} isFiltered={isFiltered} />
+        <SummaryTable scanners={filteredScanners} isFiltered={isFiltered} grouped={!!groupBy} hasCostData={hasCostData} />
         <ScannerComparisonBars scanners={filteredScanners} isFiltered={isFiltered} />
         <SeverityBreakdown scanners={data.scanners} sevFilter={sevFilter} />
         <ScannerAppHeatmap scanners={data.scanners} sevFilter={sevFilter} />
-        {hasCostData && <CostEfficiency scanners={filteredScanners} />}
+        {hasCostData && <CostEfficiency scanners={filteredScanners} grouped={!!groupBy} />}
       </div>
     </div>
   );
@@ -282,6 +312,20 @@ function FilterBar({ filters, searchParams, sevFilter, onToggleSev, onUpdateFilt
           ))}
         </select>
       )}
+
+      <span style={{ width: '1px', height: '20px', background: 'var(--border)', margin: '0 0.25rem' }} />
+
+      <span className="text-muted text-sm" style={{ marginRight: '0.25rem' }}>Group by:</span>
+      <select
+        className="form-select"
+        value={searchParams.get('group_by') || ''}
+        onChange={(e) => onUpdateFilter('group_by', e.target.value)}
+        title="Compare scanners across modes (label families)"
+      >
+        {GROUP_BY_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -314,7 +358,7 @@ function ScannerComparisonBars({ scanners, isFiltered }) {
                 const barH = Math.max(value * BAR_HEIGHT, 2);
                 const color = pctBarColor(value);
                 return (
-                  <div key={s.name} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                  <div key={rowKey(s)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                     <span className="font-mono" style={{ fontSize: '0.625rem', color }}>{fmt(value)}</span>
                     <div
                       style={{
@@ -324,7 +368,7 @@ function ScannerComparisonBars({ scanners, isFiltered }) {
                         borderRadius: '4px 4px 0 0',
                         transition: 'height 0.3s ease',
                       }}
-                      title={`${s.name}: ${fmt(value)}`}
+                      title={`${rowLabel(s)}: ${fmt(value)}`}
                     />
                   </div>
                 );
@@ -333,7 +377,7 @@ function ScannerComparisonBars({ scanners, isFiltered }) {
             <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '4px' }}>
               {scanners.map((s) => (
                 <span
-                  key={s.name}
+                  key={rowKey(s)}
                   className="text-muted"
                   style={{
                     width: 40,
@@ -343,9 +387,9 @@ function ScannerComparisonBars({ scanners, isFiltered }) {
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
                   }}
-                  title={s.name}
+                  title={rowLabel(s)}
                 >
-                  {s.name}
+                  {rowLabel(s)}
                 </span>
               ))}
             </div>
@@ -370,9 +414,9 @@ function SeverityBreakdown({ scanners, sevFilter }) {
       {/* Scanner legend */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
         {scanners.map((s, i) => (
-          <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <div key={rowKey(s)} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <span style={{ width: 10, height: 10, borderRadius: 2, background: SCANNER_COLORS[i % SCANNER_COLORS.length], flexShrink: 0 }} />
-            <span className="text-xs text-muted">{s.name}</span>
+            <span className="text-xs text-muted">{rowLabel(s)}</span>
           </div>
         ))}
       </div>
@@ -402,7 +446,7 @@ function SeverityBreakdown({ scanners, sevFilter }) {
                   const barH = Math.max(recall * BAR_HEIGHT, 2);
                   const color = SCANNER_COLORS[i % SCANNER_COLORS.length];
                   return (
-                    <div key={s.name} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                    <div key={rowKey(s)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                       <span className="font-mono" style={{ fontSize: '0.625rem', color }}>
                         {sevData ? fmt(recall) : '-'}
                       </span>
@@ -415,7 +459,7 @@ function SeverityBreakdown({ scanners, sevFilter }) {
                           transition: 'height 0.3s ease',
                           opacity: sevData ? 1 : 0.3,
                         }}
-                        title={sevData ? `${s.name}: ${fmt(recall)} (${sevData.detected}/${sevData.total})` : `${s.name}: no data`}
+                        title={sevData ? `${rowLabel(s)}: ${fmt(recall)} (${sevData.detected}/${sevData.total})` : `${rowLabel(s)}: no data`}
                       />
                     </div>
                   );
@@ -424,7 +468,7 @@ function SeverityBreakdown({ scanners, sevFilter }) {
               <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '4px' }}>
                 {scanners.map((s) => (
                   <span
-                    key={s.name}
+                    key={rowKey(s)}
                     className="text-muted"
                     style={{
                       width: 40,
@@ -434,9 +478,9 @@ function SeverityBreakdown({ scanners, sevFilter }) {
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
                     }}
-                    title={s.name}
+                    title={rowLabel(s)}
                   >
-                    {s.name}
+                    {rowLabel(s)}
                   </span>
                 ))}
               </div>
@@ -492,7 +536,7 @@ function ScannerAppHeatmap({ scanners, sevFilter }) {
             <tr>
               <th className="sticky-col">App</th>
               {scanners.map((s) => (
-                <th key={s.name} className="text-center">{s.name}</th>
+                <th key={rowKey(s)} className="text-center">{rowLabel(s)}</th>
               ))}
             </tr>
           </thead>
@@ -506,7 +550,7 @@ function ScannerAppHeatmap({ scanners, sevFilter }) {
                   const recall = getAppRecall(s, app.id);
                   return (
                     <td
-                      key={s.name}
+                      key={rowKey(s)}
                       className="text-center font-mono text-sm"
                       style={{
                         background: cellBg(recall),
@@ -532,13 +576,22 @@ function ScannerAppHeatmap({ scanners, sevFilter }) {
 
 /* ---------- Cost Efficiency ---------- */
 
-function CostEfficiency({ scanners }) {
+function CostEfficiency({ scanners, grouped }) {
   const withCost = scanners.filter((s) => s.avg_cost != null && s.avg_cost > 0);
   if (withCost.length === 0) return null;
 
   const maxCost = Math.max(...withCost.map((s) => s.avg_cost));
   const minCost = Math.min(...withCost.map((s) => s.avg_cost));
   const costRange = maxCost - minCost || maxCost || 1;
+
+  const frontier = paretoFrontier(
+    withCost.map((s) => ({ key: rowKey(s), cost: s.avg_cost, f1: s.filtered.f1 }))
+  );
+  const frontierKeys = new Set(frontier.map((p) => p.key));
+
+  const projectX = (cost) => (withCost.length === 1
+    ? 50
+    : ((cost - minCost) / costRange) * 80 + 10);
 
   const DOT_COLORS = [
     'var(--accent)',
@@ -561,7 +614,8 @@ function CostEfficiency({ scanners }) {
     <div className="card">
       <h3 className="card-title mb-2">Cost Efficiency</h3>
       <p className="text-muted text-xs mb-2">
-        Lower cost + higher F1 = top-left is best
+        Lower cost + higher F1 = top-left is best.{' '}
+        <span style={{ color: 'var(--accent)' }}>★</span> = Pareto-optimal (no other point has both lower cost and higher F1).
       </p>
       <div
         style={{
@@ -622,6 +676,17 @@ function CostEfficiency({ scanners }) {
               stroke="var(--border)" strokeWidth="0.5" vectorEffect="non-scaling-stroke"
             />
           ))}
+          {/* Pareto frontier line */}
+          {frontier.length > 1 && (
+            <polyline
+              fill="none"
+              stroke="var(--accent)"
+              strokeWidth="1.2"
+              strokeDasharray="3,3"
+              vectorEffect="non-scaling-stroke"
+              points={frontier.map((p) => `${projectX(p.cost)},${100 - p.f1 * 100}`).join(' ')}
+            />
+          )}
         </svg>
 
         {/* Y axis ticks */}
@@ -644,15 +709,15 @@ function CostEfficiency({ scanners }) {
 
         {/* Dots */}
         {withCost.map((s, i) => {
-          const xPct = withCost.length === 1
-            ? 50
-            : ((s.avg_cost - minCost) / costRange) * 80 + 10;
+          const xPct = projectX(s.avg_cost);
           const yPct = s.filtered.f1 * 100;
           const color = DOT_COLORS[i % DOT_COLORS.length];
+          const isOptimal = frontierKeys.has(rowKey(s));
+          const filteredValue = s.filtered.f1 / (s.avg_cost / 1000);
 
           return (
             <div
-              key={s.name}
+              key={rowKey(s)}
               style={{
                 position: 'absolute',
                 left: `calc(${padL}px + (100% - ${padL + padR}px) * ${xPct / 100})`,
@@ -662,14 +727,14 @@ function CostEfficiency({ scanners }) {
             >
               <div
                 style={{
-                  width: 12,
-                  height: 12,
+                  width: isOptimal ? 14 : 12,
+                  height: isOptimal ? 14 : 12,
                   borderRadius: '50%',
                   background: color,
-                  border: '2px solid var(--bg-panel)',
+                  border: isOptimal ? '2px solid var(--accent)' : '2px solid var(--bg-panel)',
                   boxShadow: `0 0 0 1px ${color}`,
                 }}
-                title={`${s.name}: F1=${fmt(s.filtered.f1)}, Cost=${fmtCost(s.avg_cost)}`}
+                title={`${rowLabel(s)}: F1=${fmt(s.filtered.f1)}, Cost=${fmtCost(s.avg_cost)}, Value=${fmtValue(filteredValue)}${isOptimal ? ' (Pareto-optimal)' : ''}`}
               />
               <span
                 className="text-xs"
@@ -682,7 +747,7 @@ function CostEfficiency({ scanners }) {
                   color,
                 }}
               >
-                {s.name}
+                {isOptimal && <span style={{ color: 'var(--accent)', marginRight: 2 }}>★</span>}{rowLabel(s)}
               </span>
             </div>
           );
@@ -694,7 +759,7 @@ function CostEfficiency({ scanners }) {
 
 /* ---------- Summary Table ---------- */
 
-function SummaryTable({ scanners, isFiltered }) {
+function SummaryTable({ scanners, isFiltered, grouped, hasCostData }) {
   return (
     <div className="card">
       <h3 className="card-title mb-2">
@@ -705,6 +770,7 @@ function SummaryTable({ scanners, isFiltered }) {
           <thead>
             <tr>
               <th className="sticky-col">Scanner</th>
+              {grouped && <th>Mode</th>}
               <th className="text-center">Apps</th>
               <th className="text-center">Scans</th>
               <th className="text-center">TP</th>
@@ -713,16 +779,24 @@ function SummaryTable({ scanners, isFiltered }) {
               <th className="text-center">Precision</th>
               <th className="text-center">Recall</th>
               <th className="text-center">F1</th>
+              {hasCostData && <th className="text-center" title="F1 per $1k of avg cost">Value</th>}
             </tr>
           </thead>
           <tbody>
             {scanners.map((s) => {
               const m = s.filtered;
+              // Value column tracks the filtered F1 so it stays consistent
+              // when the user toggles severity buttons. Derives from avg_cost
+              // (backend) and the per-row filtered F1 (client).
+              const filteredValue = (s.avg_cost && s.avg_cost > 0)
+                ? m.f1 / (s.avg_cost / 1000)
+                : null;
               return (
-                <tr key={s.name}>
+                <tr key={rowKey(s)}>
                   <td className="sticky-col" style={{ fontWeight: 600 }}>
                     <Link to={'/scanners/' + encodeURIComponent(s.name)}>{s.name}</Link>
                   </td>
+                  {grouped && <td className="text-muted text-sm">{s.mode || '—'}</td>}
                   <td className="text-center font-mono">{s.app_count}</td>
                   <td className="text-center font-mono">{s.scan_count}</td>
                   <td className="text-center font-mono text-success">{m.tp}</td>
@@ -731,6 +805,11 @@ function SummaryTable({ scanners, isFiltered }) {
                   <td className={`text-center font-mono ${pctColor(m.precision)}`}>{fmt(m.precision)}</td>
                   <td className={`text-center font-mono ${pctColor(m.recall)}`}>{fmt(m.recall)}</td>
                   <td className={`text-center font-mono ${pctColor(m.f1)}`}>{fmt(m.f1)}</td>
+                  {hasCostData && (
+                    <td className="text-center font-mono" title={filteredValue != null ? `F1 ${m.f1.toFixed(3)} per $1k (avg $${s.avg_cost?.toFixed(4)})` : 'No cost data'}>
+                      {fmtValue(filteredValue)}
+                    </td>
+                  )}
                 </tr>
               );
             })}

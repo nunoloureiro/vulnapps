@@ -14,6 +14,7 @@ async def dashboard(
     tech: str = "",
     app_id: str = "",
     team: str = "",
+    group_by: str = "",
 ):
     user = request.state.user
     db = await get_connection()
@@ -26,6 +27,7 @@ async def dashboard(
             tech=tech or None,
             app_id=app_id or None,
             team=team or None,
+            group_by=group_by or None,
         )
     finally:
         await db.close()

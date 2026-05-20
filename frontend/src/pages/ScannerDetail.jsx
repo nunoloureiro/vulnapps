@@ -25,6 +25,27 @@ const COLORS = {
   tokens: '#8b5cf6',
 };
 
+const fmtValue = (v) => (v != null ? v.toFixed(2) : '—');
+
+// Mirrors app/services/dashboard.py:_label_family. Keep in sync.
+function labelFamily(name) {
+  const n = (name || '').toLowerCase();
+  if (n === 'blackbox' || n === 'greybox') return 'methodology';
+  if (n.startsWith('judge-')) return 'judge';
+  if (n.startsWith('claude-') || n.startsWith('gpt-')) return 'model';
+  if (n.startsWith('thinking-')) return 'thinking';
+  if (n.startsWith('used-')) return 'tools';
+  return null;
+}
+
+const FAMILY_LABELS = {
+  methodology: 'Methodology',
+  model: 'Model',
+  judge: 'Judge',
+  thinking: 'Thinking budget',
+  tools: 'Tools used',
+};
+
 export default function ScannerDetail() {
   const { name } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -218,6 +239,8 @@ export default function ScannerDetail() {
         </div>
       )}
 
+      <ByMode scannerName={name} labels={labels || []} />
+
       {labels?.length > 0 && (
         <div className="card mt-2">
           <h3 className="card-title mb-2">Labels</h3>
@@ -268,6 +291,102 @@ export default function ScannerDetail() {
           </table>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ---------- By Mode (label-family breakdown for this scanner) ---------- */
+
+function ByMode({ scannerName, labels }) {
+  // Which families have at least one label in this scanner's history?
+  const availableFamilies = new Set();
+  for (const l of labels) {
+    const fam = labelFamily(l.name);
+    if (fam) availableFamilies.add(fam);
+  }
+  const familyOptions = Object.keys(FAMILY_LABELS).filter((f) => availableFamilies.has(f));
+
+  const [family, setFamily] = useState('');
+  const [rows, setRows] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!family) { setRows(null); return; }
+    setLoading(true);
+    const qs = new URLSearchParams({ scanner: scannerName, group_by: family });
+    api.get('/dashboard?' + qs.toString())
+      .then((d) => setRows(d.scanners || []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [scannerName, family]);
+
+  if (familyOptions.length === 0) return null;
+
+  const hasCost = (rows || []).some((r) => r.avg_cost != null && r.avg_cost > 0);
+
+  return (
+    <div className="card mt-2">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+        <h3 className="card-title" style={{ margin: 0 }}>By Mode</h3>
+        <select
+          className="form-select"
+          value={family}
+          onChange={(e) => setFamily(e.target.value)}
+        >
+          <option value="">— pick a family —</option>
+          {familyOptions.map((f) => (
+            <option key={f} value={f}>{FAMILY_LABELS[f]}</option>
+          ))}
+        </select>
+      </div>
+      {!family && (
+        <p className="text-muted text-sm">Pick a label family to break this scanner down by mode (e.g. blackbox vs greybox, model A vs model B).</p>
+      )}
+      {family && loading && <p className="text-muted text-sm">Loading…</p>}
+      {family && !loading && rows && rows.length === 0 && (
+        <p className="text-muted text-sm">No scans in this family for this scanner.</p>
+      )}
+      {family && !loading && rows && rows.length > 0 && (
+        <div className="compare-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Mode</th>
+                <th className="text-center">Apps</th>
+                <th className="text-center">Scans</th>
+                <th className="text-center">TP</th>
+                <th className="text-center">FP</th>
+                <th className="text-center">FN</th>
+                <th className="text-center">Precision</th>
+                <th className="text-center">Recall</th>
+                <th className="text-center">F1</th>
+                {hasCost && <th className="text-center">Avg Cost</th>}
+                {hasCost && <th className="text-center" title="F1 per $1k of avg cost">Value</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const m = r.metrics;
+                return (
+                  <tr key={r.mode || r.name}>
+                    <td style={{ fontWeight: 600 }}>{r.mode || '—'}</td>
+                    <td className="text-center font-mono">{r.app_count}</td>
+                    <td className="text-center font-mono">{r.scan_count}</td>
+                    <td className="text-center font-mono text-success">{m.tp}</td>
+                    <td className="text-center font-mono text-error">{m.fp}</td>
+                    <td className="text-center font-mono text-error">{m.fn}</td>
+                    <td className={`text-center font-mono ${pctColor(m.precision)}`}>{fmt(m.precision)}</td>
+                    <td className={`text-center font-mono ${pctColor(m.recall)}`}>{fmt(m.recall)}</td>
+                    <td className={`text-center font-mono ${pctColor(m.f1)}`}>{fmt(m.f1)}</td>
+                    {hasCost && <td className="text-center font-mono">{fmtCost(r.avg_cost)}</td>}
+                    {hasCost && <td className="text-center font-mono">{fmtValue(r.value)}</td>}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
