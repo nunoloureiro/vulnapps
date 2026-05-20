@@ -199,6 +199,9 @@ button.btn-icon, a.btn-icon, .btn-icon { background: transparent !important; bor
 .editable-field:hover { border-bottom: 1px dashed var(--border-hover); }
 .editable-field .edit-icon { opacity: 0; margin-left: 6px; vertical-align: middle; transition: opacity 0.15s; }
 .editable-field:hover .edit-icon { opacity: 1; }
+/* When an editable-field lives inside a table row, hovering anywhere on the
+ * row reveals the pencil — not just the span itself. */
+tr:hover .editable-field .edit-icon { opacity: 1; }
 .inline-input { background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 4px; padding: 0.2rem 0.4rem; font-size: 0.8125rem; font-family: var(--font); width: 100%; }
 .inline-input:focus { outline: none; border-color: var(--accent-hover); box-shadow: 0 0 0 2px var(--accent-dim); }
 select.inline-input { cursor: pointer; }

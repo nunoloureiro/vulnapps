@@ -10,9 +10,21 @@ export default function TeamDetail() {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('view');
   const [error, setError] = useState('');
+  const [editingName, setEditingName] = useState(false);
+  const [draft, setDraft] = useState('');
 
   const load = () => api.get(`/teams/${id}`).then(setData);
   useEffect(() => { load(); }, [id]);
+
+  const startEditName = () => { setDraft(data?.team?.name || ''); setEditingName(true); };
+  const cancelEditName = () => { setEditingName(false); setDraft(''); };
+  const saveEditName = async () => {
+    const newName = draft.trim();
+    if (!newName || newName === data?.team?.name) { cancelEditName(); return; }
+    await api.put(`/teams/${id}`, { name: newName });
+    cancelEditName();
+    load();
+  };
 
   const addMember = async (e) => {
     e.preventDefault();
@@ -45,17 +57,29 @@ export default function TeamDetail() {
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">
-          {team.name}
-          {is_team_admin && (
-            <span className="editable-field" style={{ marginLeft: 8 }} title="Click to rename" onClick={() => {
-              const newName = prompt('Rename team:', team.name);
-              if (newName && newName.trim() && newName.trim() !== team.name) {
-                api.put(`/teams/${id}`, { name: newName.trim() }).then(load);
-              }
-            }}>
-              <svg className="edit-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
-            </span>
+        <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {editingName ? (
+            <>
+              <input
+                className="form-input"
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                autoFocus
+                onKeyDown={e => { if (e.key === 'Enter') saveEditName(); if (e.key === 'Escape') cancelEditName(); }}
+                style={{ fontSize: '1.5rem', padding: '0.25rem 0.5rem', width: 'auto', minWidth: 240 }}
+              />
+              <button className="btn btn-primary btn-sm" onClick={saveEditName}>Save</button>
+              <button className="btn btn-outline btn-sm" onClick={cancelEditName}>Cancel</button>
+            </>
+          ) : (
+            <>
+              {team.name}
+              {is_team_admin && (
+                <span className="editable-field" title="Click to rename" onClick={startEditName}>
+                  <svg className="edit-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                </span>
+              )}
+            </>
           )}
         </h1>
         {is_team_admin && <button className="btn btn-danger btn-sm" onClick={deleteTeam}>Delete Team</button>}

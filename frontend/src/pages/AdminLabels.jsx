@@ -9,9 +9,20 @@ export default function AdminLabels() {
   const [name, setName] = useState('');
   const [color, setColor] = useState(COLORS[0]);
   const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState(null);
+  const [draft, setDraft] = useState('');
 
   const load = () => api.get('/admin/labels').then(d => { setLabels(d.labels || []); setLoading(false); });
   useEffect(load, []);
+
+  const startEdit = (label) => { setDraft(label.name); setEditingId(label.id); };
+  const cancelEdit = () => { setEditingId(null); setDraft(''); };
+  const saveEdit = async (label) => {
+    const newName = draft.trim();
+    if (!newName || newName === label.name) { cancelEdit(); return; }
+    await updateLabel(label.id, { name: newName });
+    cancelEdit();
+  };
 
   const create = async (e) => {
     e.preventDefault();
@@ -72,11 +83,26 @@ export default function AdminLabels() {
                         ))}
                       </div>
                     </td>
-                    <td className="editable-field" onClick={() => {
-                      const newName = prompt('Rename label:', l.name);
-                      if (newName && newName.trim() && newName.trim() !== l.name) updateLabel(l.id, { name: newName.trim() });
-                    }} title="Click to rename">{l.name}
-                      <svg className="edit-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                    <td>
+                      {editingId === l.id ? (
+                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                          <input
+                            className="form-input"
+                            value={draft}
+                            onChange={e => setDraft(e.target.value)}
+                            autoFocus
+                            onKeyDown={e => { if (e.key === 'Enter') saveEdit(l); if (e.key === 'Escape') cancelEdit(); }}
+                            style={{ padding: '2px 6px', fontSize: '0.9rem', width: 'auto', minWidth: 180 }}
+                          />
+                          <button className="btn btn-primary btn-sm" onClick={() => saveEdit(l)} style={{ height: 24, padding: '0 0.4rem', fontSize: '0.7rem' }}>Save</button>
+                          <button className="btn btn-outline btn-sm" onClick={cancelEdit} style={{ height: 24, padding: '0 0.4rem', fontSize: '0.7rem' }}>Cancel</button>
+                        </div>
+                      ) : (
+                        <span className="editable-field" onClick={() => startEdit(l)} title="Click to rename">
+                          {l.name}
+                          <svg className="edit-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                        </span>
+                      )}
                     </td>
                     <td><LabelBadge label={l} /></td>
                     <td className="text-muted">{l.scan_count}</td>
