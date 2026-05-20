@@ -251,6 +251,7 @@ async def submit_scan(request: Request, app_id: int):
     body = await request.json()
 
     scanner_name = body.get("scanner_name", "")
+    scanner_version = body.get("scanner_version") or None
     scan_date = body.get("scan_date", "")
     is_public = 1 if body.get("is_public", True) else 0
     notes = body.get("notes")
@@ -280,6 +281,7 @@ async def submit_scan(request: Request, app_id: int):
         scan_id = await scans_service.submit_scan(
             db, user, app_id,
             scanner_name=scanner_name,
+            scanner_version=scanner_version,
             scan_date=scan_date,
             is_public=is_public,
             notes=notes,

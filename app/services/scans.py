@@ -361,6 +361,7 @@ async def submit_scan(
     duration: int | None,
     findings_data: list[dict],
     labels: list[str] | None = None,
+    scanner_version: str | None = None,
 ) -> int:
     """Create a scan, auto-match findings, apply labels. Returns scan_id."""
     cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))
@@ -371,9 +372,9 @@ async def submit_scan(
     await _check_scan_submit(db, user, app)
 
     cursor = await db.execute(
-        """INSERT INTO scans (app_id, scanner_name, scan_date, is_public, notes, cost, tokens, duration, submitted_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (app_id, scanner_name, scan_date, is_public, notes, cost, tokens, duration, user["sub"]),
+        """INSERT INTO scans (app_id, scanner_name, scanner_version, scan_date, is_public, notes, cost, tokens, duration, submitted_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (app_id, scanner_name, scanner_version, scan_date, is_public, notes, cost, tokens, duration, user["sub"]),
     )
     scan_id = cursor.lastrowid
 
@@ -447,7 +448,7 @@ async def update_scan(db, user, scan_id: int, updates: dict) -> dict:
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
-    allowed = {"scanner_name", "scan_date", "notes", "cost", "tokens", "duration"}
+    allowed = {"scanner_name", "scanner_version", "scan_date", "notes", "cost", "tokens", "duration"}
     clean = {k: v for k, v in updates.items() if k in allowed and v is not None}
 
     if not clean:

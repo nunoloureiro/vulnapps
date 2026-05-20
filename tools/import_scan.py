@@ -430,8 +430,8 @@ def print_mapping_table(mapping: dict, vulns: list):
     print(f"\n  {C.DIM}Summary:{C.RESET} {' / '.join(parts)}")
 
 
-def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_public: bool, notes: str, cost: float | None = None, tokens: int | None = None, duration: int | None = None):
-    """Submit the scan and apply LLM-corrected matches."""
+def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_public: bool, notes: str, cost: float | None = None, tokens: int | None = None, duration: int | None = None, scanner_version: str | None = None):
+    """Submit the scan and apply LLM-corrected matches. `duration` is in SECONDS."""
     findings_payload = []
     for f in mapping.get("findings", []):
         item = {
@@ -454,6 +454,8 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
         "notes": notes,
         "findings": findings_payload,
     }
+    if scanner_version:
+        scan_data["scanner_version"] = scanner_version
     if cost is not None:
         scan_data["cost"] = cost
     if tokens is not None:
@@ -615,6 +617,46 @@ def merge_probely_scans(scan_data_list: list) -> dict:
     }
 
 
+# ── Helpers ──────────────────────────────────────────────────
+
+def parse_create_app(s: str) -> dict:
+    """Parse --create-app: accepts JSON or `{key:val, key:val}` shorthand.
+
+    Shorthand splits on commas, then on the first colon — so values containing
+    colons (e.g. `url:http://example.com`) work correctly.
+    """
+    s = s.strip()
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+    if s.startswith("{") and s.endswith("}"):
+        s = s[1:-1]
+    out = {}
+    for pair in s.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if ":" not in pair:
+            raise ValueError(f"Invalid --create-app entry (need key:value): {pair!r}")
+        k, v = pair.split(":", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+def parse_scan_start(s: str) -> str:
+    """Parse --scan-start. Accepts 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD'.
+    Returns a normalized 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD' string.
+    """
+    from datetime import datetime as _dt
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return _dt.strptime(s, fmt).strftime(fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"--scan-start must be 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD' (got {s!r})")
+
+
 # ── Main ─────────────────────────────────────────────────────
 
 def main():
@@ -626,28 +668,27 @@ def main():
     parser.add_argument("--url", default=os.getenv("VULNAPPS_URL"), help="Vulnapps instance URL (or set VULNAPPS_URL)")
     parser.add_argument("--api-key", default=os.getenv("VULNAPPS_API_KEY"), help="API key (or set VULNAPPS_API_KEY)")
     parser.add_argument("--app-id", type=int, default=None,
-                        help="Target app ID. If omitted, --app-name is required and the app is looked up by name+version (created if missing).")
-    parser.add_argument("--app-name", default=None,
-                        help="App name for lookup/creation when --app-id is omitted")
-    parser.add_argument("--app-version", default="",
-                        help="App version for lookup/creation (default: empty)")
-    parser.add_argument("--app-url", default=None, help="App URL (used only when creating)")
-    parser.add_argument("--app-description", default=None, help="App description (used only when creating)")
-    parser.add_argument("--app-tech", default="", help="Comma-separated tech stack (used only when creating)")
-    parser.add_argument("--app-visibility", default="private",
-                        choices=["public", "private", "team"],
-                        help="Visibility when creating the app (default: private)")
+                        help="Target app ID. If omitted, --create-app is required and the app is looked up by name+version (created if missing).")
+    parser.add_argument("--create-app", default=None,
+                        help="Look-up-or-create app from JSON or shorthand dict, "
+                             "e.g. '{name:Test, version:1.1, url:http://example.com, "
+                             "description:..., tech:php,mysql, visibility:private}'. "
+                             "Keys: name (required), version, url, description, tech, "
+                             "visibility (public|private|team, default private).")
     parser.add_argument("--dir", default=None, help="Directory with .md scan result files")
     parser.add_argument("--file", help="Single .md file to import (instead of --dir)")
     parser.add_argument("--probely", default=None, help="Import from Probely: scan ID(s), comma-separated (max 2). Requires PROBELY_API_KEY env var.")
     parser.add_argument("--scanner", default=None, help="Scanner name (overrides LLM-detected name)")
-    parser.add_argument("--scan-date", default=None, help="Scan date in YYYY-MM-DD (overrides LLM-detected date)")
+    parser.add_argument("--scanner-version", default=None, help="Scanner version, e.g. '2.14.0'")
+    parser.add_argument("--scan-start", default=None,
+                        help="Scan start time in 'YYYY-MM-DD HH:MM' (overrides LLM-detected date). "
+                             "Plain 'YYYY-MM-DD' also accepted.")
     parser.add_argument("--public", action="store_true", help="Make scan public (default: private)")
     parser.add_argument("--labels", default="", help="Comma-separated labels (auto-created if missing)")
     parser.add_argument("--confirm", action="store_true", help="Ask for confirmation before submitting each scan")
     parser.add_argument("--cost", type=float, default=None, help="Scan cost in USD (optional, private — for LLM-based scanners)")
     parser.add_argument("--tokens", type=int, default=None, help="Token count (optional, private — auto-captured from LLM if not set)")
-    parser.add_argument("--duration", type=int, default=None, help="Scan duration in seconds (optional, private)")
+    parser.add_argument("--duration", type=float, default=None, help="Scan duration in minutes (optional, private)")
     parser.add_argument("--notes", default="", help="Notes to attach to the scan")
     parser.add_argument("--model", default=None,
                         help="Claude model used by the importer for finding-to-vuln mapping "
@@ -679,17 +720,32 @@ def main():
         print(f"  {colored('Error:', 'RED')} One of --dir, --file, or --probely is required", file=sys.stderr)
         sys.exit(1)
 
-    if args.app_id is None and not args.app_name:
-        print(f"  {colored('Error:', 'RED')} Either --app-id or --app-name is required", file=sys.stderr)
+    if args.app_id is None and not args.create_app:
+        print(f"  {colored('Error:', 'RED')} Either --app-id or --create-app is required", file=sys.stderr)
         sys.exit(1)
 
-    # Validate --scan-date format
-    if args.scan_date:
+    # Parse --create-app dict (and validate `name` is present)
+    create_app = None
+    if args.create_app:
         try:
-            from datetime import datetime as _dt
-            _dt.strptime(args.scan_date, "%Y-%m-%d")
-        except ValueError:
-            print(f"  {colored('Error:', 'RED')} --scan-date must be in YYYY-MM-DD format", file=sys.stderr)
+            create_app = parse_create_app(args.create_app)
+        except (ValueError, json.JSONDecodeError) as e:
+            print(f"  {colored('Error:', 'RED')} --create-app: {e}", file=sys.stderr)
+            sys.exit(1)
+        if not create_app.get("name"):
+            print(f"  {colored('Error:', 'RED')} --create-app requires 'name' key", file=sys.stderr)
+            sys.exit(1)
+        vis = create_app.get("visibility", "private")
+        if vis not in ("public", "private", "team"):
+            print(f"  {colored('Error:', 'RED')} --create-app visibility must be public|private|team (got {vis!r})", file=sys.stderr)
+            sys.exit(1)
+
+    # Validate and normalize --scan-start
+    if args.scan_start:
+        try:
+            args.scan_start = parse_scan_start(args.scan_start)
+        except ValueError as e:
+            print(f"  {colored('Error:', 'RED')} {e}", file=sys.stderr)
             sys.exit(1)
 
     # Determine LLM mode
@@ -740,34 +796,36 @@ def main():
         provider_label = f"vertex/{args.vertex_region}" if args.provider == "vertex" else "anthropic"
         print(f"  {colored('✓', 'GREEN')} LLM: {colored(args.model, 'CYAN')} {C.DIM}via {provider_label}{C.RESET}")
 
-    # Resolve app_id: lookup or create from --app-name if not given explicitly
+    # Resolve app_id: lookup or create from --create-app if not given explicitly
     if args.app_id is None:
+        app_name = create_app["name"]
+        app_version = create_app.get("version", "")
         try:
-            with Spinner(f"Looking up app '{args.app_name}'..."):
-                existing = client.find_app(args.app_name, args.app_version)
+            with Spinner(f"Looking up app '{app_name}'..."):
+                existing = client.find_app(app_name, app_version)
         except httpx.HTTPStatusError as e:
             print(f"  {colored('✗', 'RED')} App lookup failed: {e.response.status_code}", file=sys.stderr)
             sys.exit(1)
 
         if existing:
             args.app_id = existing["id"]
-            print(f"  {colored('✓', 'GREEN')} Found existing app: {colored(args.app_name, 'BOLD')} {C.DIM}(id {args.app_id}){C.RESET}")
+            print(f"  {colored('✓', 'GREEN')} Found existing app: {colored(app_name, 'BOLD')} {C.DIM}(id {args.app_id}){C.RESET}")
         else:
             payload = {
-                "name": args.app_name,
-                "version": args.app_version,
-                "visibility": args.app_visibility,
-                "tech_stack": args.app_tech,
+                "name": app_name,
+                "version": app_version,
+                "visibility": create_app.get("visibility", "private"),
+                "tech_stack": create_app.get("tech", ""),
             }
-            if args.app_url:
-                payload["url"] = args.app_url
-            if args.app_description:
-                payload["description"] = args.app_description
+            if create_app.get("url"):
+                payload["url"] = create_app["url"]
+            if create_app.get("description"):
+                payload["description"] = create_app["description"]
             try:
-                with Spinner(f"Creating app '{args.app_name}'..."):
+                with Spinner(f"Creating app '{app_name}'..."):
                     new_app = client.create_app(payload)
                 args.app_id = new_app["id"]
-                print(f"  {colored('✓', 'GREEN')} Created app: {colored(args.app_name, 'BOLD')} {C.DIM}(id {args.app_id}){C.RESET}")
+                print(f"  {colored('✓', 'GREEN')} Created app: {colored(app_name, 'BOLD')} {C.DIM}(id {args.app_id}){C.RESET}")
             except httpx.HTTPStatusError as e:
                 print(f"  {colored('✗', 'RED')} App creation failed: {e.response.status_code} {e.response.text}", file=sys.stderr)
                 sys.exit(1)
@@ -832,14 +890,15 @@ def main():
         # Build mapping (same structure as LLM output, but without LLM)
         mapping = {
             "scanner_name": args.scanner or merged["scanner_name"],
-            "scan_date": args.scan_date or merged["scan_date"],
+            "scan_date": args.scan_start or merged["scan_date"],
             "findings": [
                 {**f, "matched_vuln_db_id": None, "is_false_positive": False, "reasoning": "Direct import from Probely"}
                 for f in merged["findings"]
             ],
         }
 
-        duration = args.duration or merged.get("duration")
+        # --duration is minutes; backend expects seconds. Probely auto-capture is already seconds.
+        duration = int(args.duration * 60) if args.duration is not None else merged.get("duration")
 
         print_header(f"Probely Import — {len(merged['findings'])} findings")
         print_mapping_table(mapping, vulns)
@@ -859,7 +918,7 @@ def main():
                 return
 
         try:
-            scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost, args.tokens, duration)
+            scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost, args.tokens, duration, args.scanner_version)
             for label_name in label_names:
                 client.add_label(scan_id, label_name)
             if label_names:
@@ -927,8 +986,8 @@ def main():
 
     if args.scanner:
         mapping["scanner_name"] = args.scanner
-    if args.scan_date:
-        mapping["scan_date"] = args.scan_date
+    if args.scan_start:
+        mapping["scan_date"] = args.scan_start
 
     print_mapping_table(mapping, vulns)
 
@@ -949,7 +1008,9 @@ def main():
 
     try:
         tokens = args.tokens or mapping.get("_llm_tokens")
-        scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost, tokens, args.duration)
+        # --duration is minutes; backend expects seconds.
+        duration_s = int(args.duration * 60) if args.duration is not None else None
+        scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost, tokens, duration_s, args.scanner_version)
         for label_name in label_names:
             client.add_label(scan_id, label_name)
         if label_names:
