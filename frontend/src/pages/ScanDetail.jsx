@@ -194,6 +194,13 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
   const [promoteError, setPromoteError] = useState('');
   const [expanded, setExpanded] = useState(() => new Set());
 
+  useEffect(() => {
+    if (!promoting) return;
+    const onKey = (e) => { if (e.key === 'Escape') setPromoting(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [promoting]);
+
   const toggleExpanded = (fid) => {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -269,7 +276,6 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                   const location = f.url || f.filename || '-';
                   const locationDisplay = f.http_method ? `${f.http_method} ${location}` : location;
                   const matchedVuln = f.matched_vuln_id ? knownVulns.find(v => v.id === f.matched_vuln_id) : null;
-                  const isPromoting = promoting && promoting.findingId === f.id;
                   const hasDetails = !!(f.title || f.severity || f.description || f.poc || f.remediation || f.code_location);
                   const isExpanded = expanded.has(f.id);
                   return (
@@ -325,11 +331,11 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                         {canEdit && !f.is_false_positive && (
                           <button className="btn btn-outline btn-sm" onClick={() => markFP(f.id)} title="Mark as False Positive">FP</button>
                         )}
-                        {canEdit && !f.matched_vuln_id && !f.is_false_positive && (
+                        {canEdit && !f.matched_vuln_id && (
                           <button className="btn btn-outline btn-sm"
-                            onClick={() => isPromoting ? setPromoting(null) : openPromote(f)}
-                            title="Promote to known vulnerability">
-                            {isPromoting ? 'Cancel' : '+ Vuln'}
+                            onClick={() => openPromote(f)}
+                            title={f.is_false_positive ? 'Promote FP to a real vulnerability' : 'Promote to known vulnerability'}>
+                            + Vuln
                           </button>
                         )}
                       </div>
@@ -344,22 +350,6 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                       </td>
                     </tr>
                   )}
-                  {isPromoting && (
-                    <tr>
-                      <td colSpan="6" style={{ padding: '0.75rem 0' }}>
-                        <div className="card">
-                          <h3 className="card-title mb-2">Promote to Vulnerability</h3>
-                          <PromoteForm
-                            draft={promoting.draft}
-                            onChange={updateDraft}
-                            onSubmit={submitPromote}
-                            onCancel={() => setPromoting(null)}
-                            error={promoteError}
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  )}
                   </React.Fragment>
                   );
                 })}
@@ -368,6 +358,25 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
           </div>
         </div>
       ) : <div className="empty-state"><p>No findings in this scan.</p></div>}
+
+      {promoting && (
+        <div className="modal-backdrop" onClick={() => setPromoting(null)}>
+          <div
+            className="modal"
+            style={{ maxWidth: 720, maxHeight: '90vh', overflowY: 'auto' }}
+            onClick={e => e.stopPropagation()}>
+            <button type="button" className="modal-close" onClick={() => setPromoting(null)} aria-label="Close">×</button>
+            <h3 className="card-title mb-2">Promote to Vulnerability</h3>
+            <PromoteForm
+              draft={promoting.draft}
+              onChange={updateDraft}
+              onSubmit={submitPromote}
+              onCancel={() => setPromoting(null)}
+              error={promoteError}
+            />
+          </div>
+        </div>
+      )}
     </>
   );
 }
