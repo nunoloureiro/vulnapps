@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
@@ -13,6 +13,8 @@ export default function ScansList() {
   const [loading, setLoading] = useState(true);
   const [teams, setTeams] = useState([]);
   const [bulkLabel, setBulkLabel] = useState('');
+  const [sortKey, setSortKey] = useState('date');
+  const [sortDir, setSortDir] = useState('desc');
 
   const params = {
     app_id: searchParams.get('app_id') || '',
@@ -42,10 +44,46 @@ export default function ScansList() {
   };
 
   const hasFilters = Object.values(params).some(v => v);
-  const scans = data?.scans || [];
+  const rawScans = data?.scans || [];
   const labelsMap = data?.scan_labels_map || {};
 
   const appId = params.app_id;
+
+  const scans = useMemo(() => {
+    const getVal = (s) => {
+      switch (sortKey) {
+        case 'scanner': return (s.scanner_name || '').toLowerCase();
+        case 'app': return `${(s.app_name || '').toLowerCase()} ${s.app_version || ''}`;
+        case 'tp': return s.tp_count ?? -1;
+        case 'fp': return s.fp_count ?? -1;
+        case 'date':
+        default: return s.scan_date || '';
+      }
+    };
+    const sorted = [...rawScans].sort((a, b) => {
+      const av = getVal(a); const bv = getVal(b);
+      if (av < bv) return -1;
+      if (av > bv) return 1;
+      return 0;
+    });
+    if (sortDir === 'desc') sorted.reverse();
+    return sorted;
+  }, [rawScans, sortKey, sortDir]);
+
+  const toggleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir(key === 'date' || key === 'tp' || key === 'fp' ? 'desc' : 'asc');
+    }
+  };
+  const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+  const sortableTh = (key, label, extraProps = {}) => (
+    <th {...extraProps} onClick={() => toggleSort(key)} style={{ cursor: 'pointer', userSelect: 'none', ...(extraProps.style || {}) }}>
+      {label}{sortArrow(key)}
+    </th>
+  );
   const toggleSelect = (id) => {
     setSelected(prev => {
       const next = new Set(prev);
@@ -145,11 +183,11 @@ export default function ScansList() {
                       }}
                       style={{ accentColor: 'var(--accent)', width: 16, height: 16, cursor: 'pointer' }} />
                   </th>}
-                  <th>Scanner</th>
-                  {!appId && <th>App</th>}
-                  <th>Date</th>
-                  <th>TP</th>
-                  <th>FP</th>
+                  {sortableTh('scanner', 'Scanner')}
+                  {!appId && sortableTh('app', 'App')}
+                  {sortableTh('date', 'Date')}
+                  {sortableTh('tp', 'TP')}
+                  {sortableTh('fp', 'FP')}
                   <th>Labels</th>
                   {user && <th style={{ width: 40 }}></th>}
                 </tr>
