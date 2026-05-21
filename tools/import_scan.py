@@ -110,6 +110,12 @@ class Spinner:
             self._thread.join()
 
 
+class LLMCallError(Exception):
+    """Raised by run_llm_mapping* on a recoverable failure (subprocess
+    non-zero exit, API error, malformed JSON). Caller decides whether to
+    retry or surface the error to the user."""
+
+
 # ── Prompt ───────────────────────────────────────────────────
 
 SYSTEM_PROMPT_MAP = """\
@@ -419,24 +425,18 @@ Respond with ONLY valid JSON (no markdown fencing)."""
 
     if result.returncode != 0:
         # The CLI with --output-format json puts errors in the stdout JSON
-        # envelope (is_error / result fields), not stderr — so dump both, and
-        # try to surface the JSON error message specifically.
-        print(f"  {colored('Error:', 'RED')} Claude CLI failed (exit {result.returncode})", file=sys.stderr)
+        # envelope (is_error / result fields), not stderr.
         stderr = (result.stderr or "").strip()
         stdout = (result.stdout or "").strip()
+        msg = None
         try:
             env = json.loads(stdout) if stdout else None
             if isinstance(env, dict):
                 msg = env.get("result") or env.get("error") or env.get("message")
-                if msg:
-                    print(f"  {C.DIM}cli message:{C.RESET} {str(msg)[:1000]}", file=sys.stderr)
         except json.JSONDecodeError:
             pass
-        if stderr:
-            print(f"  {C.DIM}stderr:{C.RESET}\n{stderr[:2000]}", file=sys.stderr)
-        if stdout and (not stderr):
-            print(f"  {C.DIM}stdout:{C.RESET}\n{stdout[:2000]}", file=sys.stderr)
-        sys.exit(1)
+        detail = (str(msg)[:1000] if msg else (stderr[:2000] or stdout[:2000] or ""))
+        raise LLMCallError(f"Claude CLI failed (exit {result.returncode}): {detail}")
 
     # Parse the CLI output - it returns JSON with a "result" field
     try:
@@ -794,6 +794,8 @@ def show_pretty_help():
   {b}Flow:{r}
     {c}--dry-run{r}                   Preview the LLM mapping without submitting
     {c}--confirm{r}                   Ask for confirmation before submitting
+    {c}--resume{r}                    Resume a partial chunked import from
+                              {d}<dir>/.scanimport-checkpoint.json{r}
 
   {b}Environment:{r}
     {d}VULNAPPS_URL{r}                  Vulnapps instance URL
@@ -877,6 +879,11 @@ def main():
     parser.add_argument("--vertex-project", default=os.getenv("ANTHROPIC_VERTEX_PROJECT_ID"),
                         help="Google Cloud project ID (or set ANTHROPIC_VERTEX_PROJECT_ID)")
     parser.add_argument("--dry-run", action="store_true", help="Show mapping without submitting")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume a partial chunked import. Looks for "
+                             "<dir>/.scanimport-checkpoint.json, written after every "
+                             "chunk in multi-file mode and deleted on successful "
+                             "submission. Already-processed files are skipped.")
     args = parser.parse_args()
 
     if not args.url:
@@ -1172,25 +1179,74 @@ def main():
     else:
         print_header(f"Processing {len(file_parts)} file(s)")
 
-    def _call_llm(content: str, spinner_msg: str | None = None) -> dict:
+    def _call_llm_once(content: str, spinner_msg: str | None = None) -> dict:
+        """Single attempt — raises LLMCallError on any failure."""
         try:
             if use_cli:
                 return run_llm_mapping_cli(content, vulns, spinner_msg=spinner_msg)
             return run_llm_mapping(content, vulns, args.model, llm_client, spinner_msg=spinner_msg)
+        except LLMCallError:
+            raise
         except json.JSONDecodeError as e:
-            print(f"  {colored('✗', 'RED')} LLM returned invalid JSON: {e}", file=sys.stderr)
-            sys.exit(1)
+            raise LLMCallError(f"LLM returned invalid JSON: {e}")
         except Exception as e:
-            if "anthropic" in type(e).__module__ if hasattr(type(e), '__module__') else False:
-                print(f"  {colored('✗', 'RED')} Claude API error: {e}", file=sys.stderr)
-            else:
-                print(f"  {colored('✗', 'RED')} LLM error: {e}", file=sys.stderr)
-            sys.exit(1)
+            cls = type(e)
+            mod = getattr(cls, "__module__", "") or ""
+            label = "Claude API error" if "anthropic" in mod else "LLM error"
+            raise LLMCallError(f"{label}: {e}")
+
+    def _call_llm(content: str, spinner_msg: str | None = None) -> dict:
+        """One retry after a 30s backoff on any LLMCallError. Rate limits
+        and transient network blips usually clear in that window."""
+        import time as _time
+        try:
+            return _call_llm_once(content, spinner_msg=spinner_msg)
+        except LLMCallError as e:
+            print(f"  {colored('⚠', 'YELLOW')} {e}", file=sys.stderr)
+            print(f"  {C.DIM}Retrying once in 30s...{C.RESET}", file=sys.stderr)
+            _time.sleep(30)
+            try:
+                return _call_llm_once(content, spinner_msg=(spinner_msg or "") + " (retry)")
+            except LLMCallError as e2:
+                # Re-raise so the chunked path can checkpoint + exit cleanly.
+                raise
+
+    # Checkpoint path (chunked mode only; only --dir creates multiple files).
+    checkpoint_path = None
+    if chunked and args.dir:
+        checkpoint_path = Path(args.dir) / ".scanimport-checkpoint.json"
 
     if chunked:
         mapping = {"scanner_name": "", "scan_date": "", "findings": [], "_llm_tokens": 0}
+        processed: set[str] = set()
+
+        # Load checkpoint if --resume.
+        if args.resume and checkpoint_path and checkpoint_path.exists():
+            try:
+                ck = json.loads(checkpoint_path.read_text())
+                mapping = ck.get("mapping") or mapping
+                processed = set(ck.get("processed_files") or [])
+                print(f"  {colored('↻', 'CYAN')} Resumed: {colored(str(len(processed)), 'BOLD')} file(s) already processed, "
+                      f"{colored(str(len(mapping.get('findings') or [])), 'BOLD')} finding(s) carried over")
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"  {colored('⚠', 'YELLOW')} Could not read checkpoint at {checkpoint_path}: {e}", file=sys.stderr)
+                print(f"  {C.DIM}Starting fresh.{C.RESET}", file=sys.stderr)
+
         for idx, (fname, content) in enumerate(file_parts, 1):
-            partial = _call_llm(content, spinner_msg=f"Analyzing {fname} ({idx}/{len(file_parts)})...")
+            if fname in processed:
+                print(f"  {colored('⏭', 'CYAN')} Skipping {fname} ({idx}/{len(file_parts)}) — already in checkpoint")
+                continue
+            try:
+                partial = _call_llm(content, spinner_msg=f"Analyzing {fname} ({idx}/{len(file_parts)})...")
+            except LLMCallError as e:
+                print(f"  {colored('✗', 'RED')} {e}", file=sys.stderr)
+                if checkpoint_path:
+                    print(
+                        f"  {C.DIM}Partial results saved to {checkpoint_path}.{C.RESET}\n"
+                        f"  {C.DIM}Resume with: ./scanimport.sh ... --resume{C.RESET}",
+                        file=sys.stderr,
+                    )
+                sys.exit(1)
             # First non-empty wins for scanner_name / scan_date; explicit
             # --scanner / --scan-start overrides apply below.
             if not mapping["scanner_name"] and partial.get("scanner_name"):
@@ -1199,14 +1255,25 @@ def main():
                 mapping["scan_date"] = partial["scan_date"]
             mapping["findings"].extend(partial.get("findings", []) or [])
             mapping["_llm_tokens"] += partial.get("_llm_tokens") or 0
+            processed.add(fname)
+            # Checkpoint after every successful chunk.
+            if checkpoint_path:
+                try:
+                    checkpoint_path.write_text(json.dumps({
+                        "processed_files": sorted(processed),
+                        "mapping": mapping,
+                    }, indent=2))
+                except OSError as e:
+                    print(f"  {colored('⚠', 'YELLOW')} Could not write checkpoint: {e}", file=sys.stderr)
         print(f"  {colored('✓', 'GREEN')} Extracted {colored(str(len(mapping['findings'])), 'BOLD')} findings across {len(file_parts)} file(s)")
     else:
-        # Single-call path (mapping mode, or extract-only with one file).
-        if len(file_parts) > 1:
-            combined = "\n\n".join(f"# ── {name} ──\n\n{content}" for name, content in file_parts)
-        else:
-            combined = file_parts[0][1]
-        mapping = _call_llm(combined)
+        # Single-call path (only one file present).
+        combined = file_parts[0][1]
+        try:
+            mapping = _call_llm(combined)
+        except LLMCallError as e:
+            print(f"  {colored('✗', 'RED')} {e}", file=sys.stderr)
+            sys.exit(1)
 
     if args.scanner:
         mapping["scanner_name"] = args.scanner
@@ -1243,6 +1310,13 @@ def main():
     except httpx.HTTPStatusError as e:
         print(f"  {colored('✗', 'RED')} Submit failed: {e.response.status_code} {e.response.text}", file=sys.stderr)
         sys.exit(1)
+
+    # Successful submission — clear checkpoint so a future run starts fresh.
+    if checkpoint_path and checkpoint_path.exists():
+        try:
+            checkpoint_path.unlink()
+        except OSError:
+            pass
 
     print(f"\n  {colored('Done.', 'GREEN')}\n")
 
