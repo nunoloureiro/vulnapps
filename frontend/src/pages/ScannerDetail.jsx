@@ -347,45 +347,52 @@ function ByMode({ scannerName, labels }) {
         <p className="text-muted text-sm">No scans in this family for this scanner.</p>
       )}
       {family && !loading && rows && rows.length > 0 && (
-        <div className="compare-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Mode</th>
-                <th className="text-center">Apps</th>
-                <th className="text-center">Scans</th>
-                <th className="text-center">TP</th>
-                <th className="text-center">FP</th>
-                <th className="text-center">FN</th>
-                <th className="text-center">Precision</th>
-                <th className="text-center">Recall</th>
-                <th className="text-center">F1</th>
-                {hasCost && <th className="text-center">Avg Cost</th>}
-                {hasCost && <th className="text-center" title="F1 per $1k of avg cost">Value</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const m = r.metrics;
-                return (
-                  <tr key={r.mode || r.name}>
-                    <td style={{ fontWeight: 600 }}>{r.mode || '—'}</td>
-                    <td className="text-center font-mono">{r.app_count}</td>
-                    <td className="text-center font-mono">{r.scan_count}</td>
-                    <td className="text-center font-mono text-success">{m.tp}</td>
-                    <td className="text-center font-mono text-error">{m.fp}</td>
-                    <td className="text-center font-mono text-error">{m.fn}</td>
-                    <td className={`text-center font-mono ${pctColor(m.precision)}`}>{fmt(m.precision)}</td>
-                    <td className={`text-center font-mono ${pctColor(m.recall)}`}>{fmt(m.recall)}</td>
-                    <td className={`text-center font-mono ${pctColor(m.f1)}`}>{fmt(m.f1)}</td>
-                    {hasCost && <td className="text-center font-mono">{fmtCost(r.avg_cost)}</td>}
-                    {hasCost && <td className="text-center font-mono">{fmtValue(r.value)}</td>}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          {hasCost && (
+            <p className="text-muted text-xs mb-2">
+              <strong>F1 / $1k</strong> = F1 score per $1,000 of average scan cost. Higher = better value for money.
+            </p>
+          )}
+          <div className="compare-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Mode</th>
+                  <th className="text-center">Apps</th>
+                  <th className="text-center">Scans</th>
+                  <th className="text-center">TP</th>
+                  <th className="text-center">FP</th>
+                  <th className="text-center">FN</th>
+                  <th className="text-center">Precision</th>
+                  <th className="text-center">Recall</th>
+                  <th className="text-center">F1</th>
+                  {hasCost && <th className="text-center">Avg Cost</th>}
+                  {hasCost && <th className="text-center" title="F1 score per $1,000 of avg scan cost. Higher = better value.">F1 / $1k</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const m = r.metrics;
+                  return (
+                    <tr key={r.mode || r.name}>
+                      <td style={{ fontWeight: 600 }}>{r.mode || '—'}</td>
+                      <td className="text-center font-mono">{r.app_count}</td>
+                      <td className="text-center font-mono">{r.scan_count}</td>
+                      <td className="text-center font-mono text-success">{m.tp}</td>
+                      <td className="text-center font-mono text-error">{m.fp}</td>
+                      <td className="text-center font-mono text-error">{m.fn}</td>
+                      <td className={`text-center font-mono ${pctColor(m.precision)}`}>{fmt(m.precision)}</td>
+                      <td className={`text-center font-mono ${pctColor(m.recall)}`}>{fmt(m.recall)}</td>
+                      <td className={`text-center font-mono ${pctColor(m.f1)}`}>{fmt(m.f1)}</td>
+                      {hasCost && <td className="text-center font-mono">{fmtCost(r.avg_cost)}</td>}
+                      {hasCost && <td className="text-center font-mono">{fmtValue(r.value)}</td>}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );

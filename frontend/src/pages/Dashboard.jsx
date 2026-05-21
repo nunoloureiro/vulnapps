@@ -734,7 +734,7 @@ function CostEfficiency({ scanners, grouped }) {
                   border: isOptimal ? '2px solid var(--accent)' : '2px solid var(--bg-panel)',
                   boxShadow: `0 0 0 1px ${color}`,
                 }}
-                title={`${rowLabel(s)}: F1=${fmt(s.filtered.f1)}, Cost=${fmtCost(s.avg_cost)}, Value=${fmtValue(filteredValue)}${isOptimal ? ' (Pareto-optimal)' : ''}`}
+                title={`${rowLabel(s)}: F1=${fmt(s.filtered.f1)}, Cost=${fmtCost(s.avg_cost)}, F1/$1k=${fmtValue(filteredValue)}${isOptimal ? ' (Pareto-optimal)' : ''}`}
               />
               <span
                 className="text-xs"
@@ -765,6 +765,12 @@ function SummaryTable({ scanners, isFiltered, grouped, hasCostData }) {
       <h3 className="card-title mb-2">
         Summary{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}
       </h3>
+      {hasCostData && (
+        <p className="text-muted text-xs mb-2">
+          <strong>F1 / $1k</strong> = F1 score per $1,000 of average scan cost. Higher = better value for money
+          (e.g. F1 = 0.90 at $0.50 → 1,800).
+        </p>
+      )}
       <div className="compare-scroll">
         <table>
           <thead>
@@ -779,7 +785,7 @@ function SummaryTable({ scanners, isFiltered, grouped, hasCostData }) {
               <th className="text-center">Precision</th>
               <th className="text-center">Recall</th>
               <th className="text-center">F1</th>
-              {hasCostData && <th className="text-center" title="F1 per $1k of avg cost">Value</th>}
+              {hasCostData && <th className="text-center" title="F1 score per $1,000 of avg scan cost. Higher = better value.">F1 / $1k</th>}
             </tr>
           </thead>
           <tbody>
@@ -806,7 +812,7 @@ function SummaryTable({ scanners, isFiltered, grouped, hasCostData }) {
                   <td className={`text-center font-mono ${pctColor(m.recall)}`}>{fmt(m.recall)}</td>
                   <td className={`text-center font-mono ${pctColor(m.f1)}`}>{fmt(m.f1)}</td>
                   {hasCostData && (
-                    <td className="text-center font-mono" title={filteredValue != null ? `F1 ${m.f1.toFixed(3)} per $1k (avg $${s.avg_cost?.toFixed(4)})` : 'No cost data'}>
+                    <td className="text-center font-mono" title={filteredValue != null ? `F1 ${m.f1.toFixed(3)} per $1k of avg scan cost ($${s.avg_cost?.toFixed(4)})` : 'No cost data'}>
                       {fmtValue(filteredValue)}
                     </td>
                   )}
