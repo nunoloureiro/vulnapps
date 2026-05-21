@@ -199,6 +199,11 @@ class VulnappsClient:
         resp.raise_for_status()
         return resp.json()["app"]
 
+    def get_teams(self) -> list:
+        resp = self.client.get("/api/teams")
+        resp.raise_for_status()
+        return resp.json().get("teams", [])
+
     def get_vulns(self, app_id: int) -> list:
         resp = self.client.get(f"/api/apps/{app_id}/vulns")
         resp.raise_for_status()
@@ -658,9 +663,10 @@ def show_pretty_help():
   {b}Target app{r} {d}(one of){r}{b}:{r}
     {c}--app-id{r} {d}<id>{r}              Existing app ID in Vulnapps
     {c}--create-app{r} {d}<json>{r}        Look up by name+version, create if missing.
-                              {d}JSON object with keys: name (required), version,{r}
-                              {d}url, description, tech, visibility (default: private).{r}
-                              {d}Example:{r} {o}'{{"name":"Test","version":"1.1"}}'{r}
+                              {d}JSON keys: name (required), version, url, description,{r}
+                              {d}tech, visibility (default: private), team (id or name —{r}
+                              {d}auto-promotes visibility to "team" if set).{r}
+                              {d}Example:{r} {o}'{{"name":"Test","version":"1.1","team":"COS-Core"}}'{r}
 
   {b}Scan source{r} {d}(one of){r}{b}:{r}
     {c}--dir{r} {d}<path>{r}               Directory containing .md scan files
@@ -743,9 +749,10 @@ def main():
     parser.add_argument("--create-app", default=None,
                         help='Look-up-or-create app from a JSON object, e.g. '
                              '\'{"name":"Test","version":"1.1","url":"http://example.com",'
-                             '"description":"...","tech":"php,mysql","visibility":"private"}\'. '
+                             '"description":"...","tech":"php,mysql","visibility":"private","team":"COS-Core"}\'. '
                              'Keys: name (required), version, url, description, tech, '
-                             'visibility (public|private|team, default private).')
+                             'visibility (public|private|team, default private), '
+                             'team (id or name; auto-promotes visibility to "team" if set).')
     parser.add_argument("--dir", default=None, help="Directory with .md scan result files")
     parser.add_argument("--file", help="Single .md file to import (instead of --dir)")
     parser.add_argument("--probely", default=None, help="Import from Probely: scan ID(s), comma-separated (max 2). Requires PROBELY_API_KEY env var.")
@@ -890,12 +897,40 @@ def main():
             args.app_id = existing["id"]
             print(f"  {colored('✓', 'GREEN')} Found existing app: {colored(app_name, 'BOLD')} {C.DIM}(id {args.app_id}){C.RESET}")
         else:
+            # Resolve team (accepts numeric ID or team name).
+            team_id = None
+            team_raw = create_app.get("team")
+            if team_raw not in (None, ""):
+                if isinstance(team_raw, int) or (isinstance(team_raw, str) and team_raw.isdigit()):
+                    team_id = int(team_raw)
+                else:
+                    try:
+                        teams = client.get_teams()
+                    except httpx.HTTPStatusError as e:
+                        print(f"  {colored('✗', 'RED')} Team lookup failed: {e.response.status_code}", file=sys.stderr)
+                        sys.exit(1)
+                    match = next((t for t in teams if t.get("name") == team_raw), None)
+                    if not match:
+                        names = ", ".join(t["name"] for t in teams) or "(none visible)"
+                        print(f"  {colored('✗', 'RED')} Team '{team_raw}' not found. Visible: {names}", file=sys.stderr)
+                        sys.exit(1)
+                    team_id = match["id"]
+
+            # If team is set and visibility wasn't explicitly given, promote to "team".
+            visibility = create_app.get("visibility")
+            if team_id and not visibility:
+                visibility = "team"
+            elif not visibility:
+                visibility = "private"
+
             payload = {
                 "name": app_name,
                 "version": app_version,
-                "visibility": create_app.get("visibility", "private"),
+                "visibility": visibility,
                 "tech_stack": create_app.get("tech", ""),
             }
+            if team_id:
+                payload["team_id"] = team_id
             if create_app.get("url"):
                 payload["url"] = create_app["url"]
             if create_app.get("description"):
@@ -904,7 +939,8 @@ def main():
                 with Spinner(f"Creating app '{app_name}'..."):
                     new_app = client.create_app(payload)
                 args.app_id = new_app["id"]
-                print(f"  {colored('✓', 'GREEN')} Created app: {colored(app_name, 'BOLD')} {C.DIM}(id {args.app_id}){C.RESET}")
+                team_suffix = f" {C.DIM}[team {team_id}]{C.RESET}" if team_id else ""
+                print(f"  {colored('✓', 'GREEN')} Created app: {colored(app_name, 'BOLD')} {C.DIM}(id {args.app_id}){C.RESET}{team_suffix}")
             except httpx.HTTPStatusError as e:
                 print(f"  {colored('✗', 'RED')} App creation failed: {e.response.status_code} {e.response.text}", file=sys.stderr)
                 sys.exit(1)
