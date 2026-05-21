@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 
@@ -8,6 +8,7 @@ const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 export default function AppDetail() {
   const { id } = useParams();
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -39,6 +40,23 @@ export default function AppDetail() {
       fetchApp();
     } catch (err) {
       setError(err.message || 'Failed to delete vulnerability');
+    }
+  }
+
+  async function handleDeleteApp() {
+    if (!data) return;
+    const { app, vulns = [], scan_count = 0 } = data;
+    const msg =
+      `Delete app "${app.name}${app.version ? ' v' + app.version : ''}"?\n\n` +
+      `This will permanently remove ${vulns.length} vulnerabilit${vulns.length === 1 ? 'y' : 'ies'} ` +
+      `and ${scan_count} scan${scan_count === 1 ? '' : 's'} (with their findings).\n\n` +
+      `This cannot be undone.`;
+    if (!window.confirm(msg)) return;
+    try {
+      await api.del('/apps/' + id);
+      navigate('/apps');
+    } catch (err) {
+      setError(err.message || 'Failed to delete app');
     }
   }
 
@@ -228,6 +246,11 @@ export default function AppDetail() {
           )}
           {scan_count >= 2 && (
             <Link to={'/apps/' + id + '/compare'} className="btn btn-outline">Compare Scans</Link>
+          )}
+          {can_edit && (
+            <button type="button" className="btn btn-danger" onClick={handleDeleteApp}>
+              Delete App
+            </button>
           )}
         </div>
       </div>
