@@ -112,7 +112,7 @@ class Spinner:
 
 # ── Prompt ───────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT_MAP = """\
 You are a vulnerability mapping assistant for a security testing platform.
 
 You will be given:
@@ -165,6 +165,54 @@ Respond with ONLY valid JSON (no markdown fencing) in this exact format:
         }
     ]
 }"""
+
+
+SYSTEM_PROMPT_EXTRACT = """\
+You are a vulnerability extraction assistant for a security testing platform.
+
+You will be given a security scan report in markdown format. There are no
+known vulnerabilities to compare against — every finding will be a NEW
+documented vulnerability for this application.
+
+Your job is to:
+1. Extract each distinct finding from the scan report
+2. Capture every detail useful for triage and remediation (severity,
+   description, proof-of-concept, remediation, code location)
+3. Mark findings as false positives only when the report explicitly says so
+
+IMPORTANT RULES:
+- Do NOT attempt to consolidate or "map" findings — keep each distinct
+  finding as its own entry. The platform can group them later.
+- Extract the scanner name and scan date from the report if available.
+- For vuln_type, use a short canonical type (e.g., "XSS", "SQLi", "IDOR",
+  "Missing Security Headers", "CSRF").
+- severity must be one of: "critical", "high", "medium", "low", "info".
+- description, severity, poc, remediation, and code_location are REQUIRED
+  for every non-FP finding (since each one will become a documented vuln).
+
+Respond with ONLY valid JSON (no markdown fencing) in this exact format:
+{
+    "scanner_name": "string",
+    "scan_date": "YYYY-MM-DD",
+    "findings": [
+        {
+            "vuln_type": "string - canonical vulnerability type",
+            "title": "string - brief finding title from the report",
+            "http_method": "GET/POST/etc or empty string",
+            "url": "string - affected URL/path or empty string",
+            "parameter": "string - affected parameter or empty string",
+            "filename": "string - affected source file or empty string",
+            "is_false_positive": false,
+            "severity": "critical|high|medium|low|info",
+            "description": "string — what the issue is, why it matters",
+            "poc": "string — proof-of-concept / reproduction steps",
+            "remediation": "string — how to fix",
+            "code_location": "string — file:line or function name if known"
+        }
+    ]
+}"""
+
+
 
 
 # ── API Client ───────────────────────────────────────────────
@@ -284,23 +332,32 @@ def create_anthropic_client(provider: str, region: str | None, project_id: str |
     return anthropic.Anthropic()
 
 
-def run_llm_mapping(scan_content: str, vulns: list, model: str, client) -> dict:
-    """Send scan content and known vulns to Claude for mapping."""
+def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_msg: str | None = None) -> dict:
+    """Send scan content (optionally with known vulns) to Claude.
 
-    vulns_text = format_vulns_for_prompt(vulns)
-    user_message = f"""## Known Vulnerabilities for this Application
+    When `vulns` is empty the prompt switches to extraction-only mode — no
+    mapping language, all findings flow through as promote-candidates.
+    """
+    if vulns:
+        system = SYSTEM_PROMPT_MAP
+        user_message = f"""## Known Vulnerabilities for this Application
 
-{vulns_text}
+{format_vulns_for_prompt(vulns)}
 
 ## Scan Report
 
 {scan_content}"""
+    else:
+        system = SYSTEM_PROMPT_EXTRACT
+        user_message = f"""## Scan Report
 
-    with Spinner("Analyzing scan with Claude..."):
+{scan_content}"""
+
+    with Spinner(spinner_msg or "Analyzing scan with Claude..."):
         response = client.messages.create(
             model=model,
             max_tokens=8192,
-            system=SYSTEM_PROMPT,
+            system=system,
             messages=[{"role": "user", "content": user_message}],
         )
 
@@ -317,9 +374,12 @@ def run_llm_mapping(scan_content: str, vulns: list, model: str, client) -> dict:
     return result
 
 
-def run_llm_mapping_cli(scan_content: str, vulns: list) -> dict:
-    """Run mapping via the local `claude` CLI. Used when --use-cli is set, or
-    as a fallback when no API key/Vertex config is available."""
+def run_llm_mapping_cli(scan_content: str, vulns: list, spinner_msg: str | None = None) -> dict:
+    """Run extraction/mapping via the local `claude` CLI. Used when --use-cli
+    is set, or as a fallback when no API key/Vertex config is available.
+
+    When `vulns` is empty the prompt switches to extraction-only mode.
+    """
     import subprocess
     import shutil
 
@@ -327,12 +387,20 @@ def run_llm_mapping_cli(scan_content: str, vulns: list) -> dict:
         print(f"  {colored('Error:', 'RED')} No LLM available. Set ANTHROPIC_API_KEY or install Claude Code CLI.", file=sys.stderr)
         sys.exit(1)
 
-    vulns_text = format_vulns_for_prompt(vulns)
-    prompt = f"""{SYSTEM_PROMPT}
+    if vulns:
+        prompt = f"""{SYSTEM_PROMPT_MAP}
 
 ## Known Vulnerabilities for this Application
 
-{vulns_text}
+{format_vulns_for_prompt(vulns)}
+
+## Scan Report
+
+{scan_content}
+
+Respond with ONLY valid JSON (no markdown fencing)."""
+    else:
+        prompt = f"""{SYSTEM_PROMPT_EXTRACT}
 
 ## Scan Report
 
@@ -340,7 +408,7 @@ def run_llm_mapping_cli(scan_content: str, vulns: list) -> dict:
 
 Respond with ONLY valid JSON (no markdown fencing)."""
 
-    with Spinner("Analyzing scan with Claude CLI..."):
+    with Spinner(spinner_msg or "Analyzing scan with Claude CLI..."):
         result = subprocess.run(
             ["claude", "-p", prompt,
              "--output-format", "json",
@@ -1064,40 +1132,64 @@ def main():
 
     print(f"  {colored('✓', 'GREEN')} Scan files:  {colored(str(len(md_files)), 'BOLD')}")
 
-    # Combine all .md files into one scan report (one LLM call, one scan)
-    parts = []
+    # Read all files into (name, content) tuples; drop empties.
+    file_parts: list[tuple[str, str]] = []
     for md_file in md_files:
         content = md_file.read_text()
-        if not content.strip():
-            continue
-        if len(md_files) > 1:
-            parts.append(f"# ── {md_file.name} ──\n\n{content}")
-        else:
-            parts.append(content)
-    combined_content = "\n\n".join(parts)
+        if content.strip():
+            file_parts.append((md_file.name, content))
 
-    if not combined_content.strip():
+    if not file_parts:
         print(f"  {colored('✗', 'RED')} All scan files are empty", file=sys.stderr)
         sys.exit(1)
 
-    print_header(f"Processing {len(md_files)} file(s)")
+    # Extract-only mode (no known vulns) + multiple files → one LLM call per
+    # file, merge findings. Keeps the per-call context small even when the
+    # scan dump is huge. Mapping mode still combines so the LLM can see all
+    # findings at once for cross-finding consolidation.
+    extract_only = not vulns
+    chunked = extract_only and len(file_parts) > 1
 
-    # Run LLM mapping
-    try:
-        if use_cli:
-            mapping = run_llm_mapping_cli(combined_content, vulns)
+    if chunked:
+        print_header(f"Processing {len(file_parts)} file(s) — extract-only, one LLM call per file")
+    else:
+        print_header(f"Processing {len(file_parts)} file(s)")
+
+    def _call_llm(content: str, spinner_msg: str | None = None) -> dict:
+        try:
+            if use_cli:
+                return run_llm_mapping_cli(content, vulns, spinner_msg=spinner_msg)
+            return run_llm_mapping(content, vulns, args.model, llm_client, spinner_msg=spinner_msg)
+        except json.JSONDecodeError as e:
+            print(f"  {colored('✗', 'RED')} LLM returned invalid JSON: {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            if "anthropic" in type(e).__module__ if hasattr(type(e), '__module__') else False:
+                print(f"  {colored('✗', 'RED')} Claude API error: {e}", file=sys.stderr)
+            else:
+                print(f"  {colored('✗', 'RED')} LLM error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    if chunked:
+        mapping = {"scanner_name": "", "scan_date": "", "findings": [], "_llm_tokens": 0}
+        for idx, (fname, content) in enumerate(file_parts, 1):
+            partial = _call_llm(content, spinner_msg=f"Analyzing {fname} ({idx}/{len(file_parts)})...")
+            # First non-empty wins for scanner_name / scan_date; explicit
+            # --scanner / --scan-start overrides apply below.
+            if not mapping["scanner_name"] and partial.get("scanner_name"):
+                mapping["scanner_name"] = partial["scanner_name"]
+            if not mapping["scan_date"] and partial.get("scan_date"):
+                mapping["scan_date"] = partial["scan_date"]
+            mapping["findings"].extend(partial.get("findings", []) or [])
+            mapping["_llm_tokens"] += partial.get("_llm_tokens") or 0
+        print(f"  {colored('✓', 'GREEN')} Extracted {colored(str(len(mapping['findings'])), 'BOLD')} findings across {len(file_parts)} file(s)")
+    else:
+        # Single-call path (mapping mode, or extract-only with one file).
+        if len(file_parts) > 1:
+            combined = "\n\n".join(f"# ── {name} ──\n\n{content}" for name, content in file_parts)
         else:
-            mapping = run_llm_mapping(combined_content, vulns, args.model, llm_client)
-    except json.JSONDecodeError as e:
-        print(f"  {colored('✗', 'RED')} LLM returned invalid JSON: {e}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        # Catch API errors from anthropic (may not be imported) or subprocess errors
-        if "anthropic" in type(e).__module__ if hasattr(type(e), '__module__') else False:
-            print(f"  {colored('✗', 'RED')} Claude API error: {e}", file=sys.stderr)
-        else:
-            print(f"  {colored('✗', 'RED')} LLM error: {e}", file=sys.stderr)
-        sys.exit(1)
+            combined = file_parts[0][1]
+        mapping = _call_llm(combined)
 
     if args.scanner:
         mapping["scanner_name"] = args.scanner
