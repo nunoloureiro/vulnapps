@@ -418,7 +418,24 @@ Respond with ONLY valid JSON (no markdown fencing)."""
         )
 
     if result.returncode != 0:
-        print(f"  {colored('Error:', 'RED')} Claude CLI failed: {result.stderr[:200]}", file=sys.stderr)
+        # The CLI with --output-format json puts errors in the stdout JSON
+        # envelope (is_error / result fields), not stderr — so dump both, and
+        # try to surface the JSON error message specifically.
+        print(f"  {colored('Error:', 'RED')} Claude CLI failed (exit {result.returncode})", file=sys.stderr)
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        try:
+            env = json.loads(stdout) if stdout else None
+            if isinstance(env, dict):
+                msg = env.get("result") or env.get("error") or env.get("message")
+                if msg:
+                    print(f"  {C.DIM}cli message:{C.RESET} {str(msg)[:1000]}", file=sys.stderr)
+        except json.JSONDecodeError:
+            pass
+        if stderr:
+            print(f"  {C.DIM}stderr:{C.RESET}\n{stderr[:2000]}", file=sys.stderr)
+        if stdout and (not stderr):
+            print(f"  {C.DIM}stdout:{C.RESET}\n{stdout[:2000]}", file=sys.stderr)
         sys.exit(1)
 
     # Parse the CLI output - it returns JSON with a "result" field
