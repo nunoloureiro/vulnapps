@@ -137,10 +137,21 @@ function ComparisonView({ data, appId }) {
       {isWinner && (
         <div title="Highest F1" style={{ fontSize: '1rem', lineHeight: 1, marginBottom: '0.15rem' }}>🏆</div>
       )}
-      <Link to={`/scans/${s.scan.id}`}>{s.scan.scanner_name}</Link><br />
+      <Link to={`/scans/${s.scan.id}`}>{s.scan.scanner_name}</Link>
+      {s.scan.scanner_version && <span className="text-muted text-xs"> v{s.scan.scanner_version}</span>}
+      <br />
       <span className="text-muted text-xs">{s.short_date}</span>
       {s.labels && s.labels.length > 0 && (
-        <div className="scan-labels-cell" style={{ justifyContent: 'center', marginTop: '0.25rem' }}>
+        <div
+          className="scan-labels-cell"
+          style={{
+            justifyContent: 'center',
+            marginTop: '0.25rem',
+            maxWidth: 240,
+            marginLeft: 'auto',
+            marginRight: 'auto',
+          }}
+        >
           {s.labels.map(l => <LabelBadge key={l.id} label={l} />)}
         </div>
       )}
