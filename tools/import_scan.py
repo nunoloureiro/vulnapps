@@ -1143,15 +1143,15 @@ def main():
         print(f"  {colored('✗', 'RED')} All scan files are empty", file=sys.stderr)
         sys.exit(1)
 
-    # Extract-only mode (no known vulns) + multiple files → one LLM call per
-    # file, merge findings. Keeps the per-call context small even when the
-    # scan dump is huge. Mapping mode still combines so the LLM can see all
-    # findings at once for cross-finding consolidation.
-    extract_only = not vulns
-    chunked = extract_only and len(file_parts) > 1
+    # Multiple files → one LLM call per file, merge findings. Keeps the
+    # per-call context small even on huge scan dumps. Each finding's mapping
+    # decision is independent (the LLM needs the known-vulns list + the
+    # finding text; not other findings), so chunking applies in both
+    # extract-only mode and mapping mode.
+    chunked = len(file_parts) > 1
 
     if chunked:
-        print_header(f"Processing {len(file_parts)} file(s) — extract-only, one LLM call per file")
+        print_header(f"Processing {len(file_parts)} file(s) — one LLM call per file")
     else:
         print_header(f"Processing {len(file_parts)} file(s)")
 
