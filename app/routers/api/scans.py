@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import FileResponse
 from app.database import get_connection
 from app.services import scans as scans_service
 from app.services import labels as labels_service
@@ -197,6 +198,66 @@ async def rematch_scan(request: Request, scan_id: int):
         await db.close()
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Scan state (zip blob of source directory; mounted at /api/scans)
+# ---------------------------------------------------------------------------
+
+@router.post("/{scan_id}/state")
+async def upload_scan_state(request: Request, scan_id: int):
+    """Upload a zip as the scan's source-of-truth state. Send as
+    application/zip body; filename in X-Filename header (optional)."""
+    user = await require_user(request)
+    require_scope(user, "vuln-mapper")
+    content = await request.body()
+    filename = request.headers.get("x-filename") or f"scan-{scan_id}.zip"
+    db = await get_connection()
+    try:
+        meta = await scans_service.set_scan_state(db, user, scan_id, content, filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+    return {"ok": True, **meta}
+
+
+@router.get("/{scan_id}/state")
+async def download_scan_state(request: Request, scan_id: int):
+    user = request.state.user
+    db = await get_connection()
+    try:
+        path, filename, size, sha = await scans_service.get_scan_state(db, user, scan_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+    return FileResponse(
+        path=str(path),
+        filename=filename,
+        media_type="application/zip",
+        headers={"X-Scan-State-SHA256": sha or ""},
+    )
+
+
+@router.delete("/{scan_id}/state")
+async def delete_scan_state_endpoint(request: Request, scan_id: int):
+    user = await require_user(request)
+    require_scope(user, "vuln-mapper")
+    db = await get_connection()
+    try:
+        await scans_service.delete_scan_state(db, user, scan_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

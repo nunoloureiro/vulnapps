@@ -166,10 +166,37 @@ function ScanMeta({ scan, app, labels, canEdit, canViewCost, scanId, onUpdate })
             <span className="detail-value font-mono">${scan.cost.toFixed(4)}</span>
           </>
         )}
+        {scan.state_filename && (
+          <>
+            <span className="detail-label">Scan State</span>
+            <span className="detail-value">
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => api.download(`/scans/${scanId}/state`, scan.state_filename)}
+                title={scan.state_sha256 ? `sha256: ${scan.state_sha256}` : 'Download zip'}
+                style={{ height: 22, padding: '0 0.5rem', fontSize: '0.75rem' }}
+              >
+                ↓ {scan.state_filename}
+                {scan.state_size != null && (
+                  <span className="text-muted text-xs" style={{ marginLeft: 6 }}>({humanSize(scan.state_size)})</span>
+                )}
+              </button>
+            </span>
+          </>
+        )}
         <EditableField label="Notes" value={scan.notes} canEdit={canEdit} type="textarea" onSave={v => updateField('notes', v)} />
       </div>
     </div>
   );
+}
+
+function humanSize(n) {
+  if (n == null) return '';
+  let u = 0;
+  const units = ['B', 'KiB', 'MiB', 'GiB'];
+  while (n >= 1024 && u < units.length - 1) { n /= 1024; u++; }
+  return `${u === 0 ? n : n.toFixed(1)} ${units[u]}`;
 }
 
 function Metrics({ metrics }) {

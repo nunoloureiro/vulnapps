@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import os
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 
+from app.config import STATE_DIR, MAX_STATE_SIZE
 from app.matching import match_finding as match_finding_algo
 from app.visibility import scan_visibility_filter
 from app.dependencies import get_team_role
@@ -69,6 +73,29 @@ async def _get_scan_and_app(db, scan_id):
     cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (scan["app_id"],))
     app = await cursor.fetchone()
     return scan, app
+
+
+async def _check_scan_view(db, user, scan, app) -> None:
+    """Raise PermissionError if user cannot view this scan.
+
+    Mirrors the inline check in get_scan(): admins always; otherwise public
+    scans on public apps, the submitter, or any member of the app's team.
+    """
+    if not user:
+        if not (scan["is_public"] and app["visibility"] == "public"):
+            raise PermissionError("Not authenticated")
+        return
+    if user["role"] == "admin":
+        return
+    if scan["is_public"]:
+        return
+    if scan["submitted_by"] == user["sub"]:
+        return
+    if app["visibility"] == "team" and app["team_id"]:
+        team_role = await get_team_role(db, user["sub"], app["team_id"])
+        if team_role is not None:
+            return
+    raise PermissionError("Access denied")
 
 
 def _compute_metrics(findings, all_vulns):
@@ -433,9 +460,16 @@ async def submit_scan(
 
 
 async def delete_scan(db, user, scan_id: int) -> None:
-    """Delete a scan and its findings and label associations."""
+    """Delete a scan and its findings, label associations, and state blob."""
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
+
+    state_file = _state_path(scan_id)
+    if state_file.exists():
+        try:
+            state_file.unlink()
+        except OSError:
+            pass
 
     await db.execute("DELETE FROM scan_labels WHERE scan_id = ?", (scan_id,))
     await db.execute("DELETE FROM scan_findings WHERE scan_id = ?", (scan_id,))
@@ -835,3 +869,67 @@ async def get_available_scans(db, user, app_id: int) -> list:
         [app_id] + vis_params,
     )
     return await cursor.fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Scan state (zip blob of the source directory used to produce the scan)
+# ---------------------------------------------------------------------------
+
+def _state_path(scan_id: int) -> Path:
+    return Path(STATE_DIR) / f"{scan_id}.zip"
+
+
+async def set_scan_state(db, user, scan_id: int, content: bytes, filename: str) -> dict:
+    """Persist a zip of the source-of-truth directory used to produce this
+    scan. Overwrites any existing state. Returns the new metadata."""
+    if len(content) > MAX_STATE_SIZE:
+        raise ValueError(f"State file too large ({len(content)} > {MAX_STATE_SIZE} bytes)")
+    scan, app = await _get_scan_and_app(db, scan_id)
+    await _check_scan_write(db, user, scan, app)
+
+    Path(STATE_DIR).mkdir(parents=True, exist_ok=True)
+    sha = hashlib.sha256(content).hexdigest()
+    path = _state_path(scan_id)
+    # Write to a sibling tmp first, then rename — atomic enough for our needs.
+    tmp = path.with_suffix(".tmp")
+    tmp.write_bytes(content)
+    os.replace(tmp, path)
+
+    safe_name = (filename or f"scan-{scan_id}.zip").strip() or f"scan-{scan_id}.zip"
+    await db.execute(
+        "UPDATE scans SET state_filename=?, state_size=?, state_sha256=? WHERE id=?",
+        (safe_name, len(content), sha, scan_id),
+    )
+    await db.commit()
+    return {"filename": safe_name, "size": len(content), "sha256": sha}
+
+
+async def get_scan_state(db, user, scan_id: int) -> tuple[Path, str, int, str]:
+    """Return (on-disk path, filename, size, sha256). Raises ValueError if
+    no state attached, PermissionError if user cannot view this scan."""
+    scan, app = await _get_scan_and_app(db, scan_id)
+    await _check_scan_view(db, user, scan, app)
+    if not scan["state_filename"]:
+        raise ValueError("No state attached to this scan")
+    path = _state_path(scan_id)
+    if not path.exists():
+        raise ValueError("State file is missing on disk")
+    return path, scan["state_filename"], scan["state_size"], scan["state_sha256"]
+
+
+async def delete_scan_state(db, user, scan_id: int) -> None:
+    """Remove the state blob (used when deleting a scan or by an explicit
+    delete request)."""
+    scan, app = await _get_scan_and_app(db, scan_id)
+    await _check_scan_write(db, user, scan, app)
+    path = _state_path(scan_id)
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    await db.execute(
+        "UPDATE scans SET state_filename=NULL, state_size=NULL, state_sha256=NULL WHERE id=?",
+        (scan_id,),
+    )
+    await db.commit()

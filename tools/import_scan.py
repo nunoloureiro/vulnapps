@@ -301,6 +301,18 @@ class VulnappsClient:
         resp.raise_for_status()
         return resp.json()
 
+    def upload_scan_state(self, scan_id: int, zip_path: Path, filename: str) -> dict:
+        with open(zip_path, "rb") as fh:
+            data = fh.read()
+        resp = self.client.post(
+            f"/api/scans/{scan_id}/state",
+            content=data,
+            headers={"Content-Type": "application/zip", "X-Filename": filename},
+            timeout=120.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
 
 # ── Formatting ───────────────────────────────────────────────
 
@@ -720,6 +732,62 @@ def parse_create_app(s: str) -> dict:
         raise ValueError(f"--create-app must be a JSON object: {e}")
 
 
+def _human_size(n: int) -> str:
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if n < 1024 or unit == "GiB":
+            return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
+        n /= 1024
+    return f"{n:.1f} GiB"
+
+
+def _discover_findings_dir(root: Path) -> Path:
+    """Pick the directory we should read .md files from.
+
+    Rules (the user often passes the project/run root, not the findings dir):
+      1. If `root` itself has any *.md → use root.
+      2. Else walk immediate children: first child that contains *.md wins.
+      3. Else: first child whose name (or contained filename) matches *report* wins.
+      4. Else: fall back to root and let the "no .md files" error fire.
+
+    Hidden/private/system children (names starting with '.' or '_') are skipped.
+    """
+    if any(root.glob("*.md")):
+        return root
+    children = sorted(c for c in root.iterdir()
+                      if c.is_dir() and not c.name.startswith((".", "_")))
+    # Pass 1: a child containing .md files.
+    for child in children:
+        if any(child.glob("*.md")):
+            return child
+    # Pass 2: a child with *report* anywhere in its tree.
+    for child in children:
+        if "report" in child.name.lower():
+            return child
+        for entry in child.iterdir():
+            if entry.is_file() and "report" in entry.name.lower():
+                return child
+    return root
+
+
+def _zip_directory(src: Path, dest: Path) -> int:
+    """Create a zip of *src* at *dest*. Excludes the scanimport checkpoint and
+    any hidden (dot-prefixed) files/directories. Returns the zip's size in bytes.
+    """
+    import zipfile
+    src = src.resolve()
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(src.rglob("*")):
+            rel = path.relative_to(src)
+            # Skip dotfiles/dotdirs and our own checkpoint.
+            if any(part.startswith(".") for part in rel.parts):
+                continue
+            if rel.name == ".scanimport-checkpoint.json":
+                continue
+            if path.is_file():
+                zf.write(path, arcname=str(rel))
+    return dest.stat().st_size
+
+
 def parse_scan_start(s: str) -> str:
     """Parse --scan-start. Accepts 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD'.
     Returns a normalized 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD' string.
@@ -885,6 +953,9 @@ def main():
     parser.add_argument("--workers", type=int, default=4,
                         help="Parallel LLM calls when chunking by file (default: 4). "
                              "Set to 1 for sequential (e.g. when rate-limited).")
+    parser.add_argument("--skip-state", action="store_true",
+                        help="Don't zip and upload the source directory as scan state. "
+                             "By default the entire --dir is zipped and attached to the scan.")
     parser.add_argument("--resume", action="store_true",
                         help="Resume a partial chunked import. Looks for "
                              "<dir>/.scanimport-checkpoint.json, written after every "
@@ -1157,15 +1228,24 @@ def main():
 
     # ── Markdown import flow (existing) ──
 
-    # Collect .md files
+    # state_root = the directory the user passed (we'll zip the whole thing
+    # for scan state). findings_dir = the directory we actually pull .md
+    # files from — may be a subfolder discovered below.
+    state_root: Path | None = None
+    findings_dir: Path | None = None
+
     if args.file:
         md_files = [Path(args.file)]
     else:
-        scan_dir = Path(args.dir)
-        if not scan_dir.is_dir():
+        state_root = Path(args.dir).resolve()
+        if not state_root.is_dir():
             print(f"  {colored('Error:', 'RED')} {args.dir} is not a directory", file=sys.stderr)
             sys.exit(1)
-        md_files = sorted(scan_dir.glob("*.md"))
+        findings_dir = _discover_findings_dir(state_root)
+        if findings_dir != state_root:
+            rel = findings_dir.relative_to(state_root)
+            print(f"  {colored('→', 'CYAN')} Findings dir: {colored(str(rel) + '/', 'BOLD')} {C.DIM}(under {state_root.name}/){C.RESET}")
+        md_files = sorted(findings_dir.glob("*.md"))
 
     if not md_files:
         print(f"  {colored('Error:', 'RED')} No .md files found.", file=sys.stderr)
@@ -1230,8 +1310,8 @@ def main():
 
     # Checkpoint path (chunked mode only; only --dir creates multiple files).
     checkpoint_path = None
-    if chunked and args.dir:
-        checkpoint_path = Path(args.dir) / ".scanimport-checkpoint.json"
+    if chunked and findings_dir is not None:
+        checkpoint_path = findings_dir / ".scanimport-checkpoint.json"
 
     if chunked:
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1365,6 +1445,29 @@ def main():
     except httpx.HTTPStatusError as e:
         print(f"  {colored('✗', 'RED')} Submit failed: {e.response.status_code} {e.response.text}", file=sys.stderr)
         sys.exit(1)
+
+    # Upload scan state (zip of the originally passed --dir). Only when --dir
+    # is the source: --file and --probely have no directory of context to zip.
+    if state_root is not None and not args.skip_state:
+        import tempfile
+        try:
+            with tempfile.NamedTemporaryFile(prefix="scan-state-", suffix=".zip", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            with Spinner(f"Zipping {state_root.name}/ ..."):
+                size = _zip_directory(state_root, tmp_path)
+            zip_name = f"{state_root.name}.zip"
+            with Spinner(f"Uploading scan state ({_human_size(size)})..."):
+                client.upload_scan_state(scan_id, tmp_path, zip_name)
+            print(f"  {colored('✓', 'GREEN')} Scan state uploaded: {colored(zip_name, 'BOLD')} {C.DIM}({_human_size(size)}){C.RESET}")
+        except httpx.HTTPStatusError as e:
+            print(f"  {colored('⚠', 'YELLOW')} Scan state upload failed: {e.response.status_code} {e.response.text[:200]}", file=sys.stderr)
+        except Exception as e:
+            print(f"  {colored('⚠', 'YELLOW')} Scan state upload failed: {e}", file=sys.stderr)
+        finally:
+            try:
+                tmp_path.unlink()
+            except (NameError, OSError):
+                pass
 
     # Successful submission — clear checkpoint so a future run starts fresh.
     if checkpoint_path and checkpoint_path.exists():
