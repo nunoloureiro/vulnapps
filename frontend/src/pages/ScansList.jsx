@@ -52,7 +52,7 @@ export default function ScansList() {
   const scans = useMemo(() => {
     const getVal = (s) => {
       switch (sortKey) {
-        case 'scanner': return (s.scanner_name || '').toLowerCase();
+        case 'scanner': return `${(s.scanner_name || '').toLowerCase()} ${s.scanner_version || ''}`;
         case 'app': return `${(s.app_name || '').toLowerCase()} ${s.app_version || ''}`;
         case 'tp': return s.tp_count ?? -1;
         case 'fp': return s.fp_count ?? -1;
@@ -204,7 +204,10 @@ export default function ScansList() {
                             style={{ accentColor: 'var(--accent)', width: 16, height: 16, cursor: 'pointer' }} />
                         </td>
                       )}
-                      <td><Link to={`/scans/${scan.id}`}>{scan.scanner_name}</Link></td>
+                      <td>
+                        <Link to={`/scans/${scan.id}`}>{scan.scanner_name}</Link>
+                        {scan.scanner_version && <span className="text-muted text-sm"> v{scan.scanner_version}</span>}
+                      </td>
                       {!appId && (
                         <td>
                           <Link to={`/apps/${scan.app_id}`}>{scan.app_name}</Link>
