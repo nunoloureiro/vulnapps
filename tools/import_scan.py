@@ -781,10 +781,10 @@ def show_pretty_help():
     {c}--duration{r} {d}<min>{r}           Scan duration in minutes {d}(private){r}
 
   {b}LLM mapping{r} {d}(used by the importer to map findings to known vulns){r}{b}:{r}
-    {c}--model{r} {d}<model>{r}            Claude model used by the importer for mapping
-                              {d}(default: claude-sonnet-4-20250514){r}
-                              {d}This is NOT the model used to run the scan itself —{r}
-                              {d}record that with a label (see conventions above).{r}
+    {c}--model{r} {d}<model>{r}            Claude model used by the importer for mapping/extraction
+                              {d}(default: claude-haiku-4-5 for extract-only, claude-{r}
+                              {d}sonnet-4-20250514 for mapping). This is NOT the model{r}
+                              {d}used to run the scan itself — record that with a label.{r}
     {c}--provider{r} {d}<p>{r}             anthropic|vertex {d}(default: auto from CLAUDE_CODE_USE_VERTEX){r}
     {c}--vertex-region{r} {d}<r>{r}        Vertex region (default: $ANTHROPIC_VERTEX_LOCATION or us-east5)
     {c}--vertex-project{r} {d}<p>{r}       GCP project ID (default: $ANTHROPIC_VERTEX_PROJECT_ID)
@@ -794,6 +794,8 @@ def show_pretty_help():
   {b}Flow:{r}
     {c}--dry-run{r}                   Preview the LLM mapping without submitting
     {c}--confirm{r}                   Ask for confirmation before submitting
+    {c}--workers{r} {d}<n>{r}              Parallel LLM calls when chunking by file
+                              {d}(default: 4; set to 1 if rate-limited){r}
     {c}--resume{r}                    Resume a partial chunked import from
                               {d}<dir>/.scanimport-checkpoint.json{r}
 
@@ -864,10 +866,11 @@ def main():
     parser.add_argument("--duration", type=float, default=None, help="Scan duration in minutes (optional, private)")
     parser.add_argument("--notes", default="", help="Notes to attach to the scan")
     parser.add_argument("--model", default=None,
-                        help="Claude model used by the importer for finding-to-vuln mapping "
-                             "(default: claude-sonnet-4-20250514). NOT the model used to run "
-                             "the scan itself — record that with a label, e.g. "
-                             "--labels claude-opus-4-6,greybox.")
+                        help="Claude model used by the importer (default: auto — "
+                             "claude-haiku-4-5 for extract-only mode, "
+                             "claude-sonnet-4-20250514 for mapping mode). NOT the "
+                             "model used to run the scan itself — record that with "
+                             "a label, e.g. --labels claude-opus-4-6,greybox.")
     parser.add_argument("--provider", choices=["anthropic", "vertex"], default=None,
                         help="LLM provider. Auto-detected from CLAUDE_CODE_USE_VERTEX=1 env var")
     parser.add_argument("--use-cli", action="store_true",
@@ -879,6 +882,9 @@ def main():
     parser.add_argument("--vertex-project", default=os.getenv("ANTHROPIC_VERTEX_PROJECT_ID"),
                         help="Google Cloud project ID (or set ANTHROPIC_VERTEX_PROJECT_ID)")
     parser.add_argument("--dry-run", action="store_true", help="Show mapping without submitting")
+    parser.add_argument("--workers", type=int, default=4,
+                        help="Parallel LLM calls when chunking by file (default: 4). "
+                             "Set to 1 for sequential (e.g. when rate-limited).")
     parser.add_argument("--resume", action="store_true",
                         help="Resume a partial chunked import. Looks for "
                              "<dir>/.scanimport-checkpoint.json, written after every "
@@ -933,8 +939,9 @@ def main():
     if args.provider is None:
         args.provider = "vertex" if os.getenv("CLAUDE_CODE_USE_VERTEX") == "1" else "anthropic"
 
-    if not args.model:
-        args.model = "claude-sonnet-4-20250514"
+    # Defer the default model until we know whether we'll be in extract-only
+    # mode (no known vulns) — Haiku is fast and adequate for extraction.
+    explicit_model = args.model is not None
 
     # Only need LLM for markdown import (not for --probely)
     need_llm = not args.probely
@@ -972,7 +979,8 @@ def main():
         print(f"  {colored('✓', 'GREEN')} LLM: {colored('Claude CLI', 'CYAN')}")
     elif llm_client:
         provider_label = f"vertex/{args.vertex_region}" if args.provider == "vertex" else "anthropic"
-        print(f"  {colored('✓', 'GREEN')} LLM: {colored(args.model, 'CYAN')} {C.DIM}via {provider_label}{C.RESET}")
+        model_label = args.model if args.model else "auto (haiku for extract / sonnet for mapping)"
+        print(f"  {colored('✓', 'GREEN')} LLM: {colored(model_label, 'CYAN')} {C.DIM}via {provider_label}{C.RESET}")
 
     # Resolve app_id: lookup or create from --create-app if not given explicitly
     if args.app_id is None:
@@ -1050,6 +1058,15 @@ def main():
     # Get known vulnerabilities
     vulns = client.get_vulns(args.app_id)
     print(f"  {colored('✓', 'GREEN')} Known vulns: {colored(str(len(vulns)), 'BOLD')}")
+
+    # Now that we know whether we're in extract-only mode, finalize the model
+    # choice. Haiku is roughly 3× faster than Sonnet and adequate for the
+    # mechanical "pull findings out of the report" task.
+    if not explicit_model:
+        args.model = "claude-haiku-4-5" if not vulns else "claude-sonnet-4-20250514"
+        if not use_cli and llm_client:
+            mode_word = "extract-only" if not vulns else "mapping"
+            print(f"  {C.DIM}Model auto-picked for {mode_word}: {args.model}{C.RESET}")
 
     # Resolve labels (new ones will be created at submission time)
     label_names = [l.strip() for l in args.labels.split(",") if l.strip()] if args.labels else []
@@ -1217,8 +1234,12 @@ def main():
         checkpoint_path = Path(args.dir) / ".scanimport-checkpoint.json"
 
     if chunked:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+
         mapping = {"scanner_name": "", "scan_date": "", "findings": [], "_llm_tokens": 0}
         processed: set[str] = set()
+        lock = threading.Lock()
 
         # Load checkpoint if --resume.
         if args.resume and checkpoint_path and checkpoint_path.exists():
@@ -1232,39 +1253,73 @@ def main():
                 print(f"  {colored('⚠', 'YELLOW')} Could not read checkpoint at {checkpoint_path}: {e}", file=sys.stderr)
                 print(f"  {C.DIM}Starting fresh.{C.RESET}", file=sys.stderr)
 
-        for idx, (fname, content) in enumerate(file_parts, 1):
-            if fname in processed:
-                print(f"  {colored('⏭', 'CYAN')} Skipping {fname} ({idx}/{len(file_parts)}) — already in checkpoint")
-                continue
-            try:
-                partial = _call_llm(content, spinner_msg=f"Analyzing {fname} ({idx}/{len(file_parts)})...")
-            except LLMCallError as e:
-                print(f"  {colored('✗', 'RED')} {e}", file=sys.stderr)
+        pending = [(fname, content) for (fname, content) in file_parts if fname not in processed]
+        skipped = len(file_parts) - len(pending)
+        if skipped:
+            print(f"  {colored('⏭', 'CYAN')} Skipping {skipped} file(s) already in checkpoint")
+
+        if not pending:
+            print(f"  {colored('✓', 'GREEN')} Nothing to do — all files already processed")
+        else:
+            workers = max(1, min(args.workers, len(pending)))
+            print(f"  {C.DIM}Running {len(pending)} LLM call(s) with {workers} worker(s)...{C.RESET}")
+
+            done_count = [0]  # mutable closure for thread-safe counter
+            fail_lock = threading.Lock()
+            first_failure = [None]  # holds (fname, LLMCallError)
+
+            def _process(fname: str, content: str):
+                # Don't run more work if another thread already failed —
+                # short-circuit so we exit fast on the first error.
+                with fail_lock:
+                    if first_failure[0] is not None:
+                        return
+                try:
+                    partial = _call_llm(content)
+                except LLMCallError as e:
+                    with fail_lock:
+                        if first_failure[0] is None:
+                            first_failure[0] = (fname, e)
+                    return
+
+                with lock:
+                    if not mapping["scanner_name"] and partial.get("scanner_name"):
+                        mapping["scanner_name"] = partial["scanner_name"]
+                    if not mapping["scan_date"] and partial.get("scan_date"):
+                        mapping["scan_date"] = partial["scan_date"]
+                    mapping["findings"].extend(partial.get("findings", []) or [])
+                    mapping["_llm_tokens"] += partial.get("_llm_tokens") or 0
+                    processed.add(fname)
+                    done_count[0] += 1
+                    n_findings = len(partial.get("findings") or [])
+                    print(f"  {colored('✓', 'GREEN')} {fname} ({done_count[0]}/{len(pending)}): {n_findings} finding(s)")
+                    if checkpoint_path:
+                        try:
+                            checkpoint_path.write_text(json.dumps({
+                                "processed_files": sorted(processed),
+                                "mapping": mapping,
+                            }, indent=2))
+                        except OSError as e:
+                            print(f"  {colored('⚠', 'YELLOW')} Could not write checkpoint: {e}", file=sys.stderr)
+
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                futs = [ex.submit(_process, fname, content) for fname, content in pending]
+                # Drain so exceptions surface (none expected — _process catches its own)
+                for _ in as_completed(futs):
+                    pass
+
+            if first_failure[0]:
+                fname, err = first_failure[0]
+                print(f"  {colored('✗', 'RED')} {fname}: {err}", file=sys.stderr)
                 if checkpoint_path:
                     print(
-                        f"  {C.DIM}Partial results saved to {checkpoint_path}.{C.RESET}\n"
+                        f"  {C.DIM}Partial results saved to {checkpoint_path} "
+                        f"({len(processed)}/{len(file_parts)} file(s) done).{C.RESET}\n"
                         f"  {C.DIM}Resume with: ./scanimport.sh ... --resume{C.RESET}",
                         file=sys.stderr,
                     )
                 sys.exit(1)
-            # First non-empty wins for scanner_name / scan_date; explicit
-            # --scanner / --scan-start overrides apply below.
-            if not mapping["scanner_name"] and partial.get("scanner_name"):
-                mapping["scanner_name"] = partial["scanner_name"]
-            if not mapping["scan_date"] and partial.get("scan_date"):
-                mapping["scan_date"] = partial["scan_date"]
-            mapping["findings"].extend(partial.get("findings", []) or [])
-            mapping["_llm_tokens"] += partial.get("_llm_tokens") or 0
-            processed.add(fname)
-            # Checkpoint after every successful chunk.
-            if checkpoint_path:
-                try:
-                    checkpoint_path.write_text(json.dumps({
-                        "processed_files": sorted(processed),
-                        "mapping": mapping,
-                    }, indent=2))
-                except OSError as e:
-                    print(f"  {colored('⚠', 'YELLOW')} Could not write checkpoint: {e}", file=sys.stderr)
+
         print(f"  {colored('✓', 'GREEN')} Extracted {colored(str(len(mapping['findings'])), 'BOLD')} findings across {len(file_parts)} file(s)")
     else:
         # Single-call path (only one file present).
