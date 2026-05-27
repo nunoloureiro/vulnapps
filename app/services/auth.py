@@ -1,18 +1,49 @@
 """Auth service — login, registration, account management, API keys."""
+from __future__ import annotations
 
 import secrets
+import sqlite3
 from app.auth import hash_password, verify_password, create_token, hash_api_key
+
+
+# Pre-computed bcrypt hash of a high-entropy value. Used to make the wrong-email
+# code path run bcrypt too, so the response time of login does not leak whether
+# an email is registered (vuln-0017).
+_DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
+
+
+def _password_meets_policy(password: str) -> str | None:
+    """Return None if OK, else an error message. Mirrored on register + change."""
+    if password is None:
+        return "Password is required"
+    if not isinstance(password, str):
+        return "Password must be a string"
+    # bcrypt only sees the first 72 bytes; reject longer to avoid confusion
+    if len(password.encode("utf-8")) > 72:
+        return "Password must be at most 72 bytes"
+    if len(password) < 8:
+        return "Password must be at least 8 characters"
+    if password.strip() == "":
+        return "Password cannot be empty or whitespace"
+    return None
 
 
 async def login(db, email: str, password: str) -> dict:
     """Authenticate user and return token + user info.
 
     Raises ValueError on invalid credentials.
+
+    Always runs bcrypt (against a dummy hash when the user does not exist) so
+    the timing of a wrong-password response is the same regardless of whether
+    the email is registered (vuln-0017).
     """
-    cursor = await db.execute("SELECT * FROM users WHERE email = ?", (email,))
+    cursor = await db.execute("SELECT * FROM users WHERE email = ?", (email or "",))
     user = await cursor.fetchone()
 
-    if not user or not verify_password(password, user["password_hash"]):
+    candidate_hash = user["password_hash"] if user else _DUMMY_PASSWORD_HASH
+    pw_ok = verify_password(password or "", candidate_hash)
+
+    if not user or not pw_ok:
         raise ValueError("Invalid credentials")
 
     await db.execute(
@@ -20,7 +51,9 @@ async def login(db, email: str, password: str) -> dict:
     )
     await db.commit()
 
-    token = create_token(user["id"], user["name"], user["role"])
+    token = create_token(
+        user["id"], user["name"], user["role"], user["password_version"]
+    )
     return {
         "token": token,
         "user": {"id": user["id"], "name": user["name"], "role": user["role"]},
@@ -31,9 +64,20 @@ async def register(db, name: str, email: str, password: str) -> dict:
     """Register a new user. First user gets admin role.
 
     Returns {token, user, is_first_user}.
-    Raises sqlite3 IntegrityError on duplicate email (let caller handle).
+    Raises ValueError for input validation errors (including duplicate email).
     """
     from app.seed import seed_taintedport
+
+    name = (name or "").strip()
+    email = (email or "").strip().lower()
+    if not name:
+        raise ValueError("Name is required")
+    if not email:
+        raise ValueError("Email is required")
+
+    err = _password_meets_policy(password)
+    if err:
+        raise ValueError(err)
 
     hashed = hash_password(password)
 
@@ -42,11 +86,16 @@ async def register(db, name: str, email: str, password: str) -> dict:
     count = (await cursor.fetchone())["count"]
     role = "admin" if count == 0 else "user"
 
-    await db.execute(
-        "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)",
-        (name, email, hashed, role),
-    )
-    await db.commit()
+    try:
+        await db.execute(
+            "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)",
+            (name, email, hashed, role),
+        )
+        await db.commit()
+    except sqlite3.IntegrityError:
+        # Generic message — same body as other validation failures so the
+        # response does not act as an account-existence oracle (vuln-0017).
+        raise ValueError("Registration could not be completed")
 
     cursor = await db.execute("SELECT * FROM users WHERE email = ?", (email,))
     user = await cursor.fetchone()
@@ -57,7 +106,9 @@ async def register(db, name: str, email: str, password: str) -> dict:
     if is_first_user:
         await seed_taintedport(db, user["id"])
 
-    token = create_token(user["id"], user["name"], user["role"])
+    token = create_token(
+        user["id"], user["name"], user["role"], user["password_version"]
+    )
     return {
         "token": token,
         "user": {"id": user["id"], "name": user["name"], "role": user["role"]},
@@ -93,37 +144,76 @@ async def update_name(db, user_id: int, new_name: str) -> str:
 
 async def update_password(
     db, user_id: int, current_password: str, new_password: str
-) -> None:
-    """Change user's password.
+) -> dict:
+    """Change user's password and invalidate existing JWTs.
 
-    Raises ValueError if current password is wrong or new password too short.
+    Returns {token, user, password_version} — the changing client uses the
+    fresh token; all previously-issued JWTs for this user now fail because
+    their `pv` claim no longer matches `users.password_version` (vuln-0019).
+
+    Raises ValueError if current password is wrong or the new password does
+    not meet the password policy.
     """
-    if len(new_password) < 4:
-        raise ValueError("Password must be at least 4 characters")
+    err = _password_meets_policy(new_password)
+    if err:
+        raise ValueError(err)
 
     cursor = await db.execute(
-        "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+        "SELECT id, name, role, password_hash, password_version FROM users WHERE id = ?",
+        (user_id,),
     )
     user = await cursor.fetchone()
-    if not user or not verify_password(current_password, user["password_hash"]):
+    # Always run bcrypt — even if user disappeared between auth and now — to
+    # keep timing uniform.
+    candidate_hash = user["password_hash"] if user else _DUMMY_PASSWORD_HASH
+    if not user or not verify_password(current_password or "", candidate_hash):
         raise ValueError("Current password is incorrect")
 
     await db.execute(
-        "UPDATE users SET password_hash = ? WHERE id = ?",
+        "UPDATE users SET password_hash = ?, "
+        "password_version = password_version + 1 WHERE id = ?",
         (hash_password(new_password), user_id),
     )
     await db.commit()
 
+    cursor = await db.execute(
+        "SELECT id, name, role, password_version FROM users WHERE id = ?", (user_id,)
+    )
+    refreshed = await cursor.fetchone()
+    token = create_token(
+        refreshed["id"], refreshed["name"], refreshed["role"], refreshed["password_version"]
+    )
+    return {
+        "token": token,
+        "user": {"id": refreshed["id"], "name": refreshed["name"], "role": refreshed["role"]},
+        "password_version": refreshed["password_version"],
+    }
 
-async def create_api_key(db, user_id: int, name: str, scope: str) -> dict:
+
+async def create_api_key(
+    db, user_id: int, name: str, scope: str, *, caller_scope: str | None = None
+) -> dict:
     """Create a new API key for the user.
 
+    *caller_scope* is the scope of the API key used to make this call, or None
+    when called with primary-session (JWT) auth. An API-key caller may only
+    mint keys with a scope ≤ its own scope (vuln-0003).
+
     Returns {key (raw), prefix, name, scope}.
-    Raises ValueError on invalid scope.
+    Raises ValueError on invalid scope or PermissionError on scope escalation.
     """
+    from app.dependencies import SCOPE_LEVELS
+
     name = (name or "default").strip()[:50]
     if scope not in ("read", "vuln-mapper", "full"):
         raise ValueError("Invalid scope")
+
+    if caller_scope is not None:
+        # API-key callers can only mint keys with scope <= their own.
+        if SCOPE_LEVELS.get(scope, 99) > SCOPE_LEVELS.get(caller_scope, 0):
+            raise PermissionError(
+                f"API key scope '{caller_scope}' cannot mint scope '{scope}'"
+            )
 
     raw_key = "va_" + secrets.token_hex(32)
     prefix = raw_key[:11]  # "va_" + 8 hex chars

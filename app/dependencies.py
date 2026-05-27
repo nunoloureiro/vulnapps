@@ -29,8 +29,30 @@ async def get_current_user(request: Request) -> dict | None:
     if token.startswith("va_"):
         return await _resolve_api_key(token)
 
-    # JWT auth
-    return decode_token(token)
+    # JWT auth — also reject tokens issued before the current password_version
+    # so a password change invalidates outstanding sessions (vuln-0019).
+    claims = decode_token(token)
+    if not claims:
+        return None
+    if not await _password_version_ok(claims):
+        return None
+    return claims
+
+
+async def _password_version_ok(claims: dict) -> bool:
+    """Return False if the token's pv claim is older than the user's
+    current password_version. Tokens predating the column default to pv=0."""
+    db = await get_connection()
+    try:
+        cursor = await db.execute(
+            "SELECT password_version FROM users WHERE id = ?", (claims["sub"],)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return False
+        return int(claims.get("pv", 0)) >= int(row["password_version"])
+    finally:
+        await db.close()
 
 
 async def _resolve_api_key(key: str) -> dict | None:

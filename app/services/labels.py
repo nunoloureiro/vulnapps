@@ -32,12 +32,34 @@ async def list_labels(db) -> list:
     return [dict(row) for row in await cursor.fetchall()]
 
 
+import re
+
+_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3,8}$")
+
+
+def _validate_color(color: str) -> str:
+    """Reject anything other than a hex color so the value cannot be used
+    as a CSS-injection vehicle when rendered into a style attribute
+    (vuln-0021)."""
+    color = (color or "").strip()
+    if not color:
+        return "#f97316"
+    if not _COLOR_RE.match(color):
+        raise ValueError("color must be a #hex value")
+    return color
+
+
 async def add_label_to_scan(db, user, scan_id: int, name: str, color: str = "#f97316") -> dict:
-    """Upsert a label and link it to a scan. Returns the label dict."""
+    """Attach an existing label to a scan. Returns the label dict.
+
+    Non-admin callers can only attach labels that already exist; creating
+    a new label name is an admin-only operation that must go through
+    ``POST /api/admin/labels`` (vuln-0021).
+    """
     if not name or not name.strip():
         raise ValueError("Label name required")
     name = name.strip()
-    color = color.strip()
+    color = _validate_color(color)
 
     cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
     scan = await cursor.fetchone()
@@ -48,15 +70,25 @@ async def add_label_to_scan(db, user, scan_id: int, name: str, color: str = "#f9
     app = await cursor.fetchone()
     await _check_scan_write(db, user, scan, app)
 
-    # Upsert label
-    await db.execute(
-        "INSERT OR IGNORE INTO labels (name, color) VALUES (?, ?)",
-        (name, color),
-    )
     cursor = await db.execute(
         "SELECT id, name, color FROM labels WHERE name = ?", (name,)
     )
-    label = dict(await cursor.fetchone())
+    existing = await cursor.fetchone()
+    if existing:
+        label = dict(existing)
+    else:
+        if user.get("role") != "admin":
+            raise PermissionError(
+                "Only admins can create new labels; pick an existing label name"
+            )
+        await db.execute(
+            "INSERT INTO labels (name, color) VALUES (?, ?)",
+            (name, color),
+        )
+        cursor = await db.execute(
+            "SELECT id, name, color FROM labels WHERE name = ?", (name,)
+        )
+        label = dict(await cursor.fetchone())
 
     # Link to scan
     await db.execute(
@@ -98,7 +130,7 @@ async def admin_list_labels(db) -> list:
 async def admin_create_label(db, name: str, color: str) -> dict:
     """Create a new label. Returns the label dict."""
     name = (name or "").strip()
-    color = (color or "#f97316").strip()
+    color = _validate_color(color)
     if not name:
         raise ValueError("Label name required")
 
@@ -119,8 +151,8 @@ async def admin_update_label(db, label_id: int, updates: dict) -> None:
     clean = {}
     if "name" in updates and updates["name"] and updates["name"].strip():
         clean["name"] = updates["name"].strip()
-    if "color" in updates and updates["color"] and updates["color"].strip():
-        clean["color"] = updates["color"].strip()
+    if "color" in updates and updates["color"]:
+        clean["color"] = _validate_color(updates["color"])
 
     if not clean:
         raise ValueError("No valid updates provided")

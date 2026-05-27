@@ -1,9 +1,22 @@
+from __future__ import annotations
+
 from fastapi import APIRouter, Request, HTTPException
 from app.database import get_connection
 from app.dependencies import require_scope
 from app.services import apps as apps_service
 
 router = APIRouter()
+
+
+def _optional_int(value, field: str) -> int | None:
+    """Coerce a request-body field to an optional int without leaking the raw
+    Python error message (vuln-0013)."""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{field} must be an integer")
 
 
 @router.get("")
@@ -38,6 +51,8 @@ async def create_app(request: Request):
     require_scope(user, "full")
 
     body = await request.json()
+    team_id = _optional_int(body.get("team_id"), "team_id")
+    clone_from = _optional_int(body.get("clone_from"), "clone_from")
     db = await get_connection()
     try:
         app = await apps_service.create_app(
@@ -48,9 +63,9 @@ async def create_app(request: Request):
             description=body.get("description"),
             url=body.get("url"),
             visibility=body.get("visibility", "private"),
-            team_id=int(body["team_id"]) if body.get("team_id") else None,
+            team_id=team_id,
             tech_stack=body.get("tech_stack", ""),
-            clone_from=int(body["clone_from"]) if body.get("clone_from") else None,
+            clone_from=clone_from,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -69,6 +84,7 @@ async def update_app(request: Request, app_id: int):
     require_scope(user, "full")
 
     body = await request.json()
+    team_id = _optional_int(body.get("team_id"), "team_id")
     db = await get_connection()
     try:
         app = await apps_service.update_app(
@@ -80,7 +96,7 @@ async def update_app(request: Request, app_id: int):
             description=body.get("description"),
             url=body.get("url"),
             visibility=body.get("visibility", "private"),
-            team_id=int(body["team_id"]) if body.get("team_id") else None,
+            team_id=team_id,
             tech_stack=body.get("tech_stack", ""),
         )
     except ValueError as e:

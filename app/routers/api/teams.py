@@ -1,8 +1,23 @@
 from fastapi import APIRouter, Request, HTTPException
 from app.database import get_connection
+from app.dependencies import require_scope
 from app.services import teams as teams_service
 
 router = APIRouter()
+
+
+def _require_user(request: Request) -> dict:
+    user = request.state.user
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+def _require_team_write(request: Request) -> dict:
+    """Auth + scope guard for team-mutation routes (vuln-0003)."""
+    user = _require_user(request)
+    require_scope(user, "full")
+    return user
 
 
 @router.get("")
@@ -41,9 +56,7 @@ async def get_team(request: Request, team_id: int):
 
 @router.post("")
 async def create_team(request: Request):
-    user = request.state.user
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = _require_team_write(request)
 
     body = await request.json()
     db = await get_connection()
@@ -60,9 +73,7 @@ async def create_team(request: Request):
 
 @router.put("/{team_id}")
 async def rename_team(request: Request, team_id: int):
-    user = request.state.user
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = _require_team_write(request)
     body = await request.json()
     db = await get_connection()
     try:
@@ -78,9 +89,7 @@ async def rename_team(request: Request, team_id: int):
 
 @router.delete("/{team_id}")
 async def delete_team(request: Request, team_id: int):
-    user = request.state.user
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = _require_team_write(request)
 
     db = await get_connection()
     try:
@@ -96,9 +105,7 @@ async def delete_team(request: Request, team_id: int):
 
 @router.post("/{team_id}/members")
 async def add_member(request: Request, team_id: int):
-    user = request.state.user
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = _require_team_write(request)
 
     body = await request.json()
     db = await get_connection()
@@ -119,9 +126,7 @@ async def add_member(request: Request, team_id: int):
 
 @router.put("/{team_id}/members/{user_id}")
 async def change_member_role(request: Request, team_id: int, user_id: int):
-    user = request.state.user
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = _require_team_write(request)
 
     body = await request.json()
     db = await get_connection()
@@ -140,9 +145,7 @@ async def change_member_role(request: Request, team_id: int, user_id: int):
 
 @router.delete("/{team_id}/members/{user_id}")
 async def remove_member(request: Request, team_id: int, user_id: int):
-    user = request.state.user
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = _require_team_write(request)
 
     db = await get_connection()
     try:

@@ -1,7 +1,30 @@
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from app.dependencies import get_team_role
 from app.visibility import app_visibility_filter
+
+
+_ALLOWED_URL_SCHEMES = ("http", "https")
+
+
+def _validate_url(url: str | None) -> str | None:
+    """Normalize and validate a user-supplied URL.
+
+    Rejects schemes other than http/https — in particular ``javascript:``,
+    ``data:``, ``vbscript:``, and ``file:`` URIs that would otherwise be
+    rendered as anchor hrefs by the SPA and trigger stored XSS (vuln-0010).
+    """
+    if url is None:
+        return None
+    url = url.strip()
+    if not url:
+        return None
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in _ALLOWED_URL_SCHEMES:
+        raise ValueError("URL must start with http:// or https://")
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +252,7 @@ async def create_app(
     if not user:
         raise PermissionError("Authentication required")
 
+    url = _validate_url(url)
     visibility = _validate_visibility(user, visibility, team_id)
     if visibility == "team":
         await _validate_team_access(db, user, team_id)
@@ -313,6 +337,7 @@ async def update_app(
 
     await _require_app_write(db, user, app)
 
+    url = _validate_url(url)
     visibility = _validate_visibility(user, visibility, team_id)
     if visibility == "team":
         await _validate_team_access(db, user, team_id)

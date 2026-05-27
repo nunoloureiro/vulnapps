@@ -112,37 +112,67 @@ async def import_vulns(
     vulns_data: list[dict] = []
 
     if file and file.filename:
-        # File upload path
+        # File upload path. Each parser failure becomes a generic 400 so the
+        # response never reflects the raw Python exception message — which
+        # previously leaked stack-trace style content (vuln-0022).
         content = await file.read()
-        text = content.decode("utf-8")
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="File must be UTF-8")
 
-        if file.filename.endswith(".json"):
-            parsed = json.loads(text)
+        filename = file.filename.lower()
+        if filename.endswith(".json"):
+            try:
+                parsed = json.loads(text)
+            except (ValueError, json.JSONDecodeError):
+                raise HTTPException(status_code=400, detail="Invalid JSON")
             if isinstance(parsed, list):
                 vulns_data = parsed
-            elif isinstance(parsed, dict) and "vulnerabilities" in parsed:
+            elif isinstance(parsed, dict) and isinstance(parsed.get("vulnerabilities"), list):
                 vulns_data = parsed["vulnerabilities"]
             else:
                 raise HTTPException(
                     status_code=400,
                     detail="JSON must be an array or {vulnerabilities: [...]}",
                 )
-        elif file.filename.endswith(".csv"):
-            reader = csv.DictReader(io.StringIO(text))
-            vulns_data = list(reader)
+        elif filename.endswith(".csv"):
+            try:
+                reader = csv.DictReader(io.StringIO(text))
+                vulns_data = list(reader)
+            except csv.Error:
+                raise HTTPException(status_code=400, detail="Invalid CSV")
         else:
             raise HTTPException(
                 status_code=400, detail="Unsupported file type. Use .json or .csv"
             )
     else:
         # JSON body path
-        body = await request.json()
+        try:
+            body = await request.json()
+        except (ValueError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Body must be a JSON object")
         vulns_data = body.get("vulnerabilities", [])
+
+    if not isinstance(vulns_data, list) or not all(
+        isinstance(v, dict) for v in vulns_data
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Expected a list of vulnerability objects",
+        )
 
     db = await get_connection()
     try:
         count = await vulns_service.import_vulns(db, user, app_id, vulns_data)
     except ValueError as e:
+        # Domain-level errors only ("App not found"). UnicodeEncodeError is a
+        # subclass of ValueError; map it to a generic 400 instead of leaking
+        # the raw codec message (vuln-0022).
+        if isinstance(e, UnicodeError):
+            raise HTTPException(status_code=400, detail="Invalid characters in input")
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))

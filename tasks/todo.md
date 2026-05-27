@@ -117,3 +117,46 @@ All five phases complete. End-to-end discovery-mode workflow now works:
 - [ ] `npm run build` clean.
 - [ ] Manual: scanner with one scan, scanner with many scans, scanner with cost data, scanner without cost data.
 - [ ] Existing Dashboard still works (scanner CSV filter accepted by backend).
+
+---
+
+# Pentest 2026-05-07 / 2026-05-08 — vulnapps.net
+
+20 findings (`/Users/nuno/Downloads/vulnapps.net/vulnerabilities.md`). All 18
+in-code vulnerabilities have been fixed in this branch. The remaining two are
+edge-config items that must be applied at the Cloudflare/CDN layer because
+TLS termination and (optionally) edge-injected headers live outside the repo.
+
+## In-code fixes applied
+- vuln-0001 — removed `GET /api/auth/debug` (`app/routers/api/auth.py`)
+- vuln-0002 — HSTS via `security_headers` middleware (`app/main.py`)
+- vuln-0003 — API-key scope hierarchy enforced when minting keys; `/api/account/*` and `/api/teams/*` mutations gated behind `require_scope('full')`; API-key callers can no longer rotate name/password/keys to a session JWT
+- vuln-0004 — `match_finding` validates `vuln.app_id == scan.app_id`
+- vuln-0005 — `get_scan` returns 404 for "exists but not visible" (collapsed with the not-found branch)
+- vuln-0006 — `remove_member`/`change_member_role`/`delete_team` protect `teams.created_by`
+- vuln-0007 — `app/throttle.py` per-IP rate-limit + per-account lockout on login + password change (+ register rate-limit)
+- vuln-0008 — `get_team` returns 404 when the caller is not a member
+- vuln-0010 — `services/apps.py::_validate_url` rejects non-http(s) schemes on app.url
+- vuln-0012 — register/password-change enforce ≥8 chars, non-empty, ≤72 bytes
+- vuln-0013 — `team_id`/`clone_from` parsed via `_optional_int` → generic 400
+- vuln-0014 — origin-wide `security_headers` middleware
+- vuln-0015 — `get_scan` redacts `cost`/`tokens`/`duration`/`notes` when `can_view_cost` is false
+- vuln-0017 — login always runs bcrypt against a dummy hash when the user is missing; register catches the UNIQUE-constraint violation and returns a generic message
+- vuln-0018 — scans default `is_public=0`; `update_scan` accepts `is_public`; both paths reject `is_public=1` on non-public apps
+- vuln-0019 — JWT carries `pv` (password_version), checked on every request; `update_password` increments `pv` and returns a fresh JWT for the changing client; `POST /api/auth/logout` invalidates outstanding tokens
+- vuln-0020 — `add_member` silently no-ops on unknown email (no account-existence oracle)
+- vuln-0021 — non-admins can only attach existing labels via `POST /api/scans/{id}/labels`; label color values are validated against `^#[0-9a-fA-F]{3,8}$`; same applies to the `labels[]` array on scan submit
+- vuln-0022 — `vulns/import` wraps every parser in generic 400s and the import service coerces lone-surrogate strings to a safe representation before binding to sqlite
+
+Schema change: `migrations/022_password_version.sql` adds `users.password_version`.
+
+## Out-of-code items (must be applied at Cloudflare)
+- **vuln-0009 — TLS 1.0/1.1 accepted at edge.** Cloudflare → SSL/TLS → Edge
+  Certificates → set "Minimum TLS Version" to **TLS 1.2** (or 1.3), enable the
+  TLS 1.3 toggle, and on Business+ set the cipher preset to "Modern" to drop
+  CBC suites. Verify with `testssl.sh --protocols vulnapps.net` or Qualys SSL
+  Labs — only TLS 1.2/1.3 should appear.
+- **vuln-0002 (defence-in-depth).** Cloudflare → SSL/TLS → Edge Certificates
+  → enable "Always Use HTTPS" so port 80 traffic is 301-redirected before
+  reaching the origin. (The in-code HSTS header already instructs compliant
+  browsers to upgrade, but the edge redirect closes the first-hit gap.)

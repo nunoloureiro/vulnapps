@@ -24,12 +24,15 @@ def verify_api_key(key: str, stored_hash: str) -> bool:
     return hashlib.sha256(key.encode()).hexdigest() == stored_hash
 
 
-def create_token(user_id: int, name: str, role: str) -> str:
+def create_token(user_id: int, name: str, role: str, password_version: int = 0) -> str:
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
         "name": name,
         "role": role,
-        "exp": datetime.now(timezone.utc) + timedelta(hours=TOKEN_EXPIRY_HOURS),
+        "pv": int(password_version or 0),
+        "iat": now,
+        "exp": now + timedelta(hours=TOKEN_EXPIRY_HOURS),
     }
     return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
 
@@ -41,6 +44,8 @@ def decode_token(token: str) -> dict | None:
         # Normalize stale roles from old tokens
         if payload.get("role") in ("viewer", "contributor"):
             payload["role"] = "user"
+        # Default pv to 0 for tokens predating the password-version claim
+        payload.setdefault("pv", 0)
         return payload
     except (jwt.PyJWTError, ValueError, KeyError):
         return None

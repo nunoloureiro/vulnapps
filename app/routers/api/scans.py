@@ -87,7 +87,12 @@ async def update_scan(request: Request, scan_id: int):
     try:
         scan = await scans_service.update_scan(db, user, scan_id, body)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        msg = str(e)
+        # Validation errors (e.g. trying to publish a scan on a private app)
+        # are 400, not 404.
+        if msg.startswith("Cannot publish") or "must" in msg:
+            raise HTTPException(status_code=400, detail=msg)
+        raise HTTPException(status_code=404, detail=msg)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     finally:
@@ -267,6 +272,7 @@ async def delete_scan_state_endpoint(request: Request, scan_id: int):
 @router.post("/{scan_id}/labels")
 async def add_label(request: Request, scan_id: int):
     user = await require_user(request)
+    require_scope(user, "vuln-mapper")
     body = await request.json()
     name = body.get("name", "")
     color = body.get("color", "#f97316")
@@ -287,6 +293,7 @@ async def add_label(request: Request, scan_id: int):
 @router.delete("/{scan_id}/labels/{label_id}")
 async def remove_label(request: Request, scan_id: int, label_id: int):
     user = await require_user(request)
+    require_scope(user, "vuln-mapper")
 
     db = await get_connection()
     try:
@@ -314,7 +321,10 @@ async def submit_scan(request: Request, app_id: int):
     scanner_name = body.get("scanner_name", "")
     scanner_version = body.get("scanner_version") or None
     scan_date = body.get("scan_date", "")
-    is_public = 1 if body.get("is_public", True) else 0
+    # Default scans to NOT public — making the parent-app visibility the
+    # only thing the submitter actively opts into (vuln-0018). The service
+    # also re-validates that is_public=1 requires a public parent app.
+    is_public = 1 if body.get("is_public") is True else 0
     notes = body.get("notes")
     cost = body.get("cost")
     if cost is not None:

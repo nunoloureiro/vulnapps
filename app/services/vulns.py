@@ -270,13 +270,27 @@ async def import_vulns(db, user, app_id: int, vulns_data: list) -> int:
     )
     existing_count = (await cursor.fetchone())["count"]
 
+    def _safe_str(value) -> str:
+        """Coerce to a str that SQLite can bind. Lone surrogates (which can
+        appear in attacker-controlled JSON/CSV) make the sqlite3 binder raise
+        UnicodeEncodeError mid-loop; replacing them keeps the import going
+        and prevents the raw codec message from reaching the response
+        (vuln-0022)."""
+        if value is None:
+            return ""
+        s = value if isinstance(value, str) else str(value)
+        return s.encode("utf-8", errors="replace").decode("utf-8")
+
     imported = 0
     for i, v in enumerate(vulns_data):
+        if not isinstance(v, dict):
+            continue
         if not v.get("title"):
             continue
 
         vuln_id = v.get("vuln_id") or f"V-{existing_count + i + 1:03d}"
-        severity = v.get("severity", "medium").lower()
+        severity = (v.get("severity") or "medium")
+        severity = severity.lower() if isinstance(severity, str) else "medium"
         if severity not in ("critical", "high", "medium", "low", "info"):
             severity = "medium"
 
@@ -295,19 +309,19 @@ async def import_vulns(db, user, app_id: int, vulns_data: list) -> int:
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 app_id,
-                vuln_id,
-                v.get("title", ""),
+                _safe_str(vuln_id),
+                _safe_str(v.get("title")),
                 severity,
-                v.get("vuln_type", ""),
-                v.get("http_method", ""),
-                v.get("url", ""),
-                v.get("parameter", ""),
-                v.get("filename", ""),
+                _safe_str(v.get("vuln_type")),
+                _safe_str(v.get("http_method")),
+                _safe_str(v.get("url")),
+                _safe_str(v.get("parameter")),
+                _safe_str(v.get("filename")),
                 line_number,
-                v.get("description", ""),
-                v.get("code_location", ""),
-                v.get("poc", ""),
-                v.get("remediation", ""),
+                _safe_str(v.get("description")),
+                _safe_str(v.get("code_location")),
+                _safe_str(v.get("poc")),
+                _safe_str(v.get("remediation")),
                 user["sub"],
             ),
         )

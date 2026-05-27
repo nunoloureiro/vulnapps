@@ -287,19 +287,21 @@ async def get_scan(db, user, scan_id: int) -> dict:
     cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (scan["app_id"],))
     app = await cursor.fetchone()
 
-    # Visibility check
+    # Visibility check — collapse "not authorized" into "not found" so the
+    # response cannot be used to enumerate the existence of private scans
+    # (vuln-0005, vuln-0008).
     if not user:
-        if not (scan["is_public"] and app["visibility"] == "public"):
-            raise PermissionError("Not authenticated")
+        if not (scan["is_public"] and app and app["visibility"] == "public"):
+            raise ValueError("Scan not found")
     elif user["role"] != "admin":
         can_see = (
-            scan["is_public"]
+            (scan["is_public"] and app and app["visibility"] == "public")
             or scan["submitted_by"] == user["sub"]
-            or (app["visibility"] == "team" and app["team_id"]
+            or (app and app["visibility"] == "team" and app["team_id"]
                 and await get_team_role(db, user["sub"], app["team_id"]) is not None)
         )
         if not can_see:
-            raise PermissionError("Access denied")
+            raise ValueError("Scan not found")
 
     cursor = await db.execute(
         "SELECT * FROM scan_findings WHERE scan_id = ?", (scan_id,)
@@ -360,8 +362,16 @@ async def get_scan(db, user, scan_id: int) -> dict:
     cursor = await db.execute("SELECT id, name, color FROM labels ORDER BY name")
     all_labels = [dict(row) for row in await cursor.fetchall()]
 
+    # Redact cost/tokens/duration/notes when the caller may not view them.
+    # The `can_view_cost` flag was previously just a UI hint and the raw
+    # fields shipped to the client anyway (vuln-0015).
+    scan_out = dict(scan)
+    if not can_view_cost:
+        for k in ("cost", "tokens", "duration", "notes"):
+            scan_out[k] = None
+
     return {
-        "scan": scan,
+        "scan": scan_out,
         "app": app,
         "metrics": metrics,
         "findings": findings,
@@ -397,6 +407,12 @@ async def submit_scan(
         raise ValueError("App not found")
 
     await _check_scan_submit(db, user, app)
+
+    # A scan can only be public when its parent app is public; otherwise the
+    # is_public flag would expose a scan on a private/team app to anonymous
+    # readers (vuln-0018).
+    if is_public and app["visibility"] != "public":
+        is_public = 0
 
     cursor = await db.execute(
         """INSERT INTO scans (app_id, scanner_name, scanner_version, scan_date, is_public, notes, cost, tokens, duration, submitted_by)
@@ -436,20 +452,31 @@ async def submit_scan(
             ),
         )
 
-    # Apply labels
+    # Apply labels. Non-admin callers can only attach labels that already
+    # exist — creating a brand-new global label is an admin-only operation
+    # (vuln-0021). Unknown names are silently skipped so well-behaved CI
+    # integrations don't blow up.
     if labels:
+        is_admin = user["role"] == "admin"
         for label_name in labels:
             label_name = label_name.strip()
             if not label_name:
                 continue
-            await db.execute(
-                "INSERT OR IGNORE INTO labels (name, color) VALUES (?, ?)",
-                (label_name, "#f97316"),
-            )
             cursor = await db.execute(
                 "SELECT id FROM labels WHERE name = ?", (label_name,)
             )
             label_row = await cursor.fetchone()
+            if not label_row:
+                if not is_admin:
+                    continue
+                await db.execute(
+                    "INSERT INTO labels (name, color) VALUES (?, ?)",
+                    (label_name, "#f97316"),
+                )
+                cursor = await db.execute(
+                    "SELECT id FROM labels WHERE name = ?", (label_name,)
+                )
+                label_row = await cursor.fetchone()
             await db.execute(
                 "INSERT OR IGNORE INTO scan_labels (scan_id, label_id) VALUES (?, ?)",
                 (scan_id, label_row["id"]),
@@ -478,12 +505,22 @@ async def delete_scan(db, user, scan_id: int) -> None:
 
 
 async def update_scan(db, user, scan_id: int, updates: dict) -> dict:
-    """Update scan metadata (scanner_name, scan_date, notes)."""
+    """Update scan metadata (scanner_name, scan_date, notes, is_public, ...)."""
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
-    allowed = {"scanner_name", "scanner_version", "scan_date", "notes", "cost", "tokens", "duration"}
+    allowed = {
+        "scanner_name", "scanner_version", "scan_date", "notes",
+        "cost", "tokens", "duration", "is_public",
+    }
     clean = {k: v for k, v in updates.items() if k in allowed and v is not None}
+
+    # is_public must respect the parent app's visibility (vuln-0018).
+    if "is_public" in clean:
+        new_pub = 1 if clean["is_public"] in (True, 1, "1", "true") else 0
+        if new_pub and app["visibility"] != "public":
+            raise ValueError("Cannot publish a scan on a non-public app")
+        clean["is_public"] = new_pub
 
     if not clean:
         return dict(scan)
@@ -500,13 +537,33 @@ async def update_scan(db, user, scan_id: int, updates: dict) -> dict:
 async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id) -> dict:
     """Manually match a finding to a vuln (or clear the match).
 
+    The supplied vuln must belong to the same app as the scan — otherwise the
+    finding row would reference a vulnerability the caller may not be allowed
+    to read, leaking cross-tenant data (vuln-0004).
+
     Returns {ok, matched_vuln_id, is_false_positive}.
     """
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
+    cursor = await db.execute(
+        "SELECT id FROM scan_findings WHERE id = ? AND scan_id = ?",
+        (finding_id, scan_id),
+    )
+    if not await cursor.fetchone():
+        raise ValueError("Finding not found")
+
     if vuln_id is not None:
-        matched_vuln_id = int(vuln_id)
+        try:
+            matched_vuln_id = int(vuln_id)
+        except (TypeError, ValueError):
+            raise ValueError("vuln_id must be an integer")
+        cursor = await db.execute(
+            "SELECT app_id FROM vulnerabilities WHERE id = ?", (matched_vuln_id,)
+        )
+        row = await cursor.fetchone()
+        if not row or row["app_id"] != scan["app_id"]:
+            raise ValueError("Vulnerability not found")
         is_false_positive = 0
     else:
         matched_vuln_id = None

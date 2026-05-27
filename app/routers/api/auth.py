@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Request, HTTPException
 from app.database import get_connection
 from app.services import auth as auth_service
+from app import throttle
 
 router = APIRouter()
 
@@ -10,18 +11,29 @@ router = APIRouter()
 @router.post("/login")
 async def login(request: Request):
     body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    # Per-IP burst limit and per-account lockout (vuln-0007). Identical
+    # behaviour regardless of whether the email is registered, so the
+    # endpoint does not double as an account-existence oracle (vuln-0017).
+    await throttle.rate_limit(request, "login", max_hits=10, window_s=60)
+    await throttle.check_lockout("login", email)
     db = await get_connection()
     try:
-        result = await auth_service.login(db, body.get("email"), body.get("password"))
+        result = await auth_service.login(db, email, body.get("password"))
     except ValueError as e:
+        await throttle.record_failure("login", email, threshold=10, lockout_s=900)
         raise HTTPException(status_code=401, detail=str(e))
     finally:
         await db.close()
+    await throttle.record_success("login", email)
     return result
 
 
 @router.post("/register")
 async def register(request: Request):
+    # Rate limit registration to slow account-creation abuse and to limit any
+    # remaining timing signal on the duplicate-email path.
+    await throttle.rate_limit(request, "register", max_hits=5, window_s=60)
     body = await request.json()
     db = await get_connection()
     try:
@@ -33,6 +45,31 @@ async def register(request: Request):
     finally:
         await db.close()
     return result
+
+
+@router.post("/logout")
+async def logout(request: Request):
+    """Server-side logout — bumps the user's password_version so every
+    outstanding JWT for this account is rejected on the next request
+    (vuln-0019). API-key callers are not affected; revoke the key instead."""
+    user = request.state.user
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if user.get("api_key_scope") is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Logout is a JWT-session operation; revoke the API key instead",
+        )
+    db = await get_connection()
+    try:
+        await db.execute(
+            "UPDATE users SET password_version = password_version + 1 WHERE id = ?",
+            (user["sub"],),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+    return {"ok": True}
 
 
 @router.get("/me")
@@ -50,41 +87,3 @@ async def me(request: Request):
     return {"user": profile}
 
 
-@router.get("/debug")
-async def auth_debug(request: Request):
-    """Diagnostic endpoint — shows what the server sees for auth."""
-    cookie_token = request.cookies.get("token")
-    auth_header = request.headers.get("authorization", "")
-    bearer_token = auth_header[7:] if auth_header.startswith("Bearer ") else None
-
-    from app.auth import decode_token
-    token = cookie_token or bearer_token
-    decoded = None
-    token_source = None
-    error = None
-
-    if cookie_token:
-        token_source = "cookie"
-    elif bearer_token:
-        token_source = "bearer"
-
-    if token:
-        if token.startswith("va_"):
-            decoded = {"type": "api_key", "prefix": token[:11]}
-        else:
-            try:
-                decoded = decode_token(token)
-                if decoded is None:
-                    error = "decode_token returned None (invalid/expired JWT)"
-            except Exception as e:
-                error = str(e)
-
-    return {
-        "has_cookie_token": bool(cookie_token),
-        "has_bearer_token": bool(bearer_token),
-        "token_source": token_source,
-        "token_prefix": token[:20] + "..." if token else None,
-        "decoded": decoded,
-        "error": error,
-        "user_from_middleware": dict(request.state.user) if request.state.user else None,
-    }
