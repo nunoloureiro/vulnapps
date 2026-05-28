@@ -682,6 +682,57 @@ def probely_to_vulnapps_findings(probely_findings: list) -> list:
     return findings
 
 
+def probely_findings_to_markdown(findings: list, scan_ids: list[str]) -> str:
+    """Render Probely findings as a markdown report suitable for LLM mapping.
+
+    The LLM mapping prompt expects a scan-report-style document; Probely
+    gives us a structured list, so we render it back into a form the same
+    prompt can consume. Each finding becomes its own section with the
+    fields the prompt uses to decide a match (vuln_type, url, method,
+    parameter, severity, description, evidence).
+    """
+    lines = [
+        "# Probely DAST Scan",
+        "",
+        f"Source scan IDs: {', '.join(scan_ids)}",
+        "",
+        f"## Findings ({len(findings)})",
+        "",
+    ]
+    for i, f in enumerate(findings, 1):
+        defn = f.get("definition") or {}
+        name = defn.get("name") or f.get("name") or "Unknown"
+        severity = (f.get("severity") or "").lower()
+        method = f.get("method") or ""
+        url = f.get("url") or ""
+        parameter = f.get("parameter") or ""
+        evidence = f.get("evidence") or ""
+        description = (defn.get("description") or f.get("description") or "").strip()
+        labs_url = f.get("labs_url") or f.get("url") or ""
+
+        lines.append(f"### Finding {i}: {name}")
+        lines.append("")
+        if severity:
+            lines.append(f"- Severity: {severity}")
+        if method or url:
+            lines.append(f"- Endpoint: {method} {url}".strip())
+        if parameter:
+            lines.append(f"- Parameter: {parameter}")
+        if labs_url and labs_url != url:
+            lines.append(f"- Reference: {labs_url}")
+        if description:
+            lines.append("")
+            lines.append(description[:1500])
+        if evidence:
+            lines.append("")
+            lines.append("Evidence:")
+            lines.append("```")
+            lines.append(str(evidence)[:800])
+            lines.append("```")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def merge_probely_scans(scan_data_list: list) -> dict:
     """Merge findings from multiple Probely scans into one."""
     all_findings = []
@@ -1014,8 +1065,9 @@ def main():
     # mode (no known vulns) — Haiku is fast and adequate for extraction.
     explicit_model = args.model is not None
 
-    # Only need LLM for markdown import (not for --probely)
-    need_llm = not args.probely
+    # Every import path (markdown, file, Probely) maps findings to known
+    # vulns via the LLM, so the LLM is always required.
+    need_llm = True
 
     if need_llm:
         if args.use_cli:
@@ -1182,14 +1234,26 @@ def main():
         # Merge findings
         merged = merge_probely_scans(scan_data_list)
 
-        # Build mapping (same structure as LLM output, but without LLM)
+        # Hand the Probely findings to the same LLM mapper the markdown flow
+        # uses. Without this, every Probely finding lands as "Pending"
+        # because the CLI has no client-side matcher of its own.
+        raw_findings = []
+        for sd in scan_data_list:
+            raw_findings.extend(sd["findings"])
+        scan_md = probely_findings_to_markdown(raw_findings, scan_ids)
+        try:
+            if use_cli:
+                llm_out = run_llm_mapping_cli(scan_md, vulns, spinner_msg="Mapping Probely findings with Claude CLI...")
+            else:
+                llm_out = run_llm_mapping(scan_md, vulns, args.model, llm_client, spinner_msg="Mapping Probely findings with Claude...")
+        except (LLMCallError, json.JSONDecodeError) as e:
+            print(f"  {colored('✗', 'RED')} LLM mapping failed: {e}", file=sys.stderr)
+            sys.exit(1)
+
         mapping = {
-            "scanner_name": args.scanner or merged["scanner_name"],
-            "scan_date": args.scan_start or merged["scan_date"],
-            "findings": [
-                {**f, "matched_vuln_db_id": None, "is_false_positive": False, "reasoning": "Direct import from Probely"}
-                for f in merged["findings"]
-            ],
+            "scanner_name": args.scanner or llm_out.get("scanner_name") or merged["scanner_name"],
+            "scan_date": args.scan_start or llm_out.get("scan_date") or merged["scan_date"],
+            "findings": llm_out.get("findings", []) or [],
         }
 
         # --duration is minutes; backend expects seconds. Probely auto-capture is already seconds.
