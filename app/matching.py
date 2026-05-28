@@ -11,7 +11,9 @@ _VULN_TYPE_ALIASES: dict = {}
 _VULN_TYPE_GROUPS = [
     ["sqli", "sql injection", "sql-injection", "sql_injection"],
     ["xss", "cross-site scripting", "cross site scripting", "reflected xss",
-     "stored xss", "dom xss", "dom-based xss"],
+     "stored xss", "dom xss", "dom-based xss",
+     "reflected cross-site scripting", "stored cross-site scripting",
+     "dom-based cross-site scripting", "dom based cross-site scripting"],
     ["idor", "bola", "insecure direct object reference",
      "broken object level authorization"],
     ["broken authentication", "authentication bypass", "auth bypass"],
@@ -23,7 +25,17 @@ _VULN_TYPE_GROUPS = [
      "file inclusion"],
     ["open redirect", "url redirect", "unvalidated redirect",
      "unvalidated redirect and forward"],
-    ["security misconfiguration", "misconfiguration", "missing security headers"],
+    ["security misconfiguration", "misconfiguration", "missing security headers",
+     "hsts header not enforced", "missing hsts", "strict-transport-security missing",
+     "missing content security policy header", "missing csp header",
+     "content security policy missing",
+     "missing clickjacking protection", "x-frame-options missing",
+     "browser content sniffing allowed", "x-content-type-options missing",
+     "referrer policy not defined", "missing referrer policy",
+     "weak cipher suites enabled", "weak ciphers", "weak ssl ciphers",
+     "deprecated tls protocol version 1.0 supported",
+     "deprecated tls protocol version 1.1 supported",
+     "tls 1.0 supported", "tls 1.1 supported"],
     ["privilege escalation", "mass assignment", "vertical privilege escalation"],
     ["data exposure", "excessive data exposure", "bopla",
      "broken object property level authorization"],
@@ -38,7 +50,10 @@ _VULN_TYPE_GROUPS = [
     ["http header injection", "header injection", "crlf injection"],
     ["insecure deserialization", "object injection"],
     ["file upload", "unrestricted file upload", "arbitrary file upload"],
-    ["cors misconfiguration", "cors"],
+    ["cors misconfiguration", "cors",
+     "cross origin resource sharing: arbitrary origin trusted",
+     "cors: arbitrary origin trusted",
+     "cross-origin resource sharing misconfiguration"],
     ["clickjacking", "ui redressing"],
     ["jwt", "jwt vulnerability", "insecure jwt"],
     ["weak cryptography", "weak crypto", "broken cryptography"],
@@ -72,6 +87,23 @@ def _strip_query_string(url: str) -> str:
     """Remove query string from URL, keeping only the path."""
     idx = url.find('?')
     return url[:idx] if idx != -1 else url
+
+
+def _path_only(url: str) -> str:
+    """Reduce a possibly-absolute URL to its path component.
+
+    Known vuln URLs are stored as paths (``/wines/:id``); DAST scanners
+    (Probely, ZAP, …) often report absolute URLs (``https://host/wines/2``).
+    Without this normalisation the regex anchored at ``^/`` never matches.
+    """
+    if not url:
+        return url
+    # scheme://host/path  →  /path
+    if "://" in url:
+        rest = url.split("://", 1)[1]
+        slash = rest.find("/")
+        return rest[slash:] if slash != -1 else "/"
+    return url
 
 
 @lru_cache(maxsize=512)
@@ -140,8 +172,8 @@ def _url_match_score(finding_url: str, known_url: str) -> int:
     if not finding_url or not known_url:
         return 0
 
-    f_url = _strip_query_string(finding_url).strip().lower()
-    k_url = known_url.strip().lower()
+    f_url = _path_only(_strip_query_string(finding_url).strip()).lower()
+    k_url = _path_only(known_url.strip()).lower()
 
     # Normalize trailing slashes
     if f_url != '/' and f_url.endswith('/'):
@@ -149,23 +181,30 @@ def _url_match_score(finding_url: str, known_url: str) -> int:
     if k_url != '/' and k_url.endswith('/'):
         k_url = k_url.rstrip('/')
 
-    # Exact match (after normalization)
-    if f_url == k_url:
-        return 100
-
-    # Global wildcard
+    # Global wildcard — match anything (used for origin-wide vulns).
     if k_url == '/*':
         return 10
 
-    # Compile known URL to regex and try matching
-    regex = _url_to_regex(known_url)
-    if regex and regex.match(f_url):
-        if known_url.strip().rstrip('/').endswith('/*'):
-            return 40
-        n = _count_placeholders(known_url)
-        return max(80 - 5 * n, 50)
+    # Build candidate finding paths so a finding URL of /api/foo can still
+    # match a known vuln stored as /foo. DAST scanners report whatever the
+    # public route looks like, but vulns in the registry are usually keyed
+    # by the backend route.
+    candidates = [f_url]
+    if f_url.startswith('/api/'):
+        candidates.append(f_url[4:])  # /api/foo → /foo
 
-    return 0
+    regex = _url_to_regex(known_url)
+    best = 0
+    for cand in candidates:
+        if cand == k_url:
+            return 100
+        if regex and regex.match(cand):
+            if known_url.strip().rstrip('/').endswith('/*'):
+                best = max(best, 40)
+            else:
+                n = _count_placeholders(known_url)
+                best = max(best, max(80 - 5 * n, 50))
+    return best
 
 
 def _param_match_score(finding_param: str, known_param: str) -> int:
