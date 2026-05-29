@@ -699,10 +699,23 @@ def probely_findings_to_markdown(findings: list, scan_ids: list[str]) -> str:
         f"## Findings ({len(findings)})",
         "",
     ]
+    # Probely returns numeric severity codes; map to the canonical string set
+    # used by the rest of the pipeline. 0=info, 10=low, 20=medium, 30=high,
+    # 40=critical — observed in the Probely API; unknown values pass through.
+    _PROBELY_SEV = {0: "info", 10: "low", 20: "medium", 30: "high", 40: "critical"}
+
+    def _norm_sev(value) -> str:
+        if isinstance(value, int):
+            return _PROBELY_SEV.get(value, "")
+        if isinstance(value, str):
+            v = value.strip().lower()
+            return _PROBELY_SEV.get(int(v), v) if v.isdigit() else v
+        return ""
+
     for i, f in enumerate(findings, 1):
         defn = f.get("definition") or {}
         name = defn.get("name") or f.get("name") or "Unknown"
-        severity = (f.get("severity") or "").lower()
+        severity = _norm_sev(f.get("severity"))
         method = f.get("method") or ""
         url = f.get("url") or ""
         parameter = f.get("parameter") or ""
