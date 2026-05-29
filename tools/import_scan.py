@@ -136,16 +136,22 @@ IMPORTANT RULES:
 all map to a single known vulnerability called "Missing Security Headers".
 - Only map a finding to a vulnerability if there is a genuine semantic match. \
 Do not force matches.
+- Same endpoint does NOT imply same vulnerability. The attack class \
+(vuln_type) must match. For example: a "Path Traversal" finding does NOT map \
+to an "SSRF" known vuln even if both hit /wines/import-url; a "CSRF" finding \
+does NOT map to an "XSS" known vuln on the same form. If no known vuln has \
+the same attack class, set matched_vuln_db_id to null.
 - If a finding does not match any known vulnerability, set matched_vuln_db_id to null.
 - Use the database `id` field (integer) for matched_vuln_db_id, NOT the `vuln_id` string.
 - Extract the scanner name and scan date from the report if available.
 - For vuln_type, use a short canonical type (e.g., "XSS", "SQLi", "IDOR", \
 "Missing Security Headers", "CSRF", etc.)
-- For findings that do NOT map to a known vulnerability (matched_vuln_db_id=null) \
-and are NOT false positives, fill in the rich detail fields below from the scan \
-report (description, severity, poc, remediation, code_location). These let the \
-user one-click "promote" the finding into a documented vulnerability later. \
-Leave them empty for findings that already match a known vulnerability.
+- ALWAYS fill in the rich detail fields (description, severity, poc, \
+remediation, code_location) for every finding when the report provides that \
+information, regardless of whether the finding mapped to a known vuln. The \
+user reads these fields to confirm the mapping was correct and to spot \
+forced/wrong matches. Only leave a field empty when the report itself gives \
+no value for it.
 - severity must be one of: "critical", "high", "medium", "low", "info".
 
 Respond with ONLY valid JSON (no markdown fencing) in this exact format:
@@ -163,11 +169,11 @@ Respond with ONLY valid JSON (no markdown fencing) in this exact format:
             "matched_vuln_db_id": 123 or null,
             "is_false_positive": false,
             "reasoning": "string - brief explanation of why this maps (or doesn't) to the known vuln",
-            "severity": "critical|high|medium|low|info — required for unmapped findings, empty otherwise",
-            "description": "string — what the issue is, why it matters (unmapped only)",
-            "poc": "string — proof-of-concept / reproduction steps (unmapped only)",
-            "remediation": "string — how to fix (unmapped only)",
-            "code_location": "string — file:line or function name if known (unmapped only)"
+            "severity": "critical|high|medium|low|info — always when the report has it",
+            "description": "string — what the issue is, why it matters (always when the report has it)",
+            "poc": "string — proof-of-concept / reproduction steps (always when the report has it)",
+            "remediation": "string — how to fix (always when the report has it)",
+            "code_location": "string — file:line or function name if known (always when the report has it)"
         }
     ]
 }"""
