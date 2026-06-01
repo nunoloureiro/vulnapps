@@ -56,6 +56,7 @@ export default function ScansList() {
         case 'app': return `${(s.app_name || '').toLowerCase()} ${s.app_version || ''}`;
         case 'tp': return s.tp_count ?? -1;
         case 'fp': return s.fp_count ?? -1;
+        case 'pending': return s.pending_count ?? -1;
         case 'date':
         default: return s.scan_date || '';
       }
@@ -70,12 +71,21 @@ export default function ScansList() {
     return sorted;
   }, [rawScans, sortKey, sortDir]);
 
+  const totals = useMemo(() => scans.reduce(
+    (acc, s) => ({
+      tp: acc.tp + (s.tp_count ?? 0),
+      fp: acc.fp + (s.fp_count ?? 0),
+      pending: acc.pending + (s.pending_count ?? 0),
+    }),
+    { tp: 0, fp: 0, pending: 0 },
+  ), [scans]);
+
   const toggleSort = (key) => {
     if (sortKey === key) {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     } else {
       setSortKey(key);
-      setSortDir(key === 'date' || key === 'tp' || key === 'fp' ? 'desc' : 'asc');
+      setSortDir(key === 'date' || key === 'tp' || key === 'fp' || key === 'pending' ? 'desc' : 'asc');
     }
   };
   const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
@@ -188,6 +198,7 @@ export default function ScansList() {
                   {sortableTh('date', 'Date')}
                   {sortableTh('tp', 'TP')}
                   {sortableTh('fp', 'FP')}
+                  {sortableTh('pending', 'Pending')}
                   <th>Labels</th>
                   {user && <th style={{ width: 40 }}></th>}
                 </tr>
@@ -217,6 +228,7 @@ export default function ScansList() {
                       <td>{scan.scan_date}</td>
                       <td className="text-success">{scan.tp_count ?? '-'}</td>
                       <td className="text-error">{scan.fp_count ?? '-'}</td>
+                      <td className="text-muted">{scan.pending_count ?? '-'}</td>
                       <td>
                         {labels.length > 0 && (
                           <div className="scan-labels-cell">
@@ -238,6 +250,19 @@ export default function ScansList() {
                   );
                 })}
               </tbody>
+              <tfoot>
+                <tr className="scans-totals-row">
+                  {user && <td></td>}
+                  <td className="text-muted">Total</td>
+                  {!appId && <td></td>}
+                  <td></td>
+                  <td className="text-success">{totals.tp}</td>
+                  <td className="text-error">{totals.fp}</td>
+                  <td className="text-muted">{totals.pending}</td>
+                  <td></td>
+                  {user && <td></td>}
+                </tr>
+              </tfoot>
             </table>
           </div>
         </div>

@@ -184,7 +184,8 @@ async def list_scans(
     base_query = f"""SELECT scans.*, apps.name as app_name, apps.version as app_version,
                   users.name as submitter_name,
                   (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
-                  (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count
+                  (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count,
+                  (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NULL AND is_false_positive=0) as pending_count
            FROM scans
            LEFT JOIN apps ON scans.app_id=apps.id
            LEFT JOIN users ON scans.submitted_by=users.id

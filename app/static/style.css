@@ -293,7 +293,9 @@ th {
     font-size: 0.75rem;
     letter-spacing: 0.05em;
 }
-tr:hover { background: rgba(255,255,255,0.02); }
+tbody tr:hover { background: rgba(255,255,255,0.02); }
+tfoot tr { font-weight: 600; background: rgba(255,255,255,0.02); }
+tfoot td { border-top: 2px solid var(--border); border-bottom: none; }
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable:hover { color: var(--accent); }
 th.sortable::after { content: ''; margin-left: 0.25rem; }
