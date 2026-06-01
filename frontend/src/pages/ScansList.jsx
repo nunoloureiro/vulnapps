@@ -57,6 +57,7 @@ export default function ScansList() {
         case 'tp': return s.tp_count ?? -1;
         case 'fp': return s.fp_count ?? -1;
         case 'pending': return s.pending_count ?? -1;
+        case 'fn': return s.fn_count ?? -1;
         case 'date':
         default: return s.scan_date || '';
       }
@@ -76,16 +77,38 @@ export default function ScansList() {
       tp: acc.tp + (s.tp_count ?? 0),
       fp: acc.fp + (s.fp_count ?? 0),
       pending: acc.pending + (s.pending_count ?? 0),
+      fn: acc.fn + (s.fn_count ?? 0),
+      critical: acc.critical + (s.sev_critical ?? 0),
+      high: acc.high + (s.sev_high ?? 0),
+      medium: acc.medium + (s.sev_medium ?? 0),
+      low: acc.low + (s.sev_low ?? 0),
+      info: acc.info + (s.sev_info ?? 0),
     }),
-    { tp: 0, fp: 0, pending: 0 },
+    { tp: 0, fp: 0, pending: 0, fn: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0 },
   ), [scans]);
+
+  const SeverityCells = ({ s }) => (
+    <>
+      {['critical','high','medium','low','info'].map(sev => {
+        const n = s?.[`sev_${sev}`] ?? s?.[sev] ?? 0;
+        return (
+          <span key={sev}
+            className={`sev-pill sev-pill-${n > 0 ? sev : 'empty'}`}
+            title={`${sev}: ${n}`}>
+            <span className="sev-pill-count">{n}</span>
+            <span className="sev-pill-letter">{sev[0].toUpperCase()}</span>
+          </span>
+        );
+      })}
+    </>
+  );
 
   const toggleSort = (key) => {
     if (sortKey === key) {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     } else {
       setSortKey(key);
-      setSortDir(key === 'date' || key === 'tp' || key === 'fp' || key === 'pending' ? 'desc' : 'asc');
+      setSortDir(['date','tp','fp','pending','fn'].includes(key) ? 'desc' : 'asc');
     }
   };
   const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
@@ -199,6 +222,8 @@ export default function ScansList() {
                   {sortableTh('tp', 'TP')}
                   {sortableTh('fp', 'FP')}
                   {sortableTh('pending', 'Pending')}
+                  {sortableTh('fn', 'FN')}
+                  <th>Severity</th>
                   <th>Labels</th>
                   {user && <th style={{ width: 40 }}></th>}
                 </tr>
@@ -229,6 +254,8 @@ export default function ScansList() {
                       <td className="text-success">{scan.tp_count ?? '-'}</td>
                       <td className="text-error">{scan.fp_count ?? '-'}</td>
                       <td className="text-muted">{scan.pending_count ?? '-'}</td>
+                      <td className="text-warn">{scan.fn_count ?? '-'}</td>
+                      <td><span className="sev-pill-group"><SeverityCells s={scan} /></span></td>
                       <td>
                         {labels.length > 0 && (
                           <div className="scan-labels-cell">
@@ -259,6 +286,14 @@ export default function ScansList() {
                   <td className="text-success">{totals.tp}</td>
                   <td className="text-error">{totals.fp}</td>
                   <td className="text-muted">{totals.pending}</td>
+                  <td className="text-warn">{totals.fn}</td>
+                  <td><span className="sev-pill-group"><SeverityCells s={{
+                    sev_critical: totals.critical,
+                    sev_high: totals.high,
+                    sev_medium: totals.medium,
+                    sev_low: totals.low,
+                    sev_info: totals.info,
+                  }} /></span></td>
                   <td></td>
                   {user && <td></td>}
                 </tr>

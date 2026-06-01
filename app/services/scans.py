@@ -181,15 +181,38 @@ async def list_scans(
 
     vis_clause, vis_params = scan_visibility_filter(user)
 
+    # Severity counts use COALESCE(finding.severity, vuln.severity) so a TP
+    # finding (whose severity is usually empty by design — the LLM was told
+    # to leave it blank for matched findings) still contributes through the
+    # severity carried on the matched vulnerability. FP findings are
+    # excluded — the user explicitly marked them as not-real.
+    sev_subquery = (
+        "(SELECT COUNT(*) FROM scan_findings sf "
+        "LEFT JOIN vulnerabilities v ON v.id = sf.matched_vuln_id "
+        "WHERE sf.scan_id = scans.id AND sf.is_false_positive = 0 "
+        "AND lower(COALESCE(NULLIF(sf.severity, ''), v.severity)) = ?)"
+    )
+
     base_query = f"""SELECT scans.*, apps.name as app_name, apps.version as app_version,
                   users.name as submitter_name,
                   (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
                   (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count,
-                  (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NULL AND is_false_positive=0) as pending_count
+                  (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NULL AND is_false_positive=0) as pending_count,
+                  ((SELECT COUNT(*) FROM vulnerabilities WHERE app_id = scans.app_id)
+                   - (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL)) as fn_count,
+                  {sev_subquery} as sev_critical,
+                  {sev_subquery} as sev_high,
+                  {sev_subquery} as sev_medium,
+                  {sev_subquery} as sev_low,
+                  {sev_subquery} as sev_info
            FROM scans
            LEFT JOIN apps ON scans.app_id=apps.id
            LEFT JOIN users ON scans.submitted_by=users.id
            WHERE {vis_clause}{extra_filters}"""
+
+    # Severity subqueries each take one bound parameter, prepended to the
+    # existing visibility + filter params.
+    sev_params = ["critical", "high", "medium", "low", "info"]
 
     if latest:
         sql = f"""WITH base AS ({base_query}),
@@ -204,7 +227,9 @@ async def list_scans(
     else:
         sql = base_query + " ORDER BY scans.created_at DESC"
 
-    cursor = await db.execute(sql, vis_params + extra_params)
+    # The base query's SELECT contains the severity subqueries (which use
+    # placeholders), then the WHERE clause's visibility + extra-filter params.
+    cursor = await db.execute(sql, sev_params + vis_params + extra_params)
     scans = await cursor.fetchall()
 
     # Batch-fetch labels for all returned scans
