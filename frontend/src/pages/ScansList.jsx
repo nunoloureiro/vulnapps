@@ -82,18 +82,17 @@ export default function ScansList() {
       high: acc.high + (s.sev_high ?? 0),
       medium: acc.medium + (s.sev_medium ?? 0),
       low: acc.low + (s.sev_low ?? 0),
-      info: acc.info + (s.sev_info ?? 0),
     }),
-    { tp: 0, fp: 0, pending: 0, fn: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+    { tp: 0, fp: 0, pending: 0, fn: 0, critical: 0, high: 0, medium: 0, low: 0 },
   ), [scans]);
 
   const SeverityCells = ({ s }) => (
     <>
-      {['critical','high','medium','low','info'].map(sev => {
+      {['critical','high','medium','low'].map(sev => {
         const n = s?.[`sev_${sev}`] ?? s?.[sev] ?? 0;
         return (
           <span key={sev}
-            className={`sev-pill sev-pill-${n > 0 ? sev : 'empty'}`}
+            className={`sev-pill sev-pill-${sev}${n === 0 ? ' sev-pill-zero' : ''}`}
             title={`${sev}: ${n}`}>
             <span className="sev-pill-count">{n}</span>
             <span className="sev-pill-letter">{sev[0].toUpperCase()}</span>
@@ -292,7 +291,6 @@ export default function ScansList() {
                     sev_high: totals.high,
                     sev_medium: totals.medium,
                     sev_low: totals.low,
-                    sev_info: totals.info,
                   }} /></span></td>
                   <td></td>
                   {user && <td></td>}

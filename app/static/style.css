@@ -332,8 +332,13 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 }
 .sev-pill-count, .sev-pill-letter {
     display: inline-flex; align-items: center; justify-content: center;
-    padding: 0 0.4rem; min-width: 18px;
+    box-sizing: border-box;
+    font-variant-numeric: tabular-nums;
 }
+/* Fixed widths so 0/1/12/999 all sit the same — every C in column 1
+ * aligns with every C in column 1 of every other row. */
+.sev-pill-count  { width: 30px; }
+.sev-pill-letter { width: 22px; }
 .sev-pill-critical .sev-pill-count { background: rgba(239,68,68,0.18); color: #ef4444; }
 .sev-pill-critical .sev-pill-letter { background: #b91c1c; color: #fff; }
 .sev-pill-high     .sev-pill-count { background: rgba(249,115,22,0.18); color: #f97316; }
@@ -342,11 +347,18 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .sev-pill-medium   .sev-pill-letter { background: #a16207; color: #fff; }
 .sev-pill-low      .sev-pill-count { background: rgba(148,163,184,0.18); color: #94a3b8; }
 .sev-pill-low      .sev-pill-letter { background: #64748b; color: #fff; }
-.sev-pill-info     .sev-pill-count { background: rgba(59,130,246,0.18); color: #3b82f6; }
-.sev-pill-info     .sev-pill-letter { background: #1d4ed8; color: #fff; }
-.sev-pill-empty { opacity: 0.32; }
-.sev-pill-empty .sev-pill-count { background: rgba(148,163,184,0.10); color: var(--text-muted); }
-.sev-pill-empty .sev-pill-letter { background: rgba(148,163,184,0.20); color: var(--text-muted); }
+
+/* Zero-state: fade *that severity's own colour* rather than dropping to
+ * a grey nobody can read. Letter side keeps its hue at ~22% opacity,
+ * count side at ~8%. Structure is identical so alignment never shifts. */
+.sev-pill-zero.sev-pill-critical .sev-pill-count { background: rgba(239,68,68,0.06); color: rgba(239,68,68,0.55); }
+.sev-pill-zero.sev-pill-critical .sev-pill-letter { background: rgba(185,28,28,0.22); color: rgba(255,255,255,0.55); }
+.sev-pill-zero.sev-pill-high     .sev-pill-count { background: rgba(249,115,22,0.06); color: rgba(249,115,22,0.55); }
+.sev-pill-zero.sev-pill-high     .sev-pill-letter { background: rgba(194,65,12,0.22);  color: rgba(255,255,255,0.55); }
+.sev-pill-zero.sev-pill-medium   .sev-pill-count { background: rgba(234,179,8,0.06);  color: rgba(234,179,8,0.55); }
+.sev-pill-zero.sev-pill-medium   .sev-pill-letter { background: rgba(161,98,7,0.22);   color: rgba(255,255,255,0.55); }
+.sev-pill-zero.sev-pill-low      .sev-pill-count { background: rgba(148,163,184,0.06); color: rgba(148,163,184,0.55); }
+.sev-pill-zero.sev-pill-low      .sev-pill-letter { background: rgba(100,116,139,0.22); color: rgba(255,255,255,0.55); }
 
 .text-warn { color: #eab308; }
 .badge-user { background: rgba(161,161,170,0.15); color: #a1a1aa; }
