@@ -792,9 +792,11 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
         align-items: stretch;
         gap: 0.15rem;
         padding: 0.5rem;
-        background: var(--bg-panel);
-        border-bottom: 1px solid var(--border);
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+        /* A touch lighter than --bg-panel so the open menu reads as an
+           elevated surface against the near-black page background. */
+        background: #202024;
+        border-bottom: 1px solid var(--border-hover);
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
         max-height: calc(100vh - 56px);
         overflow-y: auto;
     }
