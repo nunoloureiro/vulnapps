@@ -491,6 +491,14 @@ Respond with ONLY valid JSON (no markdown fencing)."""
         return json.loads(text)
 
 
+def format_duration(seconds: float) -> str:
+    """Human-friendly elapsed time, e.g. '47s' or '2m 7s'."""
+    secs = int(round(seconds))
+    if secs < 60:
+        return f"{secs}s"
+    return f"{secs // 60}m {secs % 60}s"
+
+
 def print_header(text: str, width: int = 60):
     """Print a styled section header."""
     line = colored("─" * width, "GRAY")
@@ -979,6 +987,8 @@ def main():
         show_pretty_help()
         return
 
+    started_at = time.monotonic()
+
     parser = argparse.ArgumentParser(
         description="Import scan results into Vulnapps with LLM-assisted vulnerability mapping"
     )
@@ -1319,6 +1329,7 @@ def main():
             print(f"  {colored('✗', 'RED')} Submit failed: {e.response.status_code} {e.response.text}", file=sys.stderr)
             sys.exit(1)
 
+        print(f"  {colored('⏱', 'CYAN')} Import time: {colored(format_duration(time.monotonic() - started_at), 'BOLD')}")
         print(f"\n  {colored('Done.', 'GREEN')}\n")
         return  # Skip the markdown processing below
 
@@ -1572,6 +1583,7 @@ def main():
         except OSError:
             pass
 
+    print(f"  {colored('⏱', 'CYAN')} Import time: {colored(format_duration(time.monotonic() - started_at), 'BOLD')}")
     print(f"\n  {colored('Done.', 'GREEN')}\n")
 
 
