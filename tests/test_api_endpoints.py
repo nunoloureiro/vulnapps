@@ -66,14 +66,19 @@ def transport():
 
 @pytest.mark.asyncio
 async def test_01_spa_serving(transport):
-    """GET / should return HTML with style.css link and React root div."""
+    """GET / should return HTML linking a stylesheet and the React root div.
+
+    The CSS is bundled by Vite into a content-hashed /assets/*.css (so it
+    cache-busts with the JS), so assert a stylesheet link exists rather than a
+    fixed style.css URL.
+    """
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.get("/")
     assert r.status_code == 200, f"Expected 200, got {r.status_code}"
     assert "text/html" in r.headers.get("content-type", "")
-    assert "style.css" in r.text
+    assert 'rel="stylesheet"' in r.text and ".css" in r.text
     assert 'id="root"' in r.text
-    print(f"  PASS: GET / -> {r.status_code}, HTML with style.css and #root")
+    print(f"  PASS: GET / -> {r.status_code}, HTML with stylesheet link and #root")
 
 
 @pytest.mark.asyncio
