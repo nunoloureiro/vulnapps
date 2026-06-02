@@ -106,7 +106,6 @@ vulnapps/
 │   ├── matching.py           # Shared scan finding matching logic (DAST + SAST)
 │   ├── visibility.py         # App/scan visibility filter (public/team/private)
 │   ├── models.py             # Pydantic schemas
-│   ├── templating.py         # Legacy — Jinja2Templates instance (kept for compatibility)
 │   ├── seed.py               # TaintedPort seed data (25+ vulns, auto-seeded on first admin registration)
 │   ├── routers/
 │   │   ├── __init__.py
@@ -119,13 +118,6 @@ vulnapps/
 │   │   │   ├── scans.py      # /api/scans — scan CRUD, findings, labels, compare, submit
 │   │   │   ├── teams.py      # /api/teams — team CRUD, member management
 │   │   │   └── admin.py      # /api/admin — user management, label management
-│   │   ├── api_legacy.py     # Legacy /api/v1 routes (kept for backward compatibility)
-│   │   ├── auth_routes.py    # Legacy web auth routes
-│   │   ├── apps.py           # Legacy web app routes
-│   │   ├── vulns.py          # Legacy web vuln routes
-│   │   ├── scans.py          # Legacy web scan routes
-│   │   ├── admin.py          # Legacy web admin routes
-│   │   └── teams.py          # Legacy web team routes
 │   ├── services/             # Business logic layer
 │   │   ├── __init__.py
 │   │   ├── auth.py           # Login, register, me, API key management, password/name updates
@@ -216,7 +208,6 @@ vulnapps/
 ```
 fastapi
 uvicorn[standard]
-jinja2
 python-multipart
 aiosqlite
 pyjwt
@@ -861,7 +852,7 @@ python tools/import_scan.py --url https://vulnapps.example.com \
 
 **Features:**
 - Reads one or more `.md` scan result files (combines into single scan via `--dir`)
-- Sends scan content + known vulns to Claude for mapping
+- Sends scan content + known vulns to Claude for mapping (streamed response — non-streaming calls stall on the 600s read timeout for detail-rich reports; cap is 16384 output tokens)
 - Displays colored mapping table (matched, unmatched, FP)
 - Submits scan and applies LLM match corrections
 - Auto-captures LLM token count from response
