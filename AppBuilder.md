@@ -597,7 +597,11 @@ All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT 
 ### Technology
 - **Framework:** React 18 with Vite 5
 - **Routing:** React Router DOM v6
-- **Styling:** Reuses existing `style.css` from `/static/style.css` (no CSS framework)
+- **Styling:** `app/static/style.css` (no CSS framework), imported in `main.jsx` so Vite
+  bundles it into a **content-hashed** `/assets/index-<hash>.css` injected into `index.html`.
+  This versions the CSS in lockstep with the JS bundle — a deploy can never leave a fresh
+  `index.html` pointing at a CDN-cached stale stylesheet. (Do NOT re-add a manual
+  `<link href="/static/style.css">`; that fixed URL is what caused post-deploy cache skew.)
 - **Auth:** JWT stored in `localStorage`, sent as `Authorization: Bearer` header
 - **API Client:** `frontend/src/api/client.js` — thin fetch wrapper with auto-401 redirect
 
@@ -616,7 +620,7 @@ A single `@media (max-width: 768px)` block in `style.css` drives the mobile layo
   Genuinely 2D matrices (ScanCompare, Dashboard heatmap) stay on horizontal scroll instead.
 
 ### Vite Configuration
-Dev server proxies `/api` and `/static` to `http://127.0.0.1:8000`. Build output goes to `frontend/dist/`.
+Dev server proxies `/api` and `/static` to `http://127.0.0.1:8000`, and sets `server.fs.allow: ['..']` so `main.jsx` can import `app/static/style.css` (which lives above the Vite root). Build output goes to `frontend/dist/` with content-hashed JS and CSS assets.
 
 ### Auth Context (`AuthContext.jsx`)
 React context providing `{user, loading, login, register, logout, refreshUser}`. On mount, checks for stored token and calls `/api/auth/me` to restore session.
