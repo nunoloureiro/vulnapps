@@ -387,6 +387,30 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
     border: 1px solid var(--border-hover);
     cursor: help;
 }
+.label-overflow-wrap {
+    position: relative;
+    display: inline-flex;
+    outline: none;
+}
+.label-overflow-pop {
+    position: absolute;
+    bottom: calc(100% + 0.4rem);
+    left: 0;
+    z-index: 20;
+    display: none;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    max-width: 22rem;
+    padding: 0.4rem;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-hover);
+    border-radius: 0.5rem;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+.label-overflow-wrap:hover .label-overflow-pop,
+.label-overflow-wrap:focus-within .label-overflow-pop {
+    display: flex;
+}
 .scan-labels-cell {
     display: flex;
     flex-wrap: wrap;

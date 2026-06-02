@@ -4,6 +4,26 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import { LabelBadge } from '../components/LabelBadge';
 
+// Ordering for which labels survive when the cell can only show a few.
+// Lower rank = higher priority (kept). judge-* and thinking-* are dropped first.
+function labelRank(name) {
+  const n = (name || '').toLowerCase();
+  if (n.startsWith('judge') || n.startsWith('thinking')) return 90;
+  if (['blackbox', 'greybox', 'graybox', 'whitebox'].includes(n)) return 0; // assessment type
+  if (/(claude|gpt|gemini|llama|opus|sonnet|haiku|mistral|qwen|deepseek|grok|o\d)/.test(n)) return 10; // model
+  if (n.startsWith('used-')) return 20;
+  return 30; // other uncategorised labels
+}
+
+function prioritiseLabels(labels) {
+  return labels
+    .map((l, i) => ({ l, i }))
+    .sort((a, b) => labelRank(a.l.name) - labelRank(b.l.name) || a.i - b.i)
+    .map(({ l }) => l);
+}
+
+const MAX_VISIBLE_LABELS = 3;
+
 export default function ScansList() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -229,7 +249,8 @@ export default function ScansList() {
               </thead>
               <tbody>
                 {scans.map(scan => {
-                  const labels = labelsMap[scan.id] || [];
+                  const labels = prioritiseLabels(labelsMap[scan.id] || []);
+                  const hiddenLabels = labels.slice(MAX_VISIBLE_LABELS);
                   return (
                     <tr key={scan.id}>
                       {user && (
@@ -258,8 +279,15 @@ export default function ScansList() {
                       <td>
                         {labels.length > 0 && (
                           <div className="scan-labels-cell">
-                            {labels.slice(0, 3).map(l => <LabelBadge key={l.id} label={l} />)}
-                            {labels.length > 3 && <span className="label-badge label-overflow" title={labels.slice(3).map(l => l.name).join(', ')}>+{labels.length - 3}</span>}
+                            {labels.slice(0, MAX_VISIBLE_LABELS).map(l => <LabelBadge key={l.id} label={l} />)}
+                            {hiddenLabels.length > 0 && (
+                              <span className="label-overflow-wrap" tabIndex={0}>
+                                <span className="label-badge label-overflow">+{hiddenLabels.length}</span>
+                                <span className="label-overflow-pop">
+                                  {hiddenLabels.map(l => <LabelBadge key={l.id} label={l} />)}
+                                </span>
+                              </span>
+                            )}
                           </div>
                         )}
                       </td>
