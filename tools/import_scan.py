@@ -116,6 +116,12 @@ class LLMCallError(Exception):
     retry or surface the error to the user."""
 
 
+# Output cap for the mapping/extraction call. A detail-rich report (20+
+# findings, each with description/evidence/remediation/code_location) easily
+# overruns the old 8192 cap, which truncates the JSON mid-finding and trips a
+# JSONDecodeError. 16384 leaves comfortable headroom.
+MAX_OUTPUT_TOKENS = 16384
+
 # ── Prompt ───────────────────────────────────────────────────
 
 SYSTEM_PROMPT_MAP = """\
@@ -377,15 +383,22 @@ def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_
 
 {scan_content}"""
 
+    # Stream the response. A non-streaming create() holds one socket open with
+    # no bytes flowing until the whole answer is ready; on a detail-rich report
+    # the server-side generation outlasts the 600s read timeout and the request
+    # dies with APITimeoutError. Streaming keeps SSE events flowing so the
+    # connection never idles. See https://docs.anthropic.com/en/api/errors#long-requests
     with Spinner(spinner_msg or "Analyzing scan with Claude..."):
-        response = client.messages.create(
+        with client.messages.stream(
             model=model,
-            max_tokens=8192,
+            max_tokens=MAX_OUTPUT_TOKENS,
             system=system,
             messages=[{"role": "user", "content": user_message}],
-        )
+        ) as stream:
+            text = stream.get_final_text()
+            response = stream.get_final_message()
 
-    text = response.content[0].text.strip()
+    text = text.strip()
     # Strip markdown code fences if present
     if text.startswith("```"):
         text = text.split("\n", 1)[1]
@@ -950,7 +963,7 @@ def show_pretty_help():
     ./scanimport.sh --dry-run --app-id 1 --dir ./scan-results/
     ./scanimport.sh --app-id 1 --file ./zap-scan.md
     ./scanimport.sh --create-app {o}'{{"name":"juice-shop","version":"14"}}'{r} --file ./scan.md
-    ./scanimport.sh --app-id 1 --dir ./scans/ --labels {o}"claude-opus-4-7,greybox,used-sast"{r}
+    ./scanimport.sh --app-id 1 --dir ./scans/ --scanner {o}"Snyk COS"{r} --scanner-version 101 --scan-start {o}"2026-08-04"{r} --labels {o}"claude-opus-4-7,greybox,used-sast"{r}
     ./scanimport.sh --app-id 1 --probely abc123,def456
 """)
 
