@@ -128,15 +128,15 @@ vulnapps/
 │   │   ├── teams.py          # Team CRUD, member management
 │   │   └── users.py          # Admin user management (list, update, delete, profiles)
 │   └── static/
-│       ├── style.css         # Full dark theme CSS (shared by React SPA)
-│       └── logo.svg          # Shield + crosshair SVG logo (orange on dark)
+│       └── logo.svg          # Shield + crosshair SVG logo (served at /static/logo.svg)
 ├── frontend/                 # React SPA (Vite)
 │   ├── index.html            # HTML entry point
 │   ├── package.json          # Dependencies: react, react-dom, react-router-dom
 │   ├── vite.config.js        # Vite config with dev proxy to backend
 │   ├── dist/                 # Built output (served by FastAPI in production)
 │   └── src/
-│       ├── main.jsx          # React entry point
+│       ├── main.jsx          # React entry point (imports style.css for Vite to hash + bundle)
+│       ├── style.css         # Full dark theme CSS (bundled by Vite → content-hashed asset)
 │       ├── App.jsx           # Router with all 19 page routes
 │       ├── api/
 │       │   └── client.js     # API client: fetch wrapper with JWT auth, auto-redirect on 401
@@ -597,11 +597,12 @@ All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT 
 ### Technology
 - **Framework:** React 18 with Vite 5
 - **Routing:** React Router DOM v6
-- **Styling:** `app/static/style.css` (no CSS framework), imported in `main.jsx` so Vite
+- **Styling:** `frontend/src/style.css` (no CSS framework), imported in `main.jsx` so Vite
   bundles it into a **content-hashed** `/assets/index-<hash>.css` injected into `index.html`.
   This versions the CSS in lockstep with the JS bundle — a deploy can never leave a fresh
-  `index.html` pointing at a CDN-cached stale stylesheet. (Do NOT re-add a manual
-  `<link href="/static/style.css">`; that fixed URL is what caused post-deploy cache skew.)
+  `index.html` pointing at a CDN-cached stale stylesheet. (Do NOT move it back to
+  `app/static/` + a manual `<link href="/static/style.css">`; that fixed URL is what caused
+  post-deploy cache skew, and the Docker frontend stage only copies `frontend/`.)
 - **Auth:** JWT stored in `localStorage`, sent as `Authorization: Bearer` header
 - **API Client:** `frontend/src/api/client.js` — thin fetch wrapper with auto-401 redirect
 
