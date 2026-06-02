@@ -62,6 +62,18 @@ a:hover { color: var(--accent-hover); }
     width: 28px;
     height: 28px;
 }
+/* Hamburger toggle — desktop hides it; the mobile media query reveals it. */
+.navbar-toggle {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    padding: 0.25rem;
+    cursor: pointer;
+}
+.navbar-toggle:hover { color: var(--accent); }
 .navbar-nav {
     display: flex;
     align-items: center;
@@ -117,7 +129,8 @@ a:hover { color: var(--accent-hover); }
     color: var(--accent);
     background: var(--accent-dim);
 }
-.nav-dropdown:hover .nav-dropdown-menu { display: block; }
+.nav-dropdown:hover .nav-dropdown-menu,
+.nav-dropdown.open .nav-dropdown-menu { display: block; }
 
 /* Cards */
 .card {
@@ -758,3 +771,104 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
     line-height: 1;
 }
 .modal-close:hover { color: var(--text); }
+
+/* ──────────────────────────────────────────────────────────────
+   Mobile (≤768px)
+   Burger nav, single-column layouts, and listing tables that
+   collapse into labelled cards (opt-in via .cards-on-mobile).
+   ────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .container { max-width: 100%; padding: 0 1rem; }
+
+    /* Navbar → burger + slide-down panel */
+    .navbar-toggle { display: flex; }
+    .navbar-nav {
+        display: none;
+        position: absolute;
+        top: 56px;
+        left: 0;
+        right: 0;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.15rem;
+        padding: 0.5rem;
+        background: var(--bg-panel);
+        border-bottom: 1px solid var(--border);
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+        max-height: calc(100vh - 56px);
+        overflow-y: auto;
+    }
+    .navbar-nav.open { display: flex; }
+    .navbar-nav > li { width: 100%; }
+    .navbar-nav a,
+    .navbar-nav .btn {
+        display: block;
+        width: 100%;
+        padding: 0.65rem 0.75rem;
+        font-size: 1rem;
+        text-align: left;
+    }
+
+    /* Admin disclosure renders inline (no absolute popover on mobile) */
+    .nav-dropdown { position: static; }
+    .nav-dropdown-menu {
+        position: static;
+        display: none;
+        border: none;
+        box-shadow: none;
+        min-width: 0;
+        padding: 0 0 0 0.75rem;
+    }
+    .nav-dropdown.open .nav-dropdown-menu { display: block; }
+
+    /* Single-column layouts */
+    .form-row { grid-template-columns: 1fr; }
+    .detail-grid { grid-template-columns: 1fr; gap: 0.15rem 0; }
+    .card-grid { grid-template-columns: 1fr; }
+    .metrics-grid { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+
+    .page-header { flex-direction: column; align-items: flex-start; gap: 0.75rem; }
+    .search-box { max-width: 100%; }
+    .card { padding: 1rem; }
+    .label-overflow-pop { max-width: 90vw; }
+
+    /* Smooth momentum scroll for the matrices that stay tabular */
+    .table-wrap, .compare-scroll { -webkit-overflow-scrolling: touch; }
+
+    /* Listing tables → stacked labelled cards */
+    table.cards-on-mobile { border-collapse: separate; }
+    table.cards-on-mobile thead { display: none; }
+    table.cards-on-mobile tbody,
+    table.cards-on-mobile tfoot { display: block; }
+    table.cards-on-mobile tr {
+        display: block;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 0.5rem 0.85rem;
+        margin-bottom: 0.6rem;
+        background: var(--bg-panel);
+    }
+    table.cards-on-mobile td {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        border: none;
+        padding: 0.35rem 0;
+        text-align: right;
+    }
+    table.cards-on-mobile td::before {
+        content: attr(data-label);
+        color: var(--text-muted);
+        font-weight: 500;
+        text-transform: uppercase;
+        font-size: 0.7rem;
+        letter-spacing: 0.05em;
+        text-align: left;
+    }
+    table.cards-on-mobile td[data-label=""]::before { display: none; }
+    table.cards-on-mobile td[data-label=""] { justify-content: flex-end; }
+    /* Empty cells (no-permission action slots, blank label cells) add nothing
+       as a card row — drop them so cards stay tight. */
+    table.cards-on-mobile td:empty { display: none; }
+}

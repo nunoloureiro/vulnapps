@@ -107,16 +107,16 @@ export default function Account() {
 
           {apiKeys.length > 0 ? (
             <div className="table-wrap">
-              <table>
+              <table className="cards-on-mobile">
                 <thead><tr><th>Prefix</th><th>Name</th><th>Scope</th><th>Created</th><th></th></tr></thead>
                 <tbody>
                   {apiKeys.map(k => (
                     <tr key={k.id}>
-                      <td className="font-mono text-sm">{k.key_prefix}...</td>
-                      <td>{k.name}</td>
-                      <td><span className={`badge badge-${k.scope === 'full' ? 'critical' : k.scope === 'vuln-mapper' ? 'high' : 'info'}`}>{k.scope}</span></td>
-                      <td className="text-muted text-sm">{k.created_at?.slice(0, 10)}</td>
-                      <td><button className="btn btn-outline btn-sm" onClick={() => revokeKey(k.id)}>Revoke</button></td>
+                      <td data-label="Prefix" className="font-mono text-sm">{k.key_prefix}...</td>
+                      <td data-label="Name">{k.name}</td>
+                      <td data-label="Scope"><span className={`badge badge-${k.scope === 'full' ? 'critical' : k.scope === 'vuln-mapper' ? 'high' : 'info'}`}>{k.scope}</span></td>
+                      <td data-label="Created" className="text-muted text-sm">{k.created_at?.slice(0, 10)}</td>
+                      <td data-label=""><button className="btn btn-outline btn-sm" onClick={() => revokeKey(k.id)}>Revoke</button></td>
                     </tr>
                   ))}
                 </tbody>

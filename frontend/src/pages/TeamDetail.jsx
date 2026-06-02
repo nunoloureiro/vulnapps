@@ -105,14 +105,14 @@ export default function TeamDetail() {
       <div className="card">
         <h3 className="card-title mb-2">Members</h3>
         <div className="table-wrap">
-          <table>
+          <table className="cards-on-mobile">
             <thead><tr><th>Name</th><th>Email</th><th>Role</th>{is_team_admin && <th></th>}</tr></thead>
             <tbody>
               {members.map(m => (
                 <tr key={m.id}>
-                  <td>{m.name}</td>
-                  <td className="text-secondary">{m.email}</td>
-                  <td>
+                  <td data-label="Name">{m.name}</td>
+                  <td data-label="Email" className="text-secondary">{m.email}</td>
+                  <td data-label="Role">
                     {is_team_admin ? (
                       <select className="form-select" value={m.team_role} onChange={e => changeRole(m.id, e.target.value)} style={{ width: 'auto', padding: '2px 6px', fontSize: '0.85rem' }}>
                         <option value="view">view</option>
@@ -124,7 +124,7 @@ export default function TeamDetail() {
                     )}
                   </td>
                   {is_team_admin && (
-                    <td><button className="btn btn-outline btn-sm" onClick={() => removeMember(m.id)}>Remove</button></td>
+                    <td data-label=""><button className="btn btn-outline btn-sm" onClick={() => removeMember(m.id)}>Remove</button></td>
                   )}
                 </tr>
               ))}

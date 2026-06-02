@@ -223,7 +223,7 @@ export default function ScansList() {
       {scans.length > 0 ? (
         <div className="card">
           <div className="table-wrap">
-            <table>
+            <table className="cards-on-mobile">
               <thead>
                 <tr>
                   {user && <th style={{ width: 36 }}>
@@ -254,29 +254,29 @@ export default function ScansList() {
                   return (
                     <tr key={scan.id}>
                       {user && (
-                        <td>
+                        <td data-label="">
                           <input type="checkbox" checked={selected.has(scan.id)}
                             onChange={() => toggleSelect(scan.id)}
                             style={{ accentColor: 'var(--accent)', width: 16, height: 16, cursor: 'pointer' }} />
                         </td>
                       )}
-                      <td>
+                      <td data-label="Scanner">
                         <Link to={`/scans/${scan.id}`}>{scan.scanner_name}</Link>
                         {scan.scanner_version && <span className="text-muted text-sm"> v{scan.scanner_version}</span>}
                       </td>
                       {!appId && (
-                        <td>
+                        <td data-label="App">
                           <Link to={`/apps/${scan.app_id}`}>{scan.app_name}</Link>
                           {scan.app_version && <span className="text-muted text-sm"> v{scan.app_version}</span>}
                         </td>
                       )}
-                      <td>{scan.scan_date}</td>
-                      <td className="text-success">{scan.tp_count ?? '-'}</td>
-                      <td className="text-error">{scan.fp_count ?? '-'}</td>
-                      <td className="text-muted">{scan.pending_count ?? '-'}</td>
-                      <td className="text-warn">{scan.fn_count ?? '-'}</td>
-                      <td><span className="sev-pill-group"><SeverityCells s={scan} /></span></td>
-                      <td>
+                      <td data-label="Date">{scan.scan_date}</td>
+                      <td data-label="TP" className="text-success">{scan.tp_count ?? '-'}</td>
+                      <td data-label="FP" className="text-error">{scan.fp_count ?? '-'}</td>
+                      <td data-label="Pending" className="text-muted">{scan.pending_count ?? '-'}</td>
+                      <td data-label="FN" className="text-warn">{scan.fn_count ?? '-'}</td>
+                      <td data-label="Severity"><span className="sev-pill-group"><SeverityCells s={scan} /></span></td>
+                      <td data-label="Labels">
                         {labels.length > 0 && (
                           <div className="scan-labels-cell">
                             {labels.slice(0, MAX_VISIBLE_LABELS).map(l => <LabelBadge key={l.id} label={l} />)}
@@ -292,7 +292,7 @@ export default function ScansList() {
                         )}
                       </td>
                       {user && (
-                        <td>
+                        <td data-label="">
                           {(user.role === 'admin' || scan.submitted_by == user.id) && (
                             <button className="btn-icon btn-icon-danger" title="Delete" onClick={() => deleteScan(scan.id)}>
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
@@ -307,14 +307,14 @@ export default function ScansList() {
               <tfoot>
                 <tr className="scans-totals-row">
                   {user && <td></td>}
-                  <td className="text-muted">Total</td>
+                  <td className="text-muted" data-label="">Total</td>
                   {!appId && <td></td>}
                   <td></td>
-                  <td className="text-success">{totals.tp}</td>
-                  <td className="text-error">{totals.fp}</td>
-                  <td className="text-muted">{totals.pending}</td>
-                  <td className="text-warn">{totals.fn}</td>
-                  <td><span className="sev-pill-group"><SeverityCells s={{
+                  <td className="text-success" data-label="TP">{totals.tp}</td>
+                  <td className="text-error" data-label="FP">{totals.fp}</td>
+                  <td className="text-muted" data-label="Pending">{totals.pending}</td>
+                  <td className="text-warn" data-label="FN">{totals.fn}</td>
+                  <td data-label="Severity"><span className="sev-pill-group"><SeverityCells s={{
                     sev_critical: totals.critical,
                     sev_high: totals.high,
                     sev_medium: totals.medium,

@@ -34,12 +34,12 @@ export default function TeamsList() {
       {teams.length > 0 ? (
         <div className="card">
           <div className="table-wrap">
-            <table>
+            <table className="cards-on-mobile">
               <thead><tr><th>Name</th><th>Members</th><th>My Role</th></tr></thead>
               <tbody>
                 {teams.map(t => (
                   <tr key={t.id}>
-                    <td>
+                    <td data-label="Name">
                       {editingId === t.id ? (
                         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                           <input
@@ -69,8 +69,8 @@ export default function TeamsList() {
                         </>
                       )}
                     </td>
-                    <td>{t.member_count}</td>
-                    <td>{t.my_role && <Badge severity={t.my_role === 'admin' ? 'critical' : t.my_role === 'contributor' ? 'high' : 'info'}>{t.my_role}</Badge>}</td>
+                    <td data-label="Members">{t.member_count}</td>
+                    <td data-label="My Role">{t.my_role && <Badge severity={t.my_role === 'admin' ? 'critical' : t.my_role === 'contributor' ? 'high' : 'info'}>{t.my_role}</Badge>}</td>
                   </tr>
                 ))}
               </tbody>

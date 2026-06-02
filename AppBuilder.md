@@ -601,6 +601,20 @@ All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT 
 - **Auth:** JWT stored in `localStorage`, sent as `Authorization: Bearer` header
 - **API Client:** `frontend/src/api/client.js` — thin fetch wrapper with auto-401 redirect
 
+### Responsive / Mobile (≤768px)
+A single `@media (max-width: 768px)` block in `style.css` drives the mobile layout:
+- **Navbar:** a `.navbar-toggle` burger button (hidden on desktop) toggles a slide-down
+  `.navbar-nav.open` panel with stacked full-width links. The Admin menu is a click
+  disclosure (`.nav-dropdown.open`, not hover) so it works on touch; `Navbar.jsx` closes
+  the menu on route change via `useLocation`.
+- **Layout:** forms (`.form-row`), `.detail-grid`, and `.card-grid` collapse to one column;
+  `.page-header` stacks; search box goes full-width; container padding shrinks.
+- **Tables:** row-oriented listing tables opt in with `class="cards-on-mobile"` and a
+  `data-label="<Column>"` on each `<td>`. Below 768px the `<thead>` hides and each row
+  becomes a bordered card with `td::before { content: attr(data-label) }` as the field
+  label; empty cells (`td:empty`) and label-less action cells (`data-label=""`) are hidden.
+  Genuinely 2D matrices (ScanCompare, Dashboard heatmap) stay on horizontal scroll instead.
+
 ### Vite Configuration
 Dev server proxies `/api` and `/static` to `http://127.0.0.1:8000`. Build output goes to `frontend/dist/`.
 

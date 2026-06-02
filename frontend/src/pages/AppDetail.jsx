@@ -175,6 +175,7 @@ export default function AppDetail() {
     if (field === 'vuln_id') {
       return (
         <td
+          data-label="ID"
           className={can_edit ? 'cell-editable font-mono text-sm' : 'font-mono text-sm'}
           onClick={can_edit && !isEditing ? () => startEdit(vuln.id, 'vuln_id', vuln.vuln_id) : undefined}
         >
@@ -185,6 +186,7 @@ export default function AppDetail() {
     if (field === 'title') {
       return (
         <td
+          data-label="Title"
           className={can_edit ? 'cell-editable' : ''}
           onClick={can_edit && !isEditing ? (e) => { if (e.target.tagName !== 'A') startEdit(vuln.id, 'title', vuln.title); } : undefined}
         >
@@ -195,6 +197,7 @@ export default function AppDetail() {
     if (field === 'severity') {
       return (
         <td
+          data-label="Severity"
           className={can_edit ? 'cell-editable' : ''}
           onClick={can_edit && !isEditing ? () => startEdit(vuln.id, 'severity', vuln.severity) : undefined}
         >
@@ -205,6 +208,7 @@ export default function AppDetail() {
     if (field === 'vuln_type') {
       return (
         <td
+          data-label="Type"
           className={can_edit ? 'cell-editable' : ''}
           onClick={can_edit && !isEditing ? () => startEdit(vuln.id, 'vuln_type', vuln.vuln_type || '') : undefined}
         >
@@ -330,7 +334,7 @@ export default function AppDetail() {
       {vulns.length > 0 ? (
         <div className="card">
           <div className="table-wrap">
-            <table>
+            <table className="cards-on-mobile">
               <thead>
                 <tr>
                   <th>ID</th>
@@ -348,9 +352,9 @@ export default function AppDetail() {
                     {renderCell(vuln, 'title')}
                     {renderCell(vuln, 'severity')}
                     {renderCell(vuln, 'vuln_type')}
-                    <td className="font-mono text-sm">{renderLocation(vuln)}</td>
+                    <td data-label="Location" className="font-mono text-sm">{renderLocation(vuln)}</td>
                     {can_edit && (
-                      <td>
+                      <td data-label="">
                         <div className="flex gap-1">
                           <Link to={'/apps/' + id + '/vulns/' + vuln.id + '/edit'} className="btn-icon" title="Edit all fields">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 114 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>

@@ -27,17 +27,17 @@ export default function AdminUsers() {
       <h1 className="page-title mb-2">User Management</h1>
       <div className="card">
         <div className="table-wrap">
-          <table>
+          <table className="cards-on-mobile">
             <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Created</th><th>Last Login</th><th style={{ width: 120 }}></th></tr></thead>
             <tbody>
               {users.map(u => (
                 <tr key={u.id}>
-                  <td>{u.name}</td>
-                  <td className="text-secondary">{u.email}</td>
-                  <td><Badge severity={u.role === 'admin' ? 'critical' : 'info'}>{u.role}</Badge></td>
-                  <td className="text-muted text-sm">{u.created_at?.slice(0, 10)}</td>
-                  <td className="text-muted text-sm">{u.last_login ? u.last_login.slice(0, 16).replace('T', ' ') : 'Never'}</td>
-                  <td>
+                  <td data-label="Name">{u.name}</td>
+                  <td data-label="Email" className="text-secondary">{u.email}</td>
+                  <td data-label="Role"><Badge severity={u.role === 'admin' ? 'critical' : 'info'}>{u.role}</Badge></td>
+                  <td data-label="Created" className="text-muted text-sm">{u.created_at?.slice(0, 10)}</td>
+                  <td data-label="Last Login" className="text-muted text-sm">{u.last_login ? u.last_login.slice(0, 16).replace('T', ' ') : 'Never'}</td>
+                  <td data-label="">
                     {u.role !== 'admin' && (
                       <div className="flex gap-1">
                         <button className="btn btn-outline btn-sm" onClick={() => { if (confirm(`Make ${u.name} an admin?`)) updateField(u.id, 'role', 'admin'); }}>Make Admin</button>

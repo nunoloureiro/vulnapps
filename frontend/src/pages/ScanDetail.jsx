@@ -296,7 +296,7 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
       {findings.length > 0 ? (
         <div className="card">
           <div className="table-wrap">
-            <table>
+            <table className="cards-on-mobile">
               <thead><tr><th>Type</th><th>Location</th><th>Parameter</th><th>Status</th><th>Matched Vuln</th><th></th></tr></thead>
               <tbody>
                 {findings.map(f => {
@@ -308,7 +308,7 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                   return (
                   <React.Fragment key={f.id}>
                   <tr>
-                    <td>
+                    <td data-label="Type">
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         {hasDetails && (
                           <button
@@ -327,14 +327,14 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                         <div className="text-muted text-xs" style={{ marginTop: 2, marginLeft: hasDetails ? 18 : 0 }}>{f.title}</div>
                       )}
                     </td>
-                    <td className="font-mono text-sm">{locationDisplay}</td>
-                    <td className="font-mono">{f.parameter || '-'}</td>
-                    <td>
+                    <td data-label="Location" className="font-mono text-sm">{locationDisplay}</td>
+                    <td data-label="Parameter" className="font-mono">{f.parameter || '-'}</td>
+                    <td data-label="Status">
                       {f.matched_vuln_id ? <Badge severity="low">TP</Badge> :
                        f.is_false_positive ? <Badge severity="critical">FP</Badge> :
                        <Badge severity="pending">Pending</Badge>}
                     </td>
-                    <td>
+                    <td data-label="Matched Vuln">
                       {canEdit ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                           <select className="form-select" style={{ width: 'auto', padding: '2px 4px', fontSize: '0.8rem', flex: 1 }}
@@ -353,7 +353,7 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                         f.is_false_positive ? <span className="text-muted">FP</span> : <span className="text-muted">Unmapped</span>
                       )}
                     </td>
-                    <td>
+                    <td data-label="">
                       <div style={{ display: 'flex', gap: 4 }}>
                         {canEdit && !f.is_false_positive && (
                           <button className="btn btn-outline btn-sm" onClick={() => markFP(f.id)} title="Mark as False Positive">FP</button>
@@ -370,7 +370,7 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                   </tr>
                   {isExpanded && hasDetails && (
                     <tr>
-                      <td colSpan="6" style={{ padding: '0.75rem 0' }}>
+                      <td data-label="" colSpan="6" style={{ padding: '0.75rem 0' }}>
                         <div className="card">
                           <FindingDetails finding={f} />
                         </div>
@@ -578,16 +578,16 @@ function MissedVulns({ vulns, appId }) {
       <h2 className="page-title mt-3 mb-2">Missed Vulnerabilities <span className="text-muted text-sm">({vulns.length})</span></h2>
       <div className="card">
         <div className="table-wrap">
-          <table>
+          <table className="cards-on-mobile">
             <thead><tr><th>ID</th><th>Title</th><th>Type</th><th>Severity</th><th>Location</th></tr></thead>
             <tbody>
               {vulns.map(v => (
                 <tr key={v.id}>
-                  <td className="font-mono">{v.vuln_id}</td>
-                  <td><Link to={`/apps/${appId}/vulns/${v.id}`}>{v.title}</Link></td>
-                  <td>{v.vuln_type}</td>
-                  <td><Badge severity={v.severity} /></td>
-                  <td className="font-mono text-sm">{v.url || v.filename || '-'}</td>
+                  <td data-label="ID" className="font-mono">{v.vuln_id}</td>
+                  <td data-label="Title"><Link to={`/apps/${appId}/vulns/${v.id}`}>{v.title}</Link></td>
+                  <td data-label="Type">{v.vuln_type}</td>
+                  <td data-label="Severity"><Badge severity={v.severity} /></td>
+                  <td data-label="Location" className="font-mono text-sm">{v.url || v.filename || '-'}</td>
                 </tr>
               ))}
             </tbody>

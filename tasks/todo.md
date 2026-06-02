@@ -160,3 +160,39 @@ Schema change: `migrations/022_password_version.sql` adds `users.password_versio
   → enable "Always Use HTTPS" so port 80 traffic is 301-redirected before
   reaching the origin. (The in-code HSTS header already instructs compliant
   browsers to upgrade, but the edge redirect closes the first-hit gap.)
+
+---
+
+# Mobile-responsive overhaul
+
+- [x] Navbar: burger toggle, slide-down panel, click-dropdown, close-on-route-change
+- [x] CSS base: `.navbar-toggle` (hidden on desktop), `.nav-dropdown.open` rule
+- [x] CSS: `@media (max-width:768px)` block (container, navbar panel, forms, headers, grids, search, cards)
+- [x] CSS: `cards-on-mobile` responsive-table pattern (+ `td:empty` hide rule)
+- [x] Tag tables with `cards-on-mobile` + per-`td` `data-label`: ScansList, AdminUsers, AdminLabels, TeamsList, TeamDetail, AppDetail, ScanDetail, Account
+- [x] Verify: vite build, mobile view (~390px), desktop regression, backend tests
+
+## Review
+
+Made the SPA responsive below 768px. Previously the CSS had **zero `@media` queries**
+and the navbar was a fixed horizontal row with a hover-only Admin dropdown.
+
+**Changes**
+- `frontend/src/components/Navbar.jsx` — burger button (animated ≡/✕), slide-down panel
+  toggled by `menuOpen`; Admin converted from hover-only to a click disclosure (`adminOpen`)
+  so it works on touch; `useLocation` effect closes the menu on navigation.
+- `app/static/style.css` — base `.navbar-toggle` (hidden on desktop) + `.nav-dropdown.open`
+  rule; one `@media (max-width:768px)` block: container padding, navbar slide-down panel,
+  single-column forms/detail-grid/card-grid, stacked page-header, full-width search, and the
+  opt-in `table.cards-on-mobile` pattern (thead hidden, rows → bordered cards, `td::before`
+  shows `data-label`, empty cells hidden).
+- 8 listing-table pages tagged `cards-on-mobile` + per-`td` `data-label` (ScansList done by
+  hand incl. tfoot totals; the other 7 by parallel agents with column-count checks).
+- 2D matrices (ScanCompare, Dashboard heatmap) deliberately kept on smooth horizontal scroll.
+
+**Verified** with Playwright at 390px (real Chromium, seeded TaintedPort data):
+- Burger toggles slide-down menu; links stack; Admin disclosure expands; menu closes on nav.
+- AppDetail vulns table renders as labelled cards (ID/TITLE/SEVERITY/TYPE/LOCATION), no h-scroll.
+- AppForm stacks to single column, full-width inputs.
+- Desktop (1280px) unchanged: burger hidden, nav horizontal, tables tabular (regression).
+- No console/page errors. Frontend builds clean. Backend 22/22 tests pass.
