@@ -311,7 +311,7 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
         <div className="card">
           <div className="table-wrap">
             <table className="cards-on-mobile">
-              <thead><tr><th>Type</th><th>Location</th><th>Parameter</th><th>Status</th><th>Matched Vuln</th><th></th></tr></thead>
+              <thead><tr><th>Type</th><th>Location</th><th>Status</th><th>Matched Vuln</th><th></th></tr></thead>
               <tbody>
                 {findings.map(f => {
                   const location = f.url || f.filename || '-';
@@ -340,9 +340,11 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                       {f.title && f.title !== f.vuln_type && (
                         <div className="text-muted text-xs" style={{ marginTop: 2, marginLeft: hasDetails ? 18 : 0 }}>{f.title}</div>
                       )}
+                      {f.parameter && (
+                        <div className="text-muted text-xs" style={{ marginTop: 2, marginLeft: hasDetails ? 18 : 0 }}>param: <span className="font-mono">{f.parameter}</span></div>
+                      )}
                     </td>
                     <td data-label="Location" className="font-mono text-sm">{locationDisplay}</td>
-                    <td data-label="Parameter" className="font-mono">{f.parameter || '-'}</td>
                     <td data-label="Status">
                       {f.matched_vuln_id ? <Badge severity="low">TP</Badge> :
                        f.is_false_positive ? <Badge severity="critical">FP</Badge> :
@@ -389,7 +391,7 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                   </tr>
                   {isExpanded && hasDetails && (
                     <tr>
-                      <td data-label="" colSpan="6" style={{ padding: '0.75rem 0' }}>
+                      <td data-label="" colSpan="5" style={{ padding: '0.75rem 0' }}>
                         <div className="card">
                           <FindingDetails finding={f} />
                         </div>

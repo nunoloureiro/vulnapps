@@ -384,7 +384,7 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .badge-ignored { background: var(--border); color: var(--text-secondary); }
 
 /* Finding triage actions (ScanDetail) — subtle icon+label chips */
-.finding-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; align-items: center; }
+.finding-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: nowrap; align-items: center; }
 .fa-btn {
     background: transparent;
     border: 1px solid var(--border);
