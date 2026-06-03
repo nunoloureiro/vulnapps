@@ -383,6 +383,31 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .badge-pending { background: rgba(234,179,8,0.15); color: #eab308; }
 .badge-ignored { background: var(--border); color: var(--text-secondary); }
 
+/* Finding triage actions (ScanDetail) — subtle icon+label chips */
+.finding-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; align-items: center; }
+.fa-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 0.22rem 0.5rem;
+    border-radius: 9999px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.fa-btn svg { width: 12px; height: 12px; }
+.fa-btn.fa-fp:hover { color: var(--error); border-color: var(--error); }
+.fa-btn.fa-ignore:hover { color: var(--text); border-color: var(--border-hover); }
+.fa-btn.fa-promote:hover { color: var(--accent); border-color: var(--accent); }
+/* Open-vulnerability link icon — quiet until hover (was always-orange) */
+.fa-link { color: var(--text-muted); display: inline-flex; padding: 0.2rem; border-radius: 6px; flex-shrink: 0; }
+.fa-link:hover { color: var(--accent); background: var(--accent-dim); }
+
 /* Labels */
 .label-badge {
     display: inline-flex;

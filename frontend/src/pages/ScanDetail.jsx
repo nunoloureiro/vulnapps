@@ -5,6 +5,14 @@ import { api } from '../api/client';
 import { Badge } from '../components/Badge';
 import { LabelBadge } from '../components/LabelBadge';
 
+// Finding-action icons (12px, inherit currentColor).
+const svg = (children) => (props) => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>{children}</svg>
+);
+const IconFP = svg(<><circle cx="12" cy="12" r="9" /><line x1="5.6" y1="5.6" x2="18.4" y2="18.4" /></>);
+const IconIgnore = svg(<><path d="M9.9 5A9.5 9.5 0 0 1 12 4.8c6.3 0 9.5 7.2 9.5 7.2a14 14 0 0 1-1.7 2.6" /><path d="M6.2 6.2A13 13 0 0 0 2.5 12s3.2 7.2 9.5 7.2a9 9 0 0 0 4.9-1.4" /><line x1="3" y1="3" x2="21" y2="21" /></>);
+const IconPromote = svg(<><circle cx="12" cy="12" r="9" /><line x1="12" y1="8" x2="12" y2="16" /><line x1="8" y1="12" x2="16" y2="12" /></>);
+
 export default function ScanDetail() {
   const { id } = useParams();
   const { user } = useAuth();
@@ -350,8 +358,8 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                             {knownVulns.map(v => <option key={v.id} value={v.id}>{v.vuln_id} - {v.title}</option>)}
                           </select>
                           {matchedVuln && (
-                            <Link to={`/apps/${appId}/vulns/${matchedVuln.id}`} title="View vulnerability" style={{ flexShrink: 0 }}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            <Link className="fa-link" to={`/apps/${appId}/vulns/${matchedVuln.id}`} title="View vulnerability">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                             </Link>
                           )}
                         </div>
@@ -362,18 +370,18 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                       )}
                     </td>
                     <td data-label="">
-                      <div style={{ display: 'flex', gap: 4 }}>
+                      <div className="finding-actions">
                         {canEdit && !f.is_false_positive && (
-                          <button className="btn btn-outline btn-sm" onClick={() => markFP(f.id)} title="Mark as False Positive">FP</button>
+                          <button className="fa-btn fa-fp" onClick={() => markFP(f.id)} title="Mark as False Positive"><IconFP />FP</button>
                         )}
                         {canEdit && !f.matched_vuln_id && !f.is_false_positive && !f.is_ignored && (
-                          <button className="btn btn-outline btn-sm" onClick={() => setIgnored(f.id, true)} title="Ignore — real-ish but irrelevant here (excluded from metrics)">Ignore</button>
+                          <button className="fa-btn fa-ignore" onClick={() => setIgnored(f.id, true)} title="Ignore — real-ish but irrelevant here (excluded from metrics)"><IconIgnore />Ignore</button>
                         )}
                         {canEdit && !f.matched_vuln_id && (
-                          <button className="btn btn-outline btn-sm"
+                          <button className="fa-btn fa-promote"
                             onClick={() => openPromote(f)}
                             title={f.is_false_positive ? 'Promote FP to a real vulnerability' : 'Promote to known vulnerability'}>
-                            + Vuln
+                            <IconPromote />Vuln
                           </button>
                         )}
                       </div>
