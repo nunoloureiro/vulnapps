@@ -208,6 +208,7 @@ function Metrics({ metrics }) {
         <div className="metric-card"><div className="metric-value text-success">{metrics.tp}</div><div className="metric-label">True Positives</div></div>
         <div className="metric-card"><div className="metric-value text-error">{metrics.fp}</div><div className="metric-label">False Positives</div></div>
         <div className="metric-card"><div className="metric-value text-error">{metrics.fn}</div><div className="metric-label">False Negatives</div></div>
+        <div className="metric-card"><div className="metric-value text-muted">{metrics.ignored ?? 0}</div><div className="metric-label">Ignored</div></div>
         <div className="metric-card"><div className="metric-value text-accent">{fmt(metrics.precision)}</div><div className="metric-label">Precision</div></div>
         <div className="metric-card"><div className="metric-value text-accent">{fmt(metrics.recall)}</div><div className="metric-label">Recall</div></div>
         <div className="metric-card"><div className="metric-value text-accent">{fmt(metrics.f1)}</div><div className="metric-label">F1 Score</div></div>
@@ -243,6 +244,11 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
 
   const markFP = async (findingId) => {
     await api.post(`/scans/${scanId}/findings/${findingId}/mark-fp`, {});
+    onUpdate();
+  };
+
+  const setIgnored = async (findingId, ignored) => {
+    await api.post(`/scans/${scanId}/findings/${findingId}/ignore`, { ignored });
     onUpdate();
   };
 
@@ -332,6 +338,7 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                     <td data-label="Status">
                       {f.matched_vuln_id ? <Badge severity="low">TP</Badge> :
                        f.is_false_positive ? <Badge severity="critical">FP</Badge> :
+                       f.is_ignored ? <Badge severity="ignored">Ignored</Badge> :
                        <Badge severity="pending">Pending</Badge>}
                     </td>
                     <td data-label="Matched Vuln">
@@ -350,13 +357,20 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                         </div>
                       ) : (
                         matchedVuln ? <Link to={`/apps/${appId}/vulns/${matchedVuln.id}`}>{matchedVuln.vuln_id} - {matchedVuln.title}</Link> :
-                        f.is_false_positive ? <span className="text-muted">FP</span> : <span className="text-muted">Unmapped</span>
+                        f.is_false_positive ? <span className="text-muted">FP</span> :
+                        f.is_ignored ? <span className="text-muted">Ignored</span> : <span className="text-muted">Unmapped</span>
                       )}
                     </td>
                     <td data-label="">
                       <div style={{ display: 'flex', gap: 4 }}>
-                        {canEdit && !f.is_false_positive && (
+                        {canEdit && !f.is_false_positive && !f.is_ignored && (
                           <button className="btn btn-outline btn-sm" onClick={() => markFP(f.id)} title="Mark as False Positive">FP</button>
+                        )}
+                        {canEdit && !f.matched_vuln_id && !f.is_false_positive && !f.is_ignored && (
+                          <button className="btn btn-outline btn-sm" onClick={() => setIgnored(f.id, true)} title="Ignore — real-ish but irrelevant here (excluded from metrics)">Ignore</button>
+                        )}
+                        {canEdit && f.is_ignored && (
+                          <button className="btn btn-outline btn-sm" onClick={() => setIgnored(f.id, false)} title="Restore to Pending">Restore</button>
                         )}
                         {canEdit && !f.matched_vuln_id && (
                           <button className="btn btn-outline btn-sm"

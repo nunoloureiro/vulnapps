@@ -381,6 +381,7 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .badge-member { background: rgba(59,130,246,0.15); color: #60a5fa; }
 .badge-view { background: rgba(113,113,122,0.15); color: #a1a1aa; }
 .badge-pending { background: rgba(234,179,8,0.15); color: #eab308; }
+.badge-ignored { background: var(--border); color: var(--text-secondary); }
 
 /* Labels */
 .label-badge {

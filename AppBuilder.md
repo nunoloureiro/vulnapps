@@ -247,7 +247,7 @@ Uses `python-dotenv` to load `.env` file.
 
 ---
 
-## Database Schema (migrations 001-019)
+## Database Schema (migrations 001-023)
 
 ```sql
 PRAGMA journal_mode=WAL;
@@ -321,6 +321,7 @@ CREATE TABLE IF NOT EXISTS scan_findings (
     filename        TEXT,                         -- SAST finding filename
     matched_vuln_id INTEGER REFERENCES vulnerabilities(id),
     is_false_positive INTEGER NOT NULL DEFAULT 0,
+    is_ignored      INTEGER NOT NULL DEFAULT 0,    -- "Ignored" state (migration 023)
     -- Rich detail fields (migration 019) — populated by scanners that emit full
     -- vuln-like reports (e.g. LLM-assisted scans). All nullable. Used to
     -- one-click "promote" an unmapped finding into a documented vulnerability.
@@ -544,6 +545,7 @@ All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT 
 | POST | `/api/apps/{id}/scans` | User+ / vuln-mapper | Submit scan. Body: `{scanner_name, scan_date, authenticated, is_public, notes, cost, tokens, findings, labels}`. Each finding may include `{vuln_type, http_method, url, parameter, filename, title, severity, description, poc, remediation, code_location}` — the last six are optional rich details preserved for later promotion |
 | POST | `/api/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Map finding to vuln: `{vuln_id: int\|null}` |
 | POST | `/api/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive |
+| POST | `/api/scans/{id}/findings/{fid}/ignore` | Scan write / vuln-mapper | Set/clear the "Ignored" state. Body `{ignored: bool}` (default `true`). Ignoring clears any match/FP; clearing returns to Pending |
 | POST | `/api/scans/{id}/findings/{fid}/promote` | App write / vuln-mapper | Promote a pending finding into a new vuln on the scan's app. Body (all optional): `{vuln_id, title, severity, vuln_type, http_method, url, parameter, filename, description, poc, remediation, code_location}` — missing fields fall back to the finding's stored values; `vuln_id` auto-generates as the next `DISC-NNN` slug if blank. The finding is linked to the new vuln on success |
 | POST | `/api/scans/{id}/rematch` | Scan write / vuln-mapper | Re-run automatic matching for all findings |
 | POST | `/api/scans/{id}/labels` | Scan write | Add label to scan: `{name, color}`. Upserts label, links to scan |
@@ -708,18 +710,20 @@ Uses a **scoring-based system** instead of binary matching. Each known vuln is s
 
 **Vuln type aliases** — expanded groups covering: SQLi, XSS, IDOR, auth bypass, access control, info disclosure, path traversal, open redirect, security misconfiguration, privilege escalation, data exposure, business logic, CSRF, SSRF, RCE, XXE, SSTI, NoSQL injection, prototype pollution, HTTP header injection, insecure deserialization, file upload, CORS, clickjacking, JWT, weak crypto, hardcoded secrets.
 
-**Three finding states:**
-| State | matched_vuln_id | is_false_positive | Meaning |
-|---|---|---|---|
-| **TP** | set | 0 | Confident match (auto or manual) |
-| **Pending** | null | 0 | No auto-match, awaiting manual review |
-| **FP** | null | 1 | User explicitly marked as false positive |
+**Four finding states** (mutually exclusive — any transition clears the others):
+| State | matched_vuln_id | is_false_positive | is_ignored | Meaning |
+|---|---|---|---|---|
+| **TP** | set | 0 | 0 | Confident match (auto or manual) |
+| **Pending** | null | 0 | 0 | No auto-match, awaiting manual review |
+| **FP** | null | 1 | 0 | User explicitly marked as false positive |
+| **Ignored** | null | 0 | 1 | Real-ish but irrelevant in context — consciously set aside (migration 023) |
 
 - **Automatic matching**: Score >= 60 → TP. Score < 60 → **Pending** (not FP)
 - **Manual mapping**: User maps pending finding to known vuln → TP
 - **Mark FP**: User explicitly marks as FP → `POST /api/scans/{id}/findings/{fid}/mark-fp`
-- **Metrics**: Pending findings are **excluded** from TP/FP/precision/recall calculations
-- **Compare page**: Pending findings excluded from FP matrix
+- **Ignore / Restore**: `POST /api/scans/{id}/findings/{fid}/ignore` body `{ignored: bool}` — `true` sets Ignored, `false` returns to Pending
+- **Metrics**: Pending **and Ignored** findings are excluded from TP/FP. Ignored findings are neutral — they are neither TP nor FP, so precision/recall/F1 are unchanged by ignoring; they are also dropped from the scan-list Pending count and severity pills. `rematch` never auto-touches an ignored finding.
+- **Compare page**: Pending and Ignored findings excluded from the FP matrix
 
 Two matching modes based on finding content:
 
@@ -749,7 +753,8 @@ Hardcoded Secret,,,,src/config.py
 ```
 TP      = count of UNIQUE matched vulns (not finding count) — multiple findings matching the same vuln count as 1 TP
 FP      = count of findings where is_false_positive = 1
-Pending = count of findings where matched_vuln_id IS NULL AND is_false_positive = 0
+Pending = count of findings where matched_vuln_id IS NULL AND is_false_positive = 0 AND is_ignored = 0
+Ignored = count of findings where is_ignored = 1  (neutral — excluded from precision/recall/F1)
 FN      = known vulns for the app NOT matched by any finding in this scan
 
 precision = TP / (TP + FP)     if (TP + FP) > 0 else 0

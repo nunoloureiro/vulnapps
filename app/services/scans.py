@@ -105,13 +105,18 @@ def _compute_metrics(findings, all_vulns):
     }
     tp = len(matched_vuln_ids)
     fp = sum(1 for f in findings if f["is_false_positive"] == 1)
+    ignored = sum(1 for f in findings if f["is_ignored"] == 1)
+    # Ignored findings are neutral — set aside, neither pending nor FP.
     pending = sum(
         1 for f in findings
         if f["matched_vuln_id"] is None and f["is_false_positive"] == 0
+        and f["is_ignored"] == 0
     )
     missed_vulns = [v for v in all_vulns if v["id"] not in matched_vuln_ids]
     fn = len(missed_vulns)
 
+    # Ignored findings affect neither numerator nor denominator here: they are
+    # not TP (no match) and not FP, so precision/recall/F1 are unchanged.
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
@@ -120,6 +125,7 @@ def _compute_metrics(findings, all_vulns):
         "tp": tp,
         "fp": fp,
         "pending": pending,
+        "ignored": ignored,
         "fn": fn,
         "precision": precision,
         "recall": recall,
@@ -189,7 +195,7 @@ async def list_scans(
     sev_subquery = (
         "(SELECT COUNT(*) FROM scan_findings sf "
         "LEFT JOIN vulnerabilities v ON v.id = sf.matched_vuln_id "
-        "WHERE sf.scan_id = scans.id AND sf.is_false_positive = 0 "
+        "WHERE sf.scan_id = scans.id AND sf.is_false_positive = 0 AND sf.is_ignored = 0 "
         "AND lower(COALESCE(NULLIF(sf.severity, ''), v.severity)) = ?)"
     )
 
@@ -197,7 +203,7 @@ async def list_scans(
                   users.name as submitter_name,
                   (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
                   (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count,
-                  (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NULL AND is_false_positive=0) as pending_count,
+                  (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NULL AND is_false_positive=0 AND is_ignored=0) as pending_count,
                   ((SELECT COUNT(*) FROM vulnerabilities WHERE app_id = scans.app_id)
                    - (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL)) as fn_count,
                   {sev_subquery} as sev_critical,
@@ -595,8 +601,10 @@ async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id) -> dic
         matched_vuln_id = None
         is_false_positive = 0
 
+    # Matching (or clearing) a finding also lifts any "ignored" flag — the
+    # states are mutually exclusive.
     await db.execute(
-        "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = ? WHERE id = ? AND scan_id = ?",
+        "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = ?, is_ignored = 0 WHERE id = ? AND scan_id = ?",
         (matched_vuln_id, is_false_positive, finding_id, scan_id),
     )
     await db.commit()
@@ -605,14 +613,33 @@ async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id) -> dic
 
 
 async def mark_finding_fp(db, user, scan_id: int, finding_id: int) -> None:
-    """Mark a finding as false positive."""
+    """Mark a finding as false positive (clears any match/ignore)."""
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
     await db.execute(
-        "UPDATE scan_findings SET matched_vuln_id = NULL, is_false_positive = 1 WHERE id = ? AND scan_id = ?",
+        "UPDATE scan_findings SET matched_vuln_id = NULL, is_false_positive = 1, is_ignored = 0 WHERE id = ? AND scan_id = ?",
         (finding_id, scan_id),
     )
+    await db.commit()
+
+
+async def set_finding_ignored(db, user, scan_id: int, finding_id: int, ignored: bool) -> None:
+    """Set/clear a finding's "ignored" state. Ignoring clears any match/FP so the
+    states stay mutually exclusive; clearing returns the finding to Pending."""
+    scan, app = await _get_scan_and_app(db, scan_id)
+    await _check_scan_write(db, user, scan, app)
+
+    if ignored:
+        await db.execute(
+            "UPDATE scan_findings SET is_ignored = 1, matched_vuln_id = NULL, is_false_positive = 0 WHERE id = ? AND scan_id = ?",
+            (finding_id, scan_id),
+        )
+    else:
+        await db.execute(
+            "UPDATE scan_findings SET is_ignored = 0 WHERE id = ? AND scan_id = ?",
+            (finding_id, scan_id),
+        )
     await db.commit()
 
 
@@ -701,7 +728,7 @@ async def promote_finding(
     new_vuln_id = cursor.lastrowid
 
     await db.execute(
-        "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = 0 WHERE id = ?",
+        "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = 0, is_ignored = 0 WHERE id = ?",
         (new_vuln_id, finding_id),
     )
     await db.commit()
@@ -729,6 +756,9 @@ async def rematch_scan(db, user, scan_id: int) -> dict:
 
     updated = 0
     for f in findings:
+        # A manually-ignored finding is a deliberate decision — never auto-rematch it.
+        if f["is_ignored"]:
+            continue
         finding_dict = {
             "vuln_type": f["vuln_type"],
             "http_method": f["http_method"],
@@ -835,9 +865,11 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
         }
         tp = len(matched_ids)
         fp = sum(1 for f in findings if f["is_false_positive"] == 1)
+        ignored = sum(1 for f in findings if f["is_ignored"] == 1)
         pending = sum(
             1 for f in findings
             if f["matched_vuln_id"] is None and f["is_false_positive"] == 0
+            and f["is_ignored"] == 0
         )
         fn = sum(1 for v in known_vulns if v["id"] not in matched_ids)
 
@@ -870,7 +902,7 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
             "short_date": short_date,
             "labels": scan_labels,
             "metrics": {
-                "tp": tp, "fp": fp, "pending": pending, "fn": fn,
+                "tp": tp, "fp": fp, "pending": pending, "ignored": ignored, "fn": fn,
                 "precision": precision, "recall": recall, "f1": f1,
             },
             "matched_vuln_ids": matched_ids,

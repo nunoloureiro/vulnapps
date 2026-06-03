@@ -159,6 +159,26 @@ async def mark_finding_fp(request: Request, scan_id: int, finding_id: int):
     return {"ok": True}
 
 
+@router.post("/{scan_id}/findings/{finding_id}/ignore")
+async def set_finding_ignored(request: Request, scan_id: int, finding_id: int):
+    user = await require_user(request)
+    require_scope(user, "vuln-mapper")
+    body = await request.json()
+    ignored = bool(body.get("ignored", True))
+
+    db = await get_connection()
+    try:
+        await scans_service.set_finding_ignored(db, user, scan_id, finding_id, ignored)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+
+    return {"ok": True, "is_ignored": ignored}
+
+
 @router.post("/{scan_id}/findings/{finding_id}/promote")
 async def promote_finding(request: Request, scan_id: int, finding_id: int):
     user = await require_user(request)

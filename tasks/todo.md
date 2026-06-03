@@ -196,3 +196,18 @@ and the navbar was a fixed horizontal row with a hover-only Admin dropdown.
 - AppForm stacks to single column, full-width inputs.
 - Desktop (1280px) unchanged: burger hidden, nav horizontal, tables tabular (regression).
 - No console/page errors. Frontend builds clean. Backend 22/22 tests pass.
+
+---
+
+# Ignore finding state
+
+- [x] Migration 023 — `scan_findings.is_ignored INTEGER NOT NULL DEFAULT 0`
+- [x] Service: `set_finding_ignored`; match/FP/promote clear `is_ignored`; `_compute_metrics` + compare exclude ignored from Pending and add `ignored` count; scan-list `pending_count` + severity subquery exclude ignored; `rematch_scan` skips ignored findings
+- [x] API: `POST /api/scans/{id}/findings/{fid}/ignore` body `{ignored}` (vuln-mapper scope)
+- [x] Frontend: Ignore/Restore buttons + grey "Ignored" badge + Ignored metric card (ScanDetail); `.badge-ignored` CSS
+- [x] Docs: AppBuilder schema (023), four-state model, metrics, API row
+- [x] Verify: pytest 23/23 (incl. ignore round-trip — pending↓/ignored↑, precision/recall/f1 unchanged, restore reverts); vite build clean; Playwright UI (grey badge + Ignored metric + Restore, no console errors)
+
+Precision/recall/F1 need no formula change: Ignore clears match + FP, so an ignored
+finding is neither TP nor FP — it simply leaves the Pending bucket. Mutually exclusive
+with the other states; rematch treats ignore as a sticky manual decision.

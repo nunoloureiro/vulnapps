@@ -209,7 +209,7 @@ async def test_11_scan_detail(transport, auth_headers):
     assert "scan" in data
     assert "metrics" in data
     metrics = data["metrics"]
-    for key in ("tp", "fp", "pending", "fn", "precision", "recall", "f1"):
+    for key in ("tp", "fp", "pending", "ignored", "fn", "precision", "recall", "f1"):
         assert key in metrics, f"Missing metric: {key}"
     assert "findings" in data
     assert "labels" in data
@@ -399,6 +399,46 @@ async def test_21_client_side_routes(transport):
             assert "text/html" in r.headers.get("content-type", ""), f"{route} not HTML"
             assert 'id="root"' in r.text, f"{route} missing React root"
     print(f"  PASS: Client-side routes {routes} all return SPA HTML")
+
+
+@pytest.mark.asyncio
+async def test_22_ignore_finding_roundtrip(transport, auth_headers):
+    """Ignoring a pending finding moves it out of Pending into Ignored without
+    touching precision/recall/f1; restoring puts it back. Self-reverts."""
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Find a scan that has at least one pending finding.
+        scans = (await client.get("/api/scans", headers=auth_headers)).json()["scans"]
+        sid = next((s["id"] for s in scans if (s.get("pending_count") or 0) > 0), None)
+        if sid is None:
+            import pytest
+            pytest.skip("no scan with a pending finding to ignore")
+
+        before = (await client.get(f"/api/scans/{sid}", headers=auth_headers)).json()
+        m0 = before["metrics"]
+        fid = next(f["id"] for f in before["findings"]
+                   if not f.get("matched_vuln_id") and not f.get("is_false_positive")
+                   and not f.get("is_ignored"))
+
+        # Ignore it
+        r = await client.post(f"/api/scans/{sid}/findings/{fid}/ignore",
+                              json={"ignored": True}, headers=auth_headers)
+        assert r.status_code == 200, r.text
+        m1 = (await client.get(f"/api/scans/{sid}", headers=auth_headers)).json()["metrics"]
+        assert m1["pending"] == m0["pending"] - 1
+        assert m1["ignored"] == m0["ignored"] + 1
+        # Neutral: tp/fp/fn and precision/recall/f1 unchanged
+        for k in ("tp", "fp", "fn", "precision", "recall", "f1"):
+            assert m1[k] == m0[k], f"{k} changed: {m0[k]} -> {m1[k]}"
+
+        # Restore it
+        r = await client.post(f"/api/scans/{sid}/findings/{fid}/ignore",
+                              json={"ignored": False}, headers=auth_headers)
+        assert r.status_code == 200, r.text
+        m2 = (await client.get(f"/api/scans/{sid}", headers=auth_headers)).json()["metrics"]
+        assert m2["pending"] == m0["pending"]
+        assert m2["ignored"] == m0["ignored"]
+    print(f"  PASS: ignore round-trip on scan {sid} finding {fid} "
+          f"(pending {m0['pending']}->{m1['pending']}->{m2['pending']})")
 
 
 # Bonus: test that unauthenticated access to protected endpoints returns 401
