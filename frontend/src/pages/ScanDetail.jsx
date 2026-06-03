@@ -363,14 +363,11 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                     </td>
                     <td data-label="">
                       <div style={{ display: 'flex', gap: 4 }}>
-                        {canEdit && !f.is_false_positive && !f.is_ignored && (
+                        {canEdit && !f.is_false_positive && (
                           <button className="btn btn-outline btn-sm" onClick={() => markFP(f.id)} title="Mark as False Positive">FP</button>
                         )}
                         {canEdit && !f.matched_vuln_id && !f.is_false_positive && !f.is_ignored && (
                           <button className="btn btn-outline btn-sm" onClick={() => setIgnored(f.id, true)} title="Ignore — real-ish but irrelevant here (excluded from metrics)">Ignore</button>
-                        )}
-                        {canEdit && f.is_ignored && (
-                          <button className="btn btn-outline btn-sm" onClick={() => setIgnored(f.id, false)} title="Restore to Pending">Restore</button>
                         )}
                         {canEdit && !f.matched_vuln_id && (
                           <button className="btn btn-outline btn-sm"

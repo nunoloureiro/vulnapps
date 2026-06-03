@@ -721,7 +721,7 @@ Uses a **scoring-based system** instead of binary matching. Each known vuln is s
 - **Automatic matching**: Score >= 60 → TP. Score < 60 → **Pending** (not FP)
 - **Manual mapping**: User maps pending finding to known vuln → TP
 - **Mark FP**: User explicitly marks as FP → `POST /api/scans/{id}/findings/{fid}/mark-fp`
-- **Ignore / Restore**: `POST /api/scans/{id}/findings/{fid}/ignore` body `{ignored: bool}` — `true` sets Ignored, `false` returns to Pending
+- **Ignore**: `POST /api/scans/{id}/findings/{fid}/ignore` body `{ignored: bool}` — `true` sets Ignored, `false` returns to Pending (the API keeps the un-ignore path; the UI has no explicit "Restore" button — re-triaging an ignored finding via map/FP/promote clears the ignore, mirroring how FP works)
 - **Metrics**: Pending **and Ignored** findings are excluded from TP/FP. Ignored findings are neutral — they are neither TP nor FP, so precision/recall/F1 are unchanged by ignoring; they are also dropped from the scan-list Pending count and severity pills. `rematch` never auto-touches an ignored finding.
 - **Compare page**: Pending and Ignored findings excluded from the FP matrix
 
