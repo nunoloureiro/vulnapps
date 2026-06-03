@@ -340,11 +340,13 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                       {f.title && f.title !== f.vuln_type && (
                         <div className="text-muted text-xs" style={{ marginTop: 2, marginLeft: hasDetails ? 18 : 0 }}>{f.title}</div>
                       )}
+                    </td>
+                    <td data-label="Location" className="font-mono text-sm">
+                      {locationDisplay}
                       {f.parameter && (
-                        <div className="text-muted text-xs" style={{ marginTop: 2, marginLeft: hasDetails ? 18 : 0 }}>param: <span className="font-mono">{f.parameter}</span></div>
+                        <div className="text-muted text-xs" style={{ marginTop: 2 }}>param: {f.parameter}</div>
                       )}
                     </td>
-                    <td data-label="Location" className="font-mono text-sm">{locationDisplay}</td>
                     <td data-label="Status">
                       {f.matched_vuln_id ? <Badge severity="low">TP</Badge> :
                        f.is_false_positive ? <Badge severity="critical">FP</Badge> :
