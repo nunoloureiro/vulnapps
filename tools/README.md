@@ -97,7 +97,7 @@ python tools/import_scan.py \
 | `--file` | Single `.md` file (instead of `--dir`) | |
 | `--scanner` | Scanner name (overrides LLM-detected name) | |
 | `--scan-date` | Scan date in YYYY-MM-DD (overrides LLM-detected date) | |
-| `--model` | Claude model to use | `claude-sonnet-4-20250514` |
+| `--model` | Claude model to use | `claude-sonnet-4-6` (mapping), `claude-haiku-4-5` (extract-only) |
 | `--provider` | `anthropic` or `vertex` | auto-detected |
 | `--vertex-region` | Vertex AI region | `$ANTHROPIC_VERTEX_LOCATION` |
 | `--vertex-project` | GCP project ID | `$ANTHROPIC_VERTEX_PROJECT_ID` |
@@ -160,7 +160,7 @@ python tools/import_scan.py \
 python tools/import_scan.py \
   --app-id 1 \
   --dir ./scan-results/ \
-  --model claude-opus-4-20250514
+  --model claude-opus-4-6
 ```
 
 ### Discovery-mode: scan a popular app, creating it on the fly

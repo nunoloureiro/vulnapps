@@ -902,7 +902,7 @@ python tools/import_scan.py --url https://vulnapps.example.com \
 | `--cost` | Scan cost in USD (private field) |
 | `--tokens` | Token count (auto-captured from LLM if not set) |
 | `--notes` | Notes to attach to the scan |
-| `--model` | Claude model (default: `claude-sonnet-4-20250514`) |
+| `--model` | Claude model (default: `claude-sonnet-4-6` mapping, `claude-haiku-4-5` extract-only) |
 | `--provider` | `anthropic` or `vertex` (auto-detected from `CLAUDE_CODE_USE_VERTEX=1`) |
 | `--vertex-region` | Vertex AI region (or `ANTHROPIC_VERTEX_LOCATION`) |
 | `--vertex-project` | GCP project ID (or `ANTHROPIC_VERTEX_PROJECT_ID`) |

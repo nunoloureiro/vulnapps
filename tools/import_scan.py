@@ -978,7 +978,7 @@ def show_pretty_help():
   {b}LLM mapping{r} {d}(used by the importer to map findings to known vulns){r}{b}:{r}
     {c}--model{r} {d}<model>{r}            Claude model used by the importer for mapping/extraction
                               {d}(default: claude-haiku-4-5 for extract-only, claude-{r}
-                              {d}sonnet-4-20250514 for mapping). This is NOT the model{r}
+                              {d}sonnet-4-6 for mapping). This is NOT the model{r}
                               {d}used to run the scan itself — record that with a label.{r}
     {c}--provider{r} {d}<p>{r}             anthropic|vertex {d}(default: auto from CLAUDE_CODE_USE_VERTEX){r}
     {c}--vertex-region{r} {d}<r>{r}        Vertex region (default: $ANTHROPIC_VERTEX_LOCATION or us-east5)
@@ -1065,7 +1065,7 @@ def main():
     parser.add_argument("--model", default=None,
                         help="Claude model used by the importer (default: auto — "
                              "claude-haiku-4-5 for extract-only mode, "
-                             "claude-sonnet-4-20250514 for mapping mode). NOT the "
+                             "claude-sonnet-4-6 for mapping mode). NOT the "
                              "model used to run the scan itself — record that with "
                              "a label, e.g. --labels claude-opus-4-6,greybox.")
     parser.add_argument("--provider", choices=["anthropic", "vertex"], default=None,
@@ -1264,7 +1264,7 @@ def main():
     # choice. Haiku is roughly 3× faster than Sonnet and adequate for the
     # mechanical "pull findings out of the report" task.
     if not explicit_model:
-        args.model = "claude-haiku-4-5" if not vulns else "claude-sonnet-4-20250514"
+        args.model = "claude-haiku-4-5" if not vulns else "claude-sonnet-4-6"
         if not use_cli and llm_client:
             mode_word = "extract-only" if not vulns else "mapping"
             print(f"  {C.DIM}Model auto-picked for {mode_word}: {args.model}{C.RESET}")
