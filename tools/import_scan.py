@@ -150,7 +150,8 @@ the same attack class, set matched_vuln_db_id to null.
 - If a finding does not match any known vulnerability, set matched_vuln_db_id to null.
 - Use the database `id` field (integer) for matched_vuln_db_id, NOT the `vuln_id` string.
 - Extract the scanner name and scan date from the report if available. \
-`scan_date` is the date the scan STARTED (YYYY-MM-DD).
+`scan_date` is when the scan STARTED: use `YYYY-MM-DD`, or \
+`YYYY-MM-DD HH:MM` (24-hour) when the report states a start time.
 - Also extract scan-run metadata when the report states it: total cost in \
 USD (`cost`), total tokens used by the scanner (`tokens`), and wall-clock \
 duration in seconds (`duration_seconds`). These describe the scan run itself, \
@@ -168,7 +169,7 @@ no value for it.
 Respond with ONLY valid JSON (no markdown fencing) in this exact format:
 {
     "scanner_name": "string",
-    "scan_date": "YYYY-MM-DD",
+    "scan_date": "YYYY-MM-DD or YYYY-MM-DD HH:MM",
     "cost": 4.56 or null,
     "tokens": 1234567 or null,
     "duration_seconds": 754 or null,
@@ -210,7 +211,8 @@ IMPORTANT RULES:
 - Do NOT attempt to consolidate or "map" findings — keep each distinct
   finding as its own entry. The platform can group them later.
 - Extract the scanner name and scan date from the report if available.
-  `scan_date` is the date the scan STARTED (YYYY-MM-DD).
+  `scan_date` is when the scan STARTED: use `YYYY-MM-DD`, or
+  `YYYY-MM-DD HH:MM` (24-hour) when the report states a start time.
 - Also extract scan-run metadata when the report states it: total cost in
   USD (`cost`), total tokens used by the scanner (`tokens`), and wall-clock
   duration in seconds (`duration_seconds`). These describe the scan run
@@ -224,7 +226,7 @@ IMPORTANT RULES:
 Respond with ONLY valid JSON (no markdown fencing) in this exact format:
 {
     "scanner_name": "string",
-    "scan_date": "YYYY-MM-DD",
+    "scan_date": "YYYY-MM-DD or YYYY-MM-DD HH:MM",
     "cost": 4.56 or null,
     "tokens": 1234567 or null,
     "duration_seconds": 754 or null,
