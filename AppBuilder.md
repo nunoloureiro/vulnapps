@@ -402,8 +402,10 @@ Apps have a one-to-many relationship with `app_technologies`. Each row stores a 
 ### Scan Labels
 Labels are user-defined, color-coded tags for scans. A many-to-many junction table (`scan_labels`) links scans to labels. Labels can be added/removed per-scan by anyone with scan write access. Admin can manage labels globally (CRUD) via `/api/admin/labels`. Labels are displayed as color-coded badges in the scans list and scan detail. The scans list supports filtering by label.
 
-### Scan Cost & Tokens
-Private fields on scans (`cost REAL`, `tokens INTEGER`). Only visible to the scan owner, team members of the app's team, and admins. Used to track LLM-based scanner costs. The CLI auto-captures token count from the LLM response if `--tokens` is not explicitly set.
+### Scan Cost, Tokens & Duration
+Private fields on scans (`cost REAL`, `tokens INTEGER`, `duration INTEGER` seconds). Only visible to the scan owner, team members of the app's team, and admins, and editable inline on the scan detail page (Cost shows even when unset so it can be added). Used to track LLM-based scanner costs/effort.
+
+The CLI importer extracts these from the scan report via the LLM (alongside scanner name and start date) and attaches them when present. Precedence: explicit `--cost`/`--tokens`/`--duration` flag > value the LLM read from the report. For tokens, if neither is available the importer falls back to its own mapping-LLM token count (`_llm_tokens`). Nothing is sent when a value is absent.
 
 ---
 

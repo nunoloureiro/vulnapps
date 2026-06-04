@@ -149,7 +149,12 @@ does NOT map to an "XSS" known vuln on the same form. If no known vuln has \
 the same attack class, set matched_vuln_db_id to null.
 - If a finding does not match any known vulnerability, set matched_vuln_db_id to null.
 - Use the database `id` field (integer) for matched_vuln_db_id, NOT the `vuln_id` string.
-- Extract the scanner name and scan date from the report if available.
+- Extract the scanner name and scan date from the report if available. \
+`scan_date` is the date the scan STARTED (YYYY-MM-DD).
+- Also extract scan-run metadata when the report states it: total cost in \
+USD (`cost`), total tokens used by the scanner (`tokens`), and wall-clock \
+duration in seconds (`duration_seconds`). These describe the scan run itself, \
+NOT this mapping step. Use null for any the report does not provide.
 - For vuln_type, use a short canonical type (e.g., "XSS", "SQLi", "IDOR", \
 "Missing Security Headers", "CSRF", etc.)
 - ALWAYS fill in the rich detail fields (description, severity, poc, \
@@ -164,6 +169,9 @@ Respond with ONLY valid JSON (no markdown fencing) in this exact format:
 {
     "scanner_name": "string",
     "scan_date": "YYYY-MM-DD",
+    "cost": 4.56 or null,
+    "tokens": 1234567 or null,
+    "duration_seconds": 754 or null,
     "findings": [
         {
             "vuln_type": "string - canonical vulnerability type",
@@ -202,6 +210,11 @@ IMPORTANT RULES:
 - Do NOT attempt to consolidate or "map" findings — keep each distinct
   finding as its own entry. The platform can group them later.
 - Extract the scanner name and scan date from the report if available.
+  `scan_date` is the date the scan STARTED (YYYY-MM-DD).
+- Also extract scan-run metadata when the report states it: total cost in
+  USD (`cost`), total tokens used by the scanner (`tokens`), and wall-clock
+  duration in seconds (`duration_seconds`). These describe the scan run
+  itself, NOT this extraction step. Use null for any the report omits.
 - For vuln_type, use a short canonical type (e.g., "XSS", "SQLi", "IDOR",
   "Missing Security Headers", "CSRF").
 - severity must be one of: "critical", "high", "medium", "low", "info".
@@ -212,6 +225,9 @@ Respond with ONLY valid JSON (no markdown fencing) in this exact format:
 {
     "scanner_name": "string",
     "scan_date": "YYYY-MM-DD",
+    "cost": 4.56 or null,
+    "tokens": 1234567 or null,
+    "duration_seconds": 754 or null,
     "findings": [
         {
             "vuln_type": "string - canonical vulnerability type",
@@ -879,6 +895,24 @@ def _zip_directory(src: Path, dest: Path) -> int:
     return dest.stat().st_size
 
 
+def _as_float(v) -> float | None:
+    """Coerce an LLM-supplied value to float, tolerating '$4.56' / '4,560'. None on failure."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        return float(str(v).strip().lstrip("$").replace(",", ""))
+    except (ValueError, TypeError):
+        return None
+
+
+def _as_int(v) -> int | None:
+    """Coerce an LLM-supplied value to int, tolerating '1,234,567' / '1234.0'. None on failure."""
+    f = _as_float(v)
+    return int(f) if f is not None else None
+
+
 def parse_scan_start(s: str) -> str:
     """Parse --scan-start. Accepts 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD'.
     Returns a normalized 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD' string.
@@ -1022,9 +1056,9 @@ def main():
                              "thinking budget — thinking-medium, thinking-high; "
                              "tools — used-dast, used-sast.")
     parser.add_argument("--confirm", action="store_true", help="Ask for confirmation before submitting each scan")
-    parser.add_argument("--cost", type=float, default=None, help="Scan cost in USD (optional, private — for LLM-based scanners)")
-    parser.add_argument("--tokens", type=int, default=None, help="Token count (optional, private — auto-captured from LLM if not set)")
-    parser.add_argument("--duration", type=float, default=None, help="Scan duration in minutes (optional, private)")
+    parser.add_argument("--cost", type=float, default=None, help="Scan cost in USD (optional, private). Overrides any cost the LLM reads from the report.")
+    parser.add_argument("--tokens", type=int, default=None, help="Scan token count (optional, private). Overrides the report's value; falls back to the importer's own mapping tokens if neither is available.")
+    parser.add_argument("--duration", type=float, default=None, help="Scan duration in minutes (optional, private). Overrides the report's duration.")
     parser.add_argument("--notes", default="", help="Notes to attach to the scan")
     parser.add_argument("--model", default=None,
                         help="Claude model used by the importer (default: auto — "
@@ -1300,6 +1334,10 @@ def main():
 
         # --duration is minutes; backend expects seconds. Probely auto-capture is already seconds.
         duration = int(args.duration * 60) if args.duration is not None else merged.get("duration")
+        # Cost/tokens aren't in Probely's API; fall back to anything the LLM
+        # parsed, then to the importer's own mapping tokens.
+        cost = args.cost if args.cost is not None else _as_float(llm_out.get("cost"))
+        tokens = args.tokens or _as_int(llm_out.get("tokens")) or llm_out.get("_llm_tokens")
 
         print_header(f"Probely Import — {len(merged['findings'])} findings")
         print_mapping_table(mapping, vulns)
@@ -1319,7 +1357,7 @@ def main():
                 return
 
         try:
-            scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost, args.tokens, duration, args.scanner_version)
+            scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, cost, tokens, duration, args.scanner_version)
             for label_name in label_names:
                 client.add_label(scan_id, label_name)
             if label_names:
@@ -1474,6 +1512,11 @@ def main():
                         mapping["scanner_name"] = partial["scanner_name"]
                     if not mapping["scan_date"] and partial.get("scan_date"):
                         mapping["scan_date"] = partial["scan_date"]
+                    # Scan-run metrics usually appear once (in a summary file);
+                    # keep the first non-null value seen across chunks.
+                    for k in ("cost", "tokens", "duration_seconds"):
+                        if mapping.get(k) is None and partial.get(k) is not None:
+                            mapping[k] = partial[k]
                     mapping["findings"].extend(partial.get("findings", []) or [])
                     mapping["_llm_tokens"] += partial.get("_llm_tokens") or 0
                     processed.add(fname)
@@ -1540,10 +1583,14 @@ def main():
             return
 
     try:
-        tokens = args.tokens or mapping.get("_llm_tokens")
-        # --duration is minutes; backend expects seconds.
-        duration_s = int(args.duration * 60) if args.duration is not None else None
-        scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, args.cost, tokens, duration_s, args.scanner_version)
+        # Precedence: explicit CLI flag > value the LLM read from the report.
+        # Tokens additionally fall back to the importer's own mapping tokens.
+        cost = args.cost if args.cost is not None else _as_float(mapping.get("cost"))
+        tokens = args.tokens or _as_int(mapping.get("tokens")) or mapping.get("_llm_tokens")
+        # --duration is minutes; backend expects seconds. The report's
+        # duration_seconds is already in seconds.
+        duration_s = int(args.duration * 60) if args.duration is not None else _as_int(mapping.get("duration_seconds"))
+        scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, cost, tokens, duration_s, args.scanner_version)
         for label_name in label_names:
             client.add_label(scan_id, label_name)
         if label_names:

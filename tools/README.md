@@ -204,7 +204,12 @@ For each `.md` file:
 
 The `.md` files can be in any format — the LLM parses them. That said, including these details helps accuracy:
 
-- Scanner name and scan date
+- Scanner name and scan date (the date the scan started)
+- Scan-run metrics, if you have them: total **cost** (USD), total **tokens**
+  used, and wall-clock **duration**. When the report states these, the LLM
+  reads them and they're attached to the scan as private metadata. Omit them
+  and nothing is sent. `--cost` / `--tokens` / `--duration` override whatever
+  the report says.
 - Whether the scan was authenticated
 - For each finding: type/category, affected URL, HTTP method, parameter, severity
 - Any notes about false positives

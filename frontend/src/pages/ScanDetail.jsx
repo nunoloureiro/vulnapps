@@ -46,13 +46,14 @@ export default function ScanDetail() {
   );
 }
 
-function EditableField({ label, value, canEdit, onSave, type = 'text', options }) {
+function EditableField({ label, value, editValue, canEdit, onSave, type = 'text', options }) {
+  const edit = editValue !== undefined ? editValue : value;
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
+  const [draft, setDraft] = useState(edit);
 
   const save = () => {
     const newVal = type === 'checkbox' ? draft : draft;
-    if (newVal !== value) onSave(newVal);
+    if (newVal !== edit) onSave(newVal);
     setEditing(false);
   };
 
@@ -84,10 +85,10 @@ function EditableField({ label, value, canEdit, onSave, type = 'text', options }
                 onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }} />
             )}
             <button className="btn btn-primary btn-sm" onClick={save} style={{ height: 24, padding: '0 0.4rem', fontSize: '0.7rem' }}>Save</button>
-            <button className="btn btn-outline btn-sm" onClick={() => { setDraft(value); setEditing(false); }} style={{ height: 24, padding: '0 0.4rem', fontSize: '0.7rem' }}>Cancel</button>
+            <button className="btn btn-outline btn-sm" onClick={() => { setDraft(edit); setEditing(false); }} style={{ height: 24, padding: '0 0.4rem', fontSize: '0.7rem' }}>Cancel</button>
           </div>
         ) : (
-          <span onClick={() => { setDraft(value); setEditing(true); }}
+          <span onClick={() => { setDraft(edit); setEditing(true); }}
             className="editable-field"
             title="Click to edit">
             {type === 'checkbox' ? (value ? 'Yes' : 'No') : (value || '-')}
@@ -168,11 +169,15 @@ function ScanMeta({ scan, app, labels, canEdit, canViewCost, scanId, onUpdate })
             <span className="detail-value font-mono">{scan.tokens.toLocaleString()}</span>
           </>
         )}
-        {canViewCost && scan.cost != null && (
-          <>
-            <span className="detail-label">Cost <span className="text-muted text-xs">(private)</span></span>
-            <span className="detail-value font-mono">${scan.cost.toFixed(4)}</span>
-          </>
+        {canViewCost && (
+          <EditableField
+            label={<>Cost <span className="text-muted text-xs">(private)</span></>}
+            value={scan.cost != null ? `$${scan.cost.toFixed(4)}` : ''}
+            editValue={scan.cost != null ? String(scan.cost) : ''}
+            canEdit={canEdit}
+            type="number"
+            onSave={v => { const c = parseFloat(v); updateField('cost', isNaN(c) ? null : c); }}
+          />
         )}
         {scan.state_filename && (
           <>
