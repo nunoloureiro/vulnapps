@@ -156,6 +156,11 @@ the same attack class, set matched_vuln_db_id to null.
 USD (`cost`), total tokens used by the scanner (`tokens`), and wall-clock \
 duration in seconds (`duration_seconds`). These describe the scan run itself, \
 NOT this mapping step. Use null for any the report does not provide.
+- If the report states which AI model or engine PERFORMED the scan (e.g. an \
+LLM identifier like `claude-sonnet-4-6`, `claude-opus-4-7`, or `gpt-5`), \
+return it as `scan_model` — a short, label-friendly string. This is distinct \
+from `scanner_name` (the tool/methodology, e.g. "Claude Code Security"). Use \
+null when the report does not state the model.
 - For vuln_type, use a short canonical type (e.g., "XSS", "SQLi", "IDOR", \
 "Missing Security Headers", "CSRF", etc.)
 - ALWAYS fill in the rich detail fields (description, severity, poc, \
@@ -170,6 +175,7 @@ Respond with ONLY valid JSON (no markdown fencing) in this exact format:
 {
     "scanner_name": "string",
     "scan_date": "YYYY-MM-DD or YYYY-MM-DD HH:MM",
+    "scan_model": "claude-sonnet-4-6" or null,
     "cost": 4.56 or null,
     "tokens": 1234567 or null,
     "duration_seconds": 754 or null,
@@ -217,6 +223,10 @@ IMPORTANT RULES:
   USD (`cost`), total tokens used by the scanner (`tokens`), and wall-clock
   duration in seconds (`duration_seconds`). These describe the scan run
   itself, NOT this extraction step. Use null for any the report omits.
+- If the report states which AI model or engine PERFORMED the scan (e.g. an
+  LLM identifier like `claude-sonnet-4-6`, `claude-opus-4-7`, or `gpt-5`),
+  return it as `scan_model` — a short, label-friendly string, distinct from
+  `scanner_name` (the tool/methodology). Use null when not stated.
 - For vuln_type, use a short canonical type (e.g., "XSS", "SQLi", "IDOR",
   "Missing Security Headers", "CSRF").
 - severity must be one of: "critical", "high", "medium", "low", "info".
@@ -227,6 +237,7 @@ Respond with ONLY valid JSON (no markdown fencing) in this exact format:
 {
     "scanner_name": "string",
     "scan_date": "YYYY-MM-DD or YYYY-MM-DD HH:MM",
+    "scan_model": "claude-sonnet-4-6" or null,
     "cost": 4.56 or null,
     "tokens": 1234567 or null,
     "duration_seconds": 754 or null,
@@ -1050,6 +1061,8 @@ def main():
     parser.add_argument("--public", action="store_true", help="Make scan public (default: private)")
     parser.add_argument("--labels", default="",
                         help="Comma-separated labels (auto-created if missing). "
+                             "The model that ran the scan is auto-added as a label "
+                             "when the report states it (no need to pass it here). "
                              "Suggested conventions: "
                              "methodology — blackbox, greybox; "
                              "model — claude-opus-4-6, claude-opus-4-7, "
@@ -1066,8 +1079,9 @@ def main():
                         help="Claude model used by the importer (default: auto — "
                              "claude-haiku-4-5 for extract-only mode, "
                              "claude-sonnet-4-6 for mapping mode). NOT the "
-                             "model used to run the scan itself — record that with "
-                             "a label, e.g. --labels claude-opus-4-6,greybox.")
+                             "model used to run the scan itself — that is "
+                             "auto-detected from the report and added as a label "
+                             "when stated.")
     parser.add_argument("--provider", choices=["anthropic", "vertex"], default=None,
                         help="LLM provider. Auto-detected from CLAUDE_CODE_USE_VERTEX=1 env var")
     parser.add_argument("--use-cli", action="store_true",
@@ -1359,6 +1373,9 @@ def main():
                 return
 
         try:
+            scan_model = llm_out.get("scan_model")
+            if scan_model and scan_model not in label_names:
+                label_names.append(scan_model)
             scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, cost, tokens, duration, args.scanner_version)
             for label_name in label_names:
                 client.add_label(scan_id, label_name)
@@ -1516,7 +1533,7 @@ def main():
                         mapping["scan_date"] = partial["scan_date"]
                     # Scan-run metrics usually appear once (in a summary file);
                     # keep the first non-null value seen across chunks.
-                    for k in ("cost", "tokens", "duration_seconds"):
+                    for k in ("cost", "tokens", "duration_seconds", "scan_model"):
                         if mapping.get(k) is None and partial.get(k) is not None:
                             mapping[k] = partial[k]
                     mapping["findings"].extend(partial.get("findings", []) or [])
@@ -1592,6 +1609,10 @@ def main():
         # --duration is minutes; backend expects seconds. The report's
         # duration_seconds is already in seconds.
         duration_s = int(args.duration * 60) if args.duration is not None else _as_int(mapping.get("duration_seconds"))
+        # Auto-add the model that ran the scan (read from the report) as a label.
+        scan_model = mapping.get("scan_model")
+        if scan_model and scan_model not in label_names:
+            label_names.append(scan_model)
         scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, cost, tokens, duration_s, args.scanner_version)
         for label_name in label_names:
             client.add_label(scan_id, label_name)

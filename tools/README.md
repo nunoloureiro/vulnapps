@@ -205,6 +205,9 @@ For each `.md` file:
 The `.md` files can be in any format — the LLM parses them. That said, including these details helps accuracy:
 
 - Scanner name and scan date (the date the scan started)
+- The model/engine that ran the scan, if applicable (e.g. `claude-sonnet-4-6`).
+  When the report states it, the LLM picks it up and it's auto-added as a label
+  on the scan — no need to pass it in `--labels`.
 - Scan-run metrics, if you have them: total **cost** (USD), total **tokens**
   used, and wall-clock **duration**. When the report states these, the LLM
   reads them and they're attached to the scan as private metadata. Omit them
