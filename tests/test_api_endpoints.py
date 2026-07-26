@@ -441,6 +441,74 @@ async def test_22_ignore_finding_roundtrip(transport, auth_headers):
           f"(pending {m0['pending']}->{m1['pending']}->{m2['pending']})")
 
 
+@pytest.mark.asyncio
+async def test_23_vuln_field_length_cap(transport, auth_headers):
+    """Creating a vuln with an oversized title stores a truncated value.
+
+    Regression guard for the 2026-07 recon flood, where a 1 MB vuln title
+    helped turn GET /api/apps/{id} into a 14 MB response. The write path now
+    caps field lengths so no single field can bloat the app-detail payload.
+    """
+    from app.services.vulns import _FIELD_CAPS
+    cap = _FIELD_CAPS["title"]
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        r = await client.post(
+            "/api/apps/1/vulns",
+            json={"vuln_id": "CAPTEST-1", "title": "A" * (cap * 10),
+                  "severity": "low"},
+            headers=auth_headers,
+        )
+        assert r.status_code == 200, r.text
+        vuln = r.json()["vulnerability"]
+        assert len(vuln["title"]) == cap, f"title not capped: {len(vuln['title'])}"
+        # Clean up so the test is idempotent across runs.
+        r = await client.delete(f"/api/apps/1/vulns/{vuln['id']}", headers=auth_headers)
+        assert r.status_code == 200, r.text
+    print(f"  PASS: oversized vuln title capped at {cap} chars")
+
+
+@pytest.mark.asyncio
+async def test_24_app_detail_response_bounded(transport, auth_headers):
+    """App detail exposes an accurate count and a bounded vuln list."""
+    from app.services.vulns import MAX_VULNS_PER_APP
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        r = await client.get("/api/apps/1", headers=auth_headers)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert "vuln_count" in data and "vulns_truncated" in data
+        assert len(data["vulns"]) <= MAX_VULNS_PER_APP
+        # severity_counts must sum to the true total, independent of truncation.
+        assert sum(data["severity_counts"].values()) == data["vuln_count"]
+    print(f"  PASS: app detail bounded (count={data['vuln_count']}, "
+          f"returned={len(data['vulns'])}, truncated={data['vulns_truncated']})")
+
+
+@pytest.mark.asyncio
+async def test_25_import_reports_truncation(transport, auth_headers):
+    """Vuln import returns audit fields and flags silently-truncated data."""
+    from app.services.vulns import _FIELD_CAPS
+    cap = _FIELD_CAPS["title"]
+    payload = {"vulnerabilities": [
+        {"vuln_id": "IMPTEST-1", "title": "A" * (cap * 5), "severity": "low"},
+        {"vuln_id": "IMPTEST-2", "title": "normal", "severity": "low"},
+    ]}
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        r = await client.post("/api/apps/1/vulns/import", json=payload, headers=auth_headers)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["imported"] == 2, data
+        assert data["truncated_fields"] >= 1, data           # oversized title flagged
+        assert "skipped_over_cap" in data and data["skipped_over_cap"] == 0, data
+
+        # Clean up the two rows we added so the test stays idempotent.
+        vulns = (await client.get("/api/apps/1/vulns", headers=auth_headers)).json()["vulnerabilities"]
+        for v in vulns:
+            if str(v.get("vuln_id", "")).startswith("IMPTEST-"):
+                await client.delete(f"/api/apps/1/vulns/{v['id']}", headers=auth_headers)
+    print(f"  PASS: import audit fields (imported={data['imported']}, "
+          f"truncated_fields={data['truncated_fields']}, skipped_over_cap={data['skipped_over_cap']})")
+
+
 # Bonus: test that unauthenticated access to protected endpoints returns 401
 @pytest.mark.asyncio
 async def test_bonus_unauth_protected(transport):

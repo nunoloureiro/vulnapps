@@ -68,17 +68,28 @@ export default function AppDetail() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const resp = await fetch('/api/apps/' + id + '/vulns/import', {
-        method: 'POST',
-        body: formData,
-      });
-      const result = await resp.json();
-      if (!resp.ok) throw new Error(result.detail || 'Import failed');
-      setImportMsg('Imported ' + result.imported + ' vulnerabilities');
+      // api.post attaches the JWT and handles FormData; result carries the
+      // import audit fields {imported, skipped_over_cap, truncated_fields}.
+      const result = await api.post('/apps/' + id + '/vulns/import', formData);
+      const n = result.imported || 0;
+      const base = `Imported ${n} vulnerabilit${n === 1 ? 'y' : 'ies'}`;
+
+      // Surface the otherwise-silent caps loudly, as an error-level banner.
+      const problems = [];
+      if (result.skipped_over_cap > 0)
+        problems.push(`${result.skipped_over_cap} row(s) were NOT imported — this app reached the per-app vulnerability limit`);
+      if (result.truncated_fields > 0)
+        problems.push(`${result.truncated_fields} field value(s) were truncated to the maximum length`);
+
+      if (problems.length)
+        setImportMsg({ level: 'error', text: `${base}. ⚠ ${problems.join('; ')}.` });
+      else
+        setImportMsg({ level: 'success', text: `${base}.` });
+
       fileInputRef.current.value = '';
       fetchApp();
     } catch (err) {
-      setImportMsg('Error: ' + (err.message || 'Import failed'));
+      setImportMsg({ level: 'error', text: 'Error: ' + (err.message || 'Import failed') });
     }
   }
 
@@ -129,6 +140,8 @@ export default function AppDetail() {
   if (!data) return null;
 
   const { app, vulns = [], tech_stack = [], scan_count = 0, severity_counts = {}, can_edit, can_submit_scan } = data;
+  // vuln_count is the true total from the server; vulns may be capped for very large apps.
+  const vulnCount = data.vuln_count ?? vulns.length;
 
   function renderLocation(v) {
     if (v.url) return v.url;
@@ -264,7 +277,7 @@ export default function AppDetail() {
           <h3 className="card-title mb-2">Import Vulnerabilities</h3>
           <p className="text-sm text-secondary mb-2">Upload a JSON or CSV file with vulnerabilities.</p>
           {importMsg && (
-            <div className={'alert ' + (importMsg.startsWith('Error') ? 'alert-error' : 'alert-success')}>{importMsg}</div>
+            <div className={'alert ' + (importMsg.level === 'success' ? 'alert-success' : 'alert-error')}>{importMsg.text}</div>
           )}
           <form onSubmit={handleImport}>
             <div className="flex items-center gap-1">
@@ -311,7 +324,7 @@ export default function AppDetail() {
       </div>
 
       <div className="page-header">
-        <h2 className="page-title">Vulnerabilities <span className="text-muted text-sm">({vulns.length})</span></h2>
+        <h2 className="page-title">Vulnerabilities <span className="text-muted text-sm">({vulnCount})</span></h2>
       </div>
 
       {vulns.length > 0 && (

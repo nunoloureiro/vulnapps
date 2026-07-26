@@ -95,14 +95,30 @@ if [ "$1" = "--remote" ] && [ "$2" = "--restore" ]; then
     read -r
     echo ""
 
+    # Safety net: never leave production stopped. spin() calls `exit` when a
+    # step fails, so if anything below aborts the script we restart the
+    # container on the way out. Disarmed once every step has succeeded.
+    _restore_safety() { ssh t.sig9.net "sudo docker start $CONTAINER" >/dev/null 2>&1 || true; }
+    trap _restore_safety EXIT
+
     run "Uploading snapshot to EC2" \
         scp "$RESTORE_FILE" t.sig9.net:vulnapps.db
     run "Stopping container" \
         ssh t.sig9.net "sudo docker stop $CONTAINER"
+    # Copy the fresh DB in, then delete the PREVIOUS db's stale -wal/-shm. The
+    # container is stopped, so `docker exec` can't run (that bug left the
+    # restore dead here and the container never restarted). Instead run a
+    # throwaway container that shares the same volume — using the container's
+    # OWN image, so there's nothing extra to pull. A stale WAL left beside a
+    # swapped-in DB can otherwise read as a malformed image on startup.
     run "Restoring database" \
-        ssh t.sig9.net "sudo docker cp ~/vulnapps.db $CONTAINER:$DB_PATH && sudo docker exec $CONTAINER rm -f $DB_PATH-shm $DB_PATH-wal"
+        ssh t.sig9.net "sudo docker cp ~/vulnapps.db $CONTAINER:$DB_PATH && sudo docker run --rm --volumes-from $CONTAINER \$(sudo docker inspect -f '{{.Config.Image}}' $CONTAINER) rm -f $DB_PATH-shm $DB_PATH-wal"
     run "Starting container" \
         ssh t.sig9.net "sudo docker start $CONTAINER"
+    run "Verifying container is up" \
+        ssh t.sig9.net "sudo docker ps --filter name=$CONTAINER --filter status=running --format '{{.Names}}' | grep -qx $CONTAINER"
+
+    trap - EXIT   # every step succeeded — disarm the safety net
 
     echo ""
     echo -e "  ${CHECK} ${BOLD}${GREEN}Restore complete!${RESET}"

@@ -130,11 +130,23 @@ async def spa_middleware(request: Request, call_next):
     # If a real route handled it (not 404/405), return as-is
     if response.status_code not in (404, 405):
         return response
-    # Don't serve SPA for API or static paths
-    if path.startswith("/api") or path.startswith("/static"):
+    # Don't serve SPA for API, static, or build-asset paths. Crucially, a
+    # MISSING /assets/* file must return its real 404 — never index.html. A
+    # stale (browser- or CDN-cached) index.html references an old hashed asset
+    # that a redeploy has removed; falling back to index.html would answer that
+    # JS request with HTML (200 text/html), which the browser refuses to run as
+    # a module → a silent blank page with no 404 to explain it. Let it 404 loud.
+    if (
+        path.startswith("/api")
+        or path.startswith("/static")
+        or path.startswith("/assets")
+    ):
         return response
-    # Serve the SPA index.html for client-side routing
+    # Serve the SPA index.html for client-side routing. `no-cache` forces the
+    # browser to revalidate index.html on every load, so a deploy can never
+    # strand a client on an old index.html pointing at a purged asset hash
+    # (the cache-skew that renders as a blank page).
     spa_index = SPA_DIR / "index.html"
     if spa_index.exists():
-        return FileResponse(spa_index)
+        return FileResponse(spa_index, headers={"Cache-Control": "no-cache"})
     return response

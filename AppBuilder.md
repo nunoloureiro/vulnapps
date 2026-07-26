@@ -459,6 +459,44 @@ On startup (via FastAPI lifespan), all `.sql` files in `migrations/` are execute
 - API key scope enforcement on all write endpoints
 - All write operations check both authentication and authorization
 
+### SPA serving & cache safety (blank-page guard)
+The SPA catch-all (`app/main.py`) must not turn a cache-skewed deploy into a
+silent blank page:
+- **`index.html` is served with `Cache-Control: no-cache`** so browsers
+  revalidate it every load. Otherwise a browser (or CDN) keeps an old
+  `index.html` that points at a hashed asset a redeploy has purged.
+- **Missing `/assets/*` requests return their real 404** — the catch-all
+  excludes `/assets` (alongside `/api`, `/static`). Falling back to
+  `index.html` for a purged asset would answer a `.js` request with
+  `200 text/html`, which the browser refuses to execute as a module → a blank
+  page with no 404 to explain it. Let it 404 loudly instead.
+Hashed assets (`/assets/index-<hash>.js|css`) stay long-cacheable; only
+`index.html` is revalidated. This is the durable fix for post-deploy blank
+pages (the same class of skew the content-hashed CSS note above addresses).
+
+### Input & Response Bounds (resource-exhaustion guard)
+The vulnerability write path and the app-detail read path are bounded so no
+single app can produce a multi-MB response. (A 2026-07 recon flood created
+48k vulns on one app — one with a 1 MB title — turning `GET /api/apps/{id}`
+into a 14 MB response that OOM-killed the 512 MB host.)
+
+- **Per-app vuln cap** — `MAX_VULNS_PER_APP = 1000` (in `app/services/vulns.py`).
+  `create_vuln` rejects over-cap creates with a 400 ("maximum … vulnerabilities");
+  `import_vulns` stops at the remaining budget (partial import, returns count).
+- **Field length caps** — `_FIELD_CAPS` in `app/services/vulns.py` truncates each
+  vuln string field on create/update/import (e.g. title 500, description/poc/
+  remediation 10000, url 2048). Truncation (not rejection) keeps bulk imports
+  flowing; caps sit far above any legitimate value so real data is never trimmed.
+- **Bounded reads** — `get_app` and `list_vulns` `LIMIT` the returned vuln list to
+  `MAX_VULNS_PER_APP`. `get_app` computes `severity_counts` and `vuln_count` via
+  SQL aggregates (accurate regardless of truncation) and returns `vuln_count` +
+  `vulns_truncated`; the SPA's AppDetail shows `vuln_count` for the true total.
+  This protects even a DB that still holds pre-cap flood data.
+- **Cleanup tool** — `tools/cleanup_scan_garbage.sh <db>` removes recon/test
+  garbage (all data owned by non-`@snyk.io` accounts) in two phases: a full
+  user→apps→vulns/scans/findings preview, then a transactional delete + VACUUM
+  on Enter (auto-backs up the DB first).
+
 ### First User = Admin + Seed Data
 In the register service, when user count is 0, the new user gets `role='admin'`. All subsequent users get `role='user'`.
 

@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 
 from app.dependencies import get_team_role
 from app.visibility import app_visibility_filter
+from app.services.vulns import MAX_VULNS_PER_APP
 
 
 _ALLOWED_URL_SCHEMES = ("http", "https")
@@ -180,11 +181,26 @@ async def get_app(db, user, app_id: int) -> dict:
     if not app:
         raise ValueError("App not found")
 
+    # Counts come from SQL aggregates, never from len(vulns): the returned
+    # list is capped (below) so the response can't balloon into a multi-MB
+    # payload — a single flooded app once made this a 14 MB / OOM response.
+    # Counts stay accurate even if the row list is truncated.
     cursor = await db.execute(
-        "SELECT * FROM vulnerabilities WHERE app_id = ? ORDER BY severity, title",
+        "SELECT severity, COUNT(*) AS c FROM vulnerabilities WHERE app_id = ? GROUP BY severity",
         (app_id,),
     )
+    severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    vuln_count = 0
+    for row in await cursor.fetchall():
+        severity_counts[row["severity"]] = row["c"]
+        vuln_count += row["c"]
+
+    cursor = await db.execute(
+        "SELECT * FROM vulnerabilities WHERE app_id = ? ORDER BY severity, title LIMIT ?",
+        (app_id, MAX_VULNS_PER_APP),
+    )
     vulns = await cursor.fetchall()
+    vulns_truncated = vuln_count > len(vulns)
 
     cursor = await db.execute(
         "SELECT COUNT(*) as count FROM scans WHERE app_id = ?", (app_id,)
@@ -192,11 +208,6 @@ async def get_app(db, user, app_id: int) -> dict:
     scan_count = (await cursor.fetchone())["count"]
 
     tech_stack = await _get_tech_stack(db, app_id)
-
-    severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
-    for v in vulns:
-        sev = v["severity"]
-        severity_counts[sev] = severity_counts.get(sev, 0) + 1
 
     # Permissions
     can_edit = False
@@ -220,6 +231,8 @@ async def get_app(db, user, app_id: int) -> dict:
     return {
         "app": app,
         "vulns": vulns,
+        "vuln_count": vuln_count,
+        "vulns_truncated": vulns_truncated,
         "tech_stack": tech_stack,
         "scan_count": scan_count,
         "severity_counts": severity_counts,

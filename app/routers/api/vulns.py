@@ -51,7 +51,10 @@ async def create_vuln(request: Request, app_id: int):
     try:
         vuln = await vulns_service.create_vuln(db, user, app_id, body)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # "maximum ... vulnerabilities" is a capacity limit (400), not a
+        # missing-app error (404).
+        status = 400 if "maximum" in str(e) else 404
+        raise HTTPException(status_code=status, detail=str(e))
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     finally:
@@ -166,7 +169,7 @@ async def import_vulns(
 
     db = await get_connection()
     try:
-        count = await vulns_service.import_vulns(db, user, app_id, vulns_data)
+        result = await vulns_service.import_vulns(db, user, app_id, vulns_data)
     except ValueError as e:
         # Domain-level errors only ("App not found"). UnicodeEncodeError is a
         # subclass of ValueError; map it to a generic 400 instead of leaking
@@ -178,4 +181,6 @@ async def import_vulns(
         raise HTTPException(status_code=403, detail=str(e))
     finally:
         await db.close()
-    return {"imported": count}
+    # result: {imported, skipped_over_cap, truncated_fields}. `imported` stays
+    # top-level for backward compatibility with existing clients.
+    return result
