@@ -838,6 +838,15 @@ Comparison page at `/apps/:id/compare` (API: `GET /api/apps/{id}/compare?scans=1
 - Scans ordered by date in the selector
 
 **Comparison data includes:**
+- **F1-over-time chart**: an inline-SVG scatter shown at the **end** of the
+  comparison (after the detection/FP matrices), via `F1TimelineChart` in
+  `ScanCompare.jsx`. X = scan date (multiple `YY-MM-DD` ticks), Y = F1 (fixed
+  0–100% axis). One accent point per scan, directly labeled with the scanner
+  name (labels are vertically de-collided with leader lines when points crowd),
+  plus a **least-squares trend line** (dashed, clipped to the plot) and a hover
+  tooltip (`scanner · YY-MM-DD · F1%`). F1 is read from the severity-filtered
+  metrics, so the chart recomputes live with the filter. Single series → no
+  legend; no charting dependency.
 - **Metrics Table**: TP, FP, FN, Precision, Recall, F1, Detection Rate per scanner. Color-coded: green >=70%, yellow >=40%, red <40%
 - **Detection Matrix**: Rows = known vulnerabilities, Columns = scanners. Green checkmark (found) or gray X (missed). Coverage summary per vuln.
 - **False Positives Table**: FPs grouped by scanner with vuln_type, method, URL, parameter.
