@@ -410,6 +410,8 @@ function ComparisonView({ data, appId }) {
         </div>
       </div>
 
+      <TierRadar scanners={scanners} metrics={filteredMetrics} isFiltered={isFiltered} winnerIdx={winnerIdx} label={label} />
+
       <div className="card mb-2">
         <h3 className="card-title mb-2">Detection Matrix{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}</h3>
         <div className="compare-scroll">
@@ -690,6 +692,131 @@ function TrendChart({ scanners, metrics, isFiltered, label }) {
             <g pointerEvents="none">
               <rect x={tx} y={ty} width={w} height="24" rx="4" fill="var(--bg)" stroke={GRID} strokeWidth="1" />
               <text x={tx + w / 2} y={ty + 16} textAnchor="middle" fontSize="11" fill="var(--text)">{label}</text>
+            </g>
+          );
+        })()}
+      </svg>
+    </div>
+  );
+}
+
+// Coverage (tier rate) + quality (precision/recall/F1) on one shape per
+// scanner, so a run's shape tells you WHERE it's strong at a glance instead
+// of scanning six separate table rows. Small multiples (one polygon per
+// panel), not one chart with N overlaid polygons: this page can compare an
+// unbounded number of scans, and overlaid same-hue-family polygons stop
+// being tellable-apart well before that — each panel's own title already
+// carries scanner identity, so no legend/categorical palette is needed.
+const RADAR_AXES = [
+  ['commodity', 'Commodity', true],
+  ['business_logic', 'Business logic', true],
+  ['chained', 'Chained', true],
+  ['precision_upper', 'Precision', false],
+  ['recall', 'Recall', false],
+  ['f1', 'F1', false],
+];
+
+function TierRadar({ scanners, metrics, isFiltered, winnerIdx, label }) {
+  if (metrics.length < 2) return null;
+
+  // Same gating the table above uses: tier rates are only meaningful
+  // unfiltered, and only shown when at least one scanner's ground truth
+  // actually has vulns in that tier.
+  const axes = RADAR_AXES.filter(([key, , isTier]) => {
+    if (!isTier) return true;
+    if (isFiltered) return false;
+    return metrics.some(m => (m.tiers?.[key]?.count || 0) > 0);
+  });
+  if (axes.length < 3) return null;
+
+  return (
+    <div className="card mb-2">
+      <h3 className="card-title mb-2">
+        Coverage &amp; Quality Shape{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}
+        <span className="text-muted text-sm font-mono" style={{ marginLeft: 8 }}>{label}</span>
+      </h3>
+      <div className="card-grid">
+        {scanners.map((s, i) => (
+          <RadarPanel
+            key={s.scan.id}
+            name={s.scan.scanner_name || 'scan'}
+            version={s.scan.scanner_version}
+            isWinner={i === winnerIdx}
+            axes={axes}
+            values={axes.map(([key, , isTier]) => isTier ? (metrics[i].tiers?.[key]?.rate ?? 0) : (metrics[i][key] ?? 0))}
+            counts={axes.map(([key, , isTier]) => isTier ? metrics[i].tiers?.[key] : null)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RadarPanel({ name, version, isWinner, axes, values, counts }) {
+  const [hover, setHover] = useState(null);
+
+  const SIZE = 260;
+  const CX = SIZE / 2, CY = SIZE / 2 + 4;
+  const R = 68;
+  const N = axes.length;
+  const LABEL_R = R * 1.42;
+
+  const angleFor = i => -Math.PI / 2 + (i * 2 * Math.PI) / N;
+  const pointAt = (i, frac) => {
+    const a = angleFor(i);
+    return [CX + R * frac * Math.cos(a), CY + R * frac * Math.sin(a)];
+  };
+
+  const GRID = 'var(--border)', MUTED = 'var(--text-muted)', ACCENT = 'var(--accent)';
+  const ringLevels = [0.25, 0.5, 0.75, 1];
+  const ringPoints = frac => axes.map((_, i) => pointAt(i, frac).join(',')).join(' ');
+  const clamped = values.map(v => Math.max(0, Math.min(1, v)));
+  const dataPoints = clamped.map((v, i) => pointAt(i, v).join(',')).join(' ');
+
+  return (
+    <div className="card" style={isWinner ? { background: 'rgba(249, 115, 22, 0.08)' } : undefined}>
+      <div className="text-center mb-1">
+        {isWinner && <span title="Highest weighted detection rate" style={{ marginRight: 4 }}>🏆</span>}
+        <span className="font-mono text-sm" style={{ color: 'var(--text)' }}>{name}</span>
+        {version && <span className="text-muted text-xs"> v{version}</span>}
+      </div>
+      <svg viewBox={`0 0 ${SIZE} ${SIZE}`} width="100%" style={{ display: 'block', maxHeight: 260 }}
+        role="img" aria-label={`${name}: ${axes.map(([, l], i) => `${l} ${Math.round(clamped[i] * 100)}%`).join(', ')}`}>
+        {ringLevels.map(f => (
+          <polygon key={f} points={ringPoints(f)} fill="none" stroke={GRID} strokeWidth="1" />
+        ))}
+        {axes.map(([key], i) => {
+          const [x, y] = pointAt(i, 1);
+          return <line key={key} x1={CX} y1={CY} x2={x} y2={y} stroke={GRID} strokeWidth="1" />;
+        })}
+        <polygon points={dataPoints} fill={ACCENT} fillOpacity="0.14" stroke={ACCENT} strokeWidth="2" />
+        {clamped.map((v, i) => {
+          const [x, y] = pointAt(i, v);
+          return (
+            <circle key={i} cx={x} cy={y} r={hover === i ? 6 : 4} fill={ACCENT}
+              stroke="var(--bg-panel)" strokeWidth="1.5" style={{ cursor: 'pointer' }}
+              onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} />
+          );
+        })}
+        {axes.map(([key, label], i) => {
+          const a = angleFor(i);
+          const [x, y] = pointAt(i, LABEL_R / R);
+          const c = Math.cos(a);
+          const anchor = Math.abs(c) < 0.2 ? 'middle' : (c > 0 ? 'start' : 'end');
+          return <text key={key} x={x} y={y + 3} textAnchor={anchor} fontSize="10" fill={MUTED}>{label}</text>;
+        })}
+        {hover != null && (() => {
+          const [x, y] = pointAt(hover, clamped[hover]);
+          const [, axisLabel] = axes[hover];
+          const cnt = counts[hover];
+          const pctText = `${axisLabel} ${(clamped[hover] * 100).toFixed(0)}%${cnt ? ` (${cnt.found}/${cnt.count})` : ''}`;
+          const w = Math.min(SIZE - 8, 16 + pctText.length * 5.6);
+          const tx = Math.min(Math.max(x - w / 2, 4), SIZE - w - 4);
+          const ty = y < CY ? y - 26 : y + 10;
+          return (
+            <g pointerEvents="none">
+              <rect x={tx} y={ty} width={w} height="20" rx="4" fill="var(--bg)" stroke={GRID} strokeWidth="1" />
+              <text x={tx + w / 2} y={ty + 14} textAnchor="middle" fontSize="10.5" fill="var(--text)">{pctText}</text>
             </g>
           );
         })()}

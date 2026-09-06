@@ -1140,6 +1140,18 @@ Comparison page at `/apps/:id/compare` (API: `GET /api/apps/{id}/compare?scans=1
   FP clusters, FN, Pending, Precision (a `lower–upper` range while unadjudicated),
   Recall, F1, and a per-tier detection breakdown. Color-coded: green >=70%, yellow
   >=40%, red <40%. The 🏆 marks the highest **weighted** rate, not the highest F1.
+- **Coverage & Quality Shape**: a radar/spider chart, one small-multiple panel
+  per scanner (`TierRadar`/`RadarPanel` in `ScanCompare.jsx`), shown right after
+  the Metrics Table. Axes: Commodity / Business logic / Chained rate (top half,
+  same gating as the table's tier rows — hidden under a severity filter, and a
+  tier axis only appears if some compared scan's ground truth actually has vulns
+  in it) and Precision (`precision_upper`) / Recall / F1 (bottom half, always
+  shown). One polygon per panel rather than N overlaid on one chart — this page
+  allows comparing an unbounded number of scans, and overlaid same-hue polygons
+  stop being tellable-apart long before that; each panel's own title carries
+  scanner identity instead. All panels share the app's single accent hue; the
+  weighted-detection winner's panel gets the same accent background wash + 🏆
+  the table uses, not a second hue. Hover a vertex for the exact rate + `found/total`.
 - **Detection Matrix**: Rows = known vulnerabilities (with weight and tier),
   Columns = scanners. Checkmark (found), X (missed), or `n/a` where the vuln
   postdates that run. Coverage summary per vuln counts only applicable scans.
