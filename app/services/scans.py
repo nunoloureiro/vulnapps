@@ -479,8 +479,9 @@ async def submit_scan(
             """INSERT INTO scan_findings
                (scan_id, vuln_type, http_method, url, parameter, filename,
                 matched_vuln_id, is_false_positive, fp_group,
-                title, severity, description, poc, remediation, code_location)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                title, severity, description, poc, remediation, code_location,
+                reasoning)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 scan_id,
                 f.get("vuln_type", ""),
@@ -497,6 +498,7 @@ async def submit_scan(
                 f.get("poc"),
                 f.get("remediation"),
                 f.get("code_location"),
+                f.get("reasoning"),
             ),
         )
 
@@ -832,6 +834,7 @@ async def rematch_scan(db, user, scan_id: int) -> dict:
             "url": f["url"],
             "parameter": f["parameter"],
             "filename": f["filename"],
+            "title": f["title"],
         }
         matched_vuln_id, is_false_positive = match_finding_algo(finding_dict, known_vulns)
 

@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import threading
@@ -164,6 +165,19 @@ Do not force matches.
 to an "SSRF" known vuln even if both hit /wines/import-url; a "CSRF" finding \
 does NOT map to an "XSS" known vuln on the same form. If no known vuln has \
 the same attack class, set matched_vuln_db_id to null.
+- The reverse error is just as easy to make and just as wrong: sharing a \
+broad category or theme (e.g. both are "Broken Authentication", both are \
+"Security Misconfiguration") is NOT sufficient grounds for a match on its \
+own. The specific MECHANISM — what the attacker actually does, and why the \
+code allows it — must match, not just the category label. A finding about \
+a stolen password hash being accepted as a login credential, one about 2FA \
+enrollment skipping reauthentication, and one about a JWT signature never \
+being checked can all share a "Broken Authentication" vuln_type while being \
+three completely unrelated bugs in different code paths. When you write \
+`reasoning` for a match, name the actual shared mechanism (e.g. "both stem \
+from the JWT decoder never validating the signature"), not just the shared \
+category — if you cannot name a shared mechanism, matched_vuln_db_id must \
+be null.
 - If a finding does not match any known vulnerability, set matched_vuln_db_id to null.
 - Use the database `id` field (integer) for matched_vuln_db_id, NOT the `vuln_id` string.
 - Extract the scanner name and scan date from the report if available. \
@@ -651,6 +665,83 @@ def print_mapping_table(mapping: dict, vulns: list):
     print(f"\n  {C.DIM}Summary:{C.RESET} {' / '.join(parts)}")
 
 
+# ── Match validation ─────────────────────────────────────────
+#
+# Cheap, deterministic sanity checks applied to the LLM's own proposed
+# matches before they're sent to the API. Added after an incident where
+# several unrelated findings (a pass-the-hash login bug, a 2FA-enrollment-
+# without-reauth bug, a TOTP-replay bug) all auto-matched to an unrelated
+# "JWT none-algorithm accepted" vuln. Investigation traced that specific
+# incident to the server-side heuristic matcher, not the LLM (see
+# tasks/scanimport-resilience.md) — but a title-level relevance check here
+# is still worthwhile defense-in-depth against the LLM independently making
+# the same kind of category-level-only match, since vuln_type alone was
+# shown to be too coarse a signal (the finding's own vuln_type is often
+# identical to the wrongly-matched vuln's vuln_type by construction).
+
+_TITLE_STOPWORDS = {
+    "a", "an", "the", "and", "or", "on", "in", "of", "to", "for", "with",
+    "via", "no", "not", "is", "are", "be", "by", "at", "as", "this", "that",
+    "any", "all", "endpoint", "vulnerability", "issue", "finding",
+}
+
+
+def _title_keywords(text: str) -> set[str]:
+    """Meaningful lowercase words from a title/type string."""
+    words = re.findall(r"[a-z0-9]+", (text or "").lower())
+    return {w for w in words if w not in _TITLE_STOPWORDS and len(w) > 2}
+
+
+def _titles_share_a_keyword(a: str, b: str) -> bool:
+    """True if two titles share at least one meaningful word, or either is
+    too short/empty to judge at all. False is the actionable signal: the
+    finding and the vuln it's about to be matched to don't appear to
+    describe the same thing by name, even loosely."""
+    wa, wb = _title_keywords(a), _title_keywords(b)
+    if not wa or not wb:
+        return True
+    return bool(wa & wb)
+
+
+def validate_llm_matches(mapping: dict, vulns: list) -> list[str]:
+    """Sanity-check the LLM's proposed matches in place; return warnings.
+
+    Two checks, both defensive rather than blocking (the operator sees the
+    warning and can still let the match through — this never silently drops
+    a match on its own):
+    - Hallucination guard: matched_vuln_db_id must be a real id from the
+      `vulns` list that was actually shown to the model. A hallucinated id
+      would otherwise be POSTed to the API as-is.
+    - Title relevance: the finding's own title and the matched vuln's title
+      should share at least one meaningful keyword. Zero overlap doesn't
+      prove the match is wrong, but it's exactly the pattern behind every
+      real mismatch found so far, so it's worth a human's attention.
+    """
+    vuln_lookup = {v["id"]: v for v in vulns}
+    warnings = []
+    for f in mapping.get("findings", []):
+        matched = f.get("matched_vuln_db_id")
+        if matched is None:
+            continue
+        vuln = vuln_lookup.get(matched)
+        if vuln is None:
+            warnings.append(
+                f"'{f.get('title', f.get('vuln_type', '?'))}' was matched to "
+                f"DB id {matched}, which isn't in the known-vulns list shown "
+                f"to the model — dropping the match (possible hallucination)."
+            )
+            f["matched_vuln_db_id"] = None
+            continue
+        finding_title = f.get("title") or f.get("vuln_type") or ""
+        vuln_title = vuln.get("title") or vuln.get("vuln_type") or ""
+        if not _titles_share_a_keyword(finding_title, vuln_title):
+            warnings.append(
+                f"'{finding_title}' matched to '{vuln_title}' ({vuln.get('vuln_id', '?')}) "
+                f"share no common keyword — please double-check this one."
+            )
+    return warnings
+
+
 def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_public: bool, notes: str, cost: float | None = None, tokens: int | None = None, duration: int | None = None, scanner_version: str | None = None, config: dict | None = None):
     """Submit the scan and apply LLM-corrected matches. `duration` is in SECONDS.
 
@@ -669,7 +760,7 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
             "filename": f.get("filename", ""),
         }
         for k in ("title", "severity", "description", "poc", "remediation",
-                  "code_location", "fp_group"):
+                  "code_location", "fp_group", "reasoning"):
             v = f.get(k)
             if v:
                 item[k] = v
@@ -706,6 +797,7 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
     # Match server findings to LLM findings by position (same order)
     llm_findings = mapping.get("findings", [])
     corrections = 0
+    unmatches = 0
     fp_marks = 0
 
     with Spinner("Applying LLM match corrections..."):
@@ -719,13 +811,28 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
                 fp_marks += 1
                 continue
 
+            # Compare against whatever the server's own heuristic matcher
+            # already applied at submission time (sf["matched_vuln_id"]).
+            # `!=` (not `matched is not None and ...`) covers all three
+            # directions: the LLM found a match the heuristic missed, the
+            # LLM disagrees with the heuristic's match, and — previously
+            # unhandled — the LLM concludes this finding doesn't belong
+            # anywhere even though the heuristic auto-matched it to
+            # something. That last case used to silently keep a wrong
+            # heuristic match forever, since only a *different* non-null
+            # match ever triggered a correction call.
             matched = lf.get("matched_vuln_db_id")
-            if matched is not None and sf.get("matched_vuln_id") != matched:
+            current = sf.get("matched_vuln_id")
+            if matched != current:
                 client.match_finding(scan_id, sf["id"], matched)
-                corrections += 1
+                if matched is None:
+                    unmatches += 1
+                else:
+                    corrections += 1
 
-    if corrections or fp_marks:
-        print(f"  {colored('✓', 'GREEN')} Applied {colored(str(corrections), 'CYAN')} match corrections, {colored(str(fp_marks), 'CYAN')} FP marks")
+    if corrections or unmatches or fp_marks:
+        print(f"  {colored('✓', 'GREEN')} Applied {colored(str(corrections), 'CYAN')} match corrections, "
+              f"{colored(str(unmatches), 'CYAN')} unmatches, {colored(str(fp_marks), 'CYAN')} FP marks")
     else:
         print(f"  {colored('✓', 'GREEN')} Heuristic matching was already correct")
 
@@ -1532,8 +1639,14 @@ def main():
         cost = args.cost if args.cost is not None else _as_float(llm_out.get("cost"))
         tokens = args.tokens or _as_int(llm_out.get("tokens")) or llm_out.get("_llm_tokens")
 
+        match_warnings = validate_llm_matches(mapping, vulns)
+
         print_header(f"Probely Import — {len(merged['findings'])} findings")
         print_mapping_table(mapping, vulns)
+        if match_warnings:
+            print(f"\n  {colored('⚠ MATCH WARNINGS', 'YELLOW')} {C.DIM}({len(match_warnings)}){C.RESET}")
+            for w in match_warnings:
+                print(f"    {colored('!', 'YELLOW')} {w}")
 
         if args.dry_run:
             print(f"\n  {colored('⚑', 'YELLOW')} Dry run — skipping submission\n")
@@ -1761,7 +1874,13 @@ def main():
     if args.scan_start:
         mapping["scan_date"] = args.scan_start
 
+    match_warnings = validate_llm_matches(mapping, vulns)
+
     print_mapping_table(mapping, vulns)
+    if match_warnings:
+        print(f"\n  {colored('⚠ MATCH WARNINGS', 'YELLOW')} {C.DIM}({len(match_warnings)}){C.RESET}")
+        for w in match_warnings:
+            print(f"    {colored('!', 'YELLOW')} {w}")
 
     if args.dry_run:
         print(f"\n  {colored('⚑', 'YELLOW')} Dry run — skipping submission\n")

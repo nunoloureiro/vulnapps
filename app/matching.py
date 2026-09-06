@@ -74,6 +74,44 @@ def _normalize_vuln_type(vt: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Title relevance — the only signal available for a vuln with no real URL.
+# ---------------------------------------------------------------------------
+#
+# Generic report-writing words that show up in security finding titles
+# regardless of what the actual bug is (e.g. "X accepted", "Y not required")
+# and would otherwise create a false sense of overlap between two unrelated
+# findings that both happen to use one.
+_TITLE_STOPWORDS = {
+    "a", "an", "the", "and", "or", "on", "in", "of", "to", "for", "with",
+    "via", "no", "not", "is", "are", "be", "by", "at", "as", "this", "that",
+    "any", "all", "endpoint", "vulnerability", "issue", "finding",
+    "accepted", "enabled", "disabled", "required", "allows", "allowed",
+    "using", "without", "standalone", "combined", "chain",
+}
+
+
+def _title_keywords(text: str | None) -> set[str]:
+    words = re.findall(r"[a-z0-9]+", (text or "").lower())
+    return {w for w in words if w not in _TITLE_STOPWORDS and len(w) > 2}
+
+
+def _title_keyword_overlap(finding_title: str | None, vuln_title: str | None) -> frozenset[str]:
+    """Meaningful words shared between two titles, or an empty set.
+
+    Unlike a general relevance check, a missing title on either side
+    resolves to "no overlap" (not "can't judge, so allow"): the vuln_type
+    category match this candidate already passed is exactly the coarse,
+    insufficient-on-its-own signal this function exists to require
+    something better than, so "nothing to compare" must not default to
+    "allow".
+    """
+    wa, wb = _title_keywords(finding_title), _title_keywords(vuln_title)
+    if not wa or not wb:
+        return frozenset()
+    return frozenset(wa & wb)
+
+
+# ---------------------------------------------------------------------------
 # URL pattern → regex compilation (cached)
 # ---------------------------------------------------------------------------
 
@@ -168,6 +206,11 @@ def _url_match_score(finding_url: str, known_url: str) -> int:
       40   — prefix glob match (trailing /*)
       10   — global wildcard (/* matches everything)
       0    — no match
+
+    In practice `match_finding` never reaches the global-wildcard case below
+    — it excludes known_url == "/*" outright before scoring (see there for
+    why). Kept here for any other caller that wants a raw similarity score
+    rather than an auto-match decision.
     """
     if not finding_url or not known_url:
         return 0
@@ -249,9 +292,12 @@ def match_finding(finding: dict, known_vulns: list) -> tuple:
 
     Scoring:
     - vuln_type match: 50 points (REQUIRED — hard gate)
-    - URL exact: 100, URL pattern: 80-5*N, URL prefix glob: 40, URL wildcard: 10
+    - URL exact: 100, URL pattern: 80-5*N, URL prefix glob: 40
     - http_method match: 15
     - parameter exact: 20, parameter substring: 10
+
+    A known vuln whose url is the global wildcard ("/*") is never
+    auto-matched — see the loop below for why.
 
     Minimum threshold: 60 points.
     """
@@ -268,6 +314,47 @@ def match_finding(finding: dict, known_vulns: list) -> tuple:
         # Hard gate: vuln_type must match
         v_vuln_type = _normalize_vuln_type(v["vuln_type"] or "")
         if v_vuln_type != f_vuln_type:
+            continue
+
+        # A vuln scoped to "any endpoint" (url == "/*") carries no real
+        # location signal — URL/method/param scoring against it is
+        # coincidence, not evidence. Confirmed incident: a pass-the-hash
+        # finding, a 2FA-reauth finding, and a TOTP-replay finding (all
+        # unrelated to JWT signature handling) auto-matched to a "JWT
+        # none-algorithm accepted" vuln with url="/*" purely because they
+        # shared the "Broken Authentication" category and happened to hit
+        # an /auth/* endpoint — vuln_type(50) + wildcard(10) alone reaches
+        # the 60 threshold for ANY finding in that category, and even
+        # without the wildcard bonus a same-category finding can still
+        # cross it on a coincidental method/param match (e.g. two
+        # unrelated GET findings with no parameter).
+        #
+        # But a blanket "never auto-match" here throws out real matches
+        # too: TaintedPort alone has ~20 genuine "JWT none-algorithm" /
+        # "JWT signature not verified" / "Missing Security Headers"
+        # findings that legitimately DO belong to these same wildcard
+        # vulns, since those bugs really do apply to any endpoint. The
+        # category match plus URL/method/param scoring can't tell those
+        # apart from the false ones — but the finding's own title can:
+        # every real incident found so far shares zero meaningful words
+        # with the vuln it was wrongly matched to, while every genuine
+        # match shares at least one (e.g. "jwt", "signature", "headers").
+        # Require that instead of a location score for these vulns.
+        if (v["url"] or "").strip() == "/*":
+            shared = _title_keyword_overlap(finding.get("title"), v.get("title"))
+            if not shared:
+                continue
+            # Base score confirms relevance (one shared word is enough to
+            # clear the 60 threshold); each additional shared word adds
+            # more, so that when a finding's title is a strong match for
+            # more than one wildcard-scoped vuln in the same category (e.g.
+            # both "JWT none-algorithm" and "JWT signature not verified"
+            # candidates share "jwt"), the more specific overlap wins the
+            # tie instead of whichever candidate happened to come first.
+            score = 50 + 10 + 5 * (len(shared) - 1)
+            if score > best_score:
+                best_score = score
+                best_vuln_id = v["id"]
             continue
 
         score = 50  # vuln_type match base score

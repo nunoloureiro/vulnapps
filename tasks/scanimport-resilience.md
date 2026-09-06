@@ -1,5 +1,49 @@
 # Scan Importer Resilience — Fixing LLM Mismatched-Vuln Bugs
 
+## Status: implemented (2026-09-06), with one correction to the analysis below
+
+The investigation below (root-cause hypothesis, recommendations #2/#3)
+turned out to be *incomplete*, not wrong: a follow-up check that fed the
+real incident data directly into `app.matching.match_finding()` — no LLM
+involved at all — reproduced every one of these mismatches exactly. The
+actual root cause is the **server-side deterministic heuristic matcher**
+(`app/matching.py`), which runs on every scan submission (any ingestion
+path, not just this importer) *before* any LLM correction ever happens.
+Three known vulns (42, 43, 47) are scoped to "any endpoint" (`url == "/*"`),
+and the matcher's vuln_type hard-gate (50pts) + flat wildcard bonus (10pts)
+alone clears the 60pt threshold for *any* finding sharing that broad
+category — no mechanism relevance required. Recommendation #1 below
+(vuln_type cross-check) would **not** have caught this: the finding's own
+`vuln_type` was byte-identical to the wrongly-matched vuln's in all cases,
+since the LLM appears to echo the matched vuln's category rather than
+deriving it independently.
+
+**What actually shipped**, in priority order:
+1. `app/matching.py`: wildcard-URL vulns are no longer auto-matched on
+   category + location score alone — they require the finding's own title
+   to share a real keyword with the vuln's title (graded by overlap
+   strength, so a tie between two same-category wildcard vulns — e.g. "JWT
+   none-algorithm" vs "JWT signature not verified" — is broken by whichever
+   title is the closer match, not list order). Validated by replaying the
+   entire 311-finding non-FP/non-ignored TaintedPort corpus through
+   old-code-vs-new-code on the identical current known-vulns list: 0 of the
+   ~24 genuine JWT/headers matches were lost, and all 6 real incidents (plus
+   3 more of the same bug found by this same replay, previously unnoticed)
+   correctly stopped auto-matching. See `tests/test_matching.py`.
+2. `tools/import_scan.py`: fixed the correction-loop gap where the LLM
+   could apply a *different* match but never *clear* one the heuristic
+   wrongly applied (recommendation #2, extended); added a hallucination
+   guard and a title-overlap sanity warning (recommendation #1, adapted
+   from vuln_type to title, given the above); persisted the LLM's
+   `reasoning` field, previously generated and discarded (recommendation
+   #2); restructured the prompt to warn against category-only matching and
+   require the model to name a shared mechanism (recommendation #3). See
+   `tests/test_import_scan_validation.py`, `tests/test_reasoning_persistence.py`.
+3. Not implemented, per the original prioritization ("revisit once 1-4 are
+   in"): the standalone confidence field (#4 — largely subsumed by the
+   title-overlap check above), second-pass self-review (#5), batching
+   limits (#6), model-tier A/B testing (#7), human-in-the-loop gating (#8).
+
 ## Goal
 
 Scan 272 (TaintedPort, app_id=3) had three unrelated findings wrongly bucketed under
