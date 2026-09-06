@@ -29,7 +29,8 @@ export default function ScanDetail() {
   if (error) return <div className="alert alert-error">{error}</div>;
   if (!data) return null;
 
-  const { scan, app, metrics, findings, missed_vulns, known_vulns, labels, can_edit, can_view_cost } = data;
+  const { scan, app, metrics, findings, missed_vulns, known_vulns, labels, can_edit,
+          can_view_cost, revision } = data;
 
   return (
     <>
@@ -39,8 +40,9 @@ export default function ScanDetail() {
       </div>
 
       <ScanMeta scan={scan} app={app} labels={labels || []} canEdit={can_edit} canViewCost={can_view_cost} scanId={id} onUpdate={load} />
-      <Metrics metrics={metrics} />
-      <Findings findings={findings} knownVulns={known_vulns || []} canEdit={can_edit} scanId={id} appId={app.id} onUpdate={load} />
+      <Metrics metrics={metrics} app={app} revision={revision} scan={scan} />
+      <Findings findings={findings} knownVulns={known_vulns || []} canEdit={can_edit} scanId={id} appId={app.id}
+                onUpdate={load} />
       {missed_vulns && missed_vulns.length > 0 && <MissedVulns vulns={missed_vulns} appId={app.id} />}
     </>
   );
@@ -212,21 +214,200 @@ function humanSize(n) {
   return `${u === 0 ? n : n.toFixed(1)} ${units[u]}`;
 }
 
-function Metrics({ metrics }) {
-  const fmt = v => v != null ? `${(v * 100).toFixed(1)}%` : 'N/A';
+const TIER_LABELS = {
+  commodity: 'Commodity',
+  business_logic: 'Business logic',
+  chained: 'Chained',
+};
+
+const pct = v => v != null ? `${(v * 100).toFixed(1)}%` : 'N/A';
+
+function Metrics({ metrics, app, revision, scan }) {
+  const incomplete = metrics.adjudication_complete === false;
+  const tiers = metrics.tiers || {};
+  const asRun = scan?.corpus_revision;
+
   return (
     <>
-      <h2 className="page-title mt-3 mb-2">Metrics</h2>
+      <div className="flex items-center justify-between mt-3 mb-2" style={{ flexWrap: 'wrap' }}>
+        <h2 className="page-title">Metrics</h2>
+        {/* Every number is labelled with the ground truth that produced it —
+            scores drift down as ground truth grows, and an unlabelled chart
+            makes that look like a regression. */}
+        <span className="text-muted text-sm font-mono">
+          {app?.name}@rev{revision}
+          {asRun != null && asRun !== revision ? ` (ran at rev${asRun})` : ''}
+        </span>
+      </div>
+
       <div className="metrics-grid mb-2">
+        <div className="metric-card">
+          <div className="metric-value text-accent">{pct(metrics.weighted_rate)}</div>
+          <div className="metric-label">
+            Weighted Detection
+            <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>ⓘ
+              <span className="tooltip-text">
+                Severity-weighted detection rate: points found / points available on the
+                1/3/9/27 scale. The headline metric — a missed reflected XSS and a missed
+                chained authz bypass are not the same miss.
+              </span>
+            </span>
+          </div>
+          <div className="text-muted text-xs font-mono">
+            {metrics.weighted_found} / {metrics.weighted_total} pts
+          </div>
+        </div>
         <div className="metric-card"><div className="metric-value text-success">{metrics.tp}</div><div className="metric-label">True Positives</div></div>
-        <div className="metric-card"><div className="metric-value text-error">{metrics.fp}</div><div className="metric-label">False Positives</div></div>
+        <div className="metric-card">
+          <div className="metric-value text-error">{metrics.fp_groups ?? metrics.fp}</div>
+          <div className="metric-label">
+            False Positives
+            <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>ⓘ
+              <span className="tooltip-text">
+                Distinct false-positive clusters. Findings sharing an fp_group count once,
+                so precision is not depressed for a scanner that describes one non-issue
+                three times.
+              </span>
+            </span>
+          </div>
+          {metrics.fp !== metrics.fp_groups && (
+            <div className="text-muted text-xs font-mono">{metrics.fp} findings</div>
+          )}
+        </div>
         <div className="metric-card"><div className="metric-value text-error">{metrics.fn}</div><div className="metric-label">False Negatives</div></div>
         <div className="metric-card"><div className="metric-value text-muted">{metrics.ignored ?? 0}</div><div className="metric-label">Ignored</div></div>
-        <div className="metric-card"><div className="metric-value text-accent">{fmt(metrics.precision)}</div><div className="metric-label">Precision</div></div>
-        <div className="metric-card"><div className="metric-value text-accent">{fmt(metrics.recall)}</div><div className="metric-label">Recall</div></div>
-        <div className="metric-card"><div className="metric-value text-accent">{fmt(metrics.f1)}</div><div className="metric-label">F1 Score</div></div>
+        <div className="metric-card">
+          {/* Precision is only meaningful after full adjudication. With pending
+              findings we show the bounds instead of a single flattering number. */}
+          <div className={`metric-value ${incomplete ? 'text-warning' : 'text-accent'}`}
+               style={incomplete ? { fontSize: '1.1rem' } : undefined}>
+            {incomplete
+              ? `${pct(metrics.precision_lower)}–${pct(metrics.precision_upper)}`
+              : pct(metrics.precision_upper)}
+          </div>
+          <div className="metric-label">
+            Precision
+            {incomplete && (
+              <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>ⓘ
+                <span className="tooltip-text">
+                  {metrics.pending} finding(s) are still unadjudicated, so precision is a
+                  range: the lower bound treats every pending finding as a false positive,
+                  the upper bound as a true one. They converge as you adjudicate.
+                </span>
+              </span>
+            )}
+          </div>
+          {incomplete && <div className="text-warning text-xs">{metrics.pending} pending</div>}
+        </div>
+        <div className="metric-card"><div className="metric-value text-accent">{pct(metrics.recall)}</div><div className="metric-label">Recall</div></div>
+        <div className="metric-card"><div className="metric-value text-accent">{pct(metrics.f1)}</div><div className="metric-label">F1 Score</div></div>
       </div>
+
+      {metrics.out_of_scope_matches > 0 && (
+        <div className="alert alert-warning mb-2">
+          {metrics.out_of_scope_matches} finding(s) match a vulnerability that is not in
+          scope at revision {revision} — counted as neither true nor false positive.
+        </div>
+      )}
+
+      <TierMatrix tiers={tiers} metrics={metrics} />
     </>
+  );
+}
+
+// The default reporting view: where on the difficulty curve this run performed.
+// Difficulty is a reporting axis, never a multiplier — folding it into the
+// weight would collapse this table into one opaque number.
+function TierMatrix({ tiers, metrics }) {
+  const rows = Object.keys(TIER_LABELS).filter(t => tiers[t] && tiers[t].count > 0);
+  if (rows.length === 0) return null;
+  return (
+    <div className="card mb-2">
+      <h3 className="card-title mb-2">Difficulty Tiers</h3>
+      <div className="table-wrap">
+        <table className="cards-on-mobile">
+          <thead>
+            <tr>
+              <th>Tier</th>
+              <th className="text-center">Ground truth</th>
+              <th className="text-center">Found</th>
+              <th className="text-center">Weighted rate</th>
+              <th className="text-center">Points</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(t => {
+              const row = tiers[t];
+              return (
+                <tr key={t}>
+                  <td data-label="Tier">{TIER_LABELS[t]}</td>
+                  <td data-label="Ground truth" className="text-center font-mono">{row.count}</td>
+                  <td data-label="Found" className={`text-center font-mono ${row.rate >= 0.7 ? 'text-success' : row.rate >= 0.4 ? 'text-warning' : 'text-error'}`}>
+                    {row.found}
+                    <span className="text-muted text-xs"> ({pct(row.rate)})</span>
+                  </td>
+                  <td data-label="Weighted rate" className={`text-center font-mono ${row.weighted_rate >= 0.7 ? 'text-success' : row.weighted_rate >= 0.4 ? 'text-warning' : 'text-error'}`}>
+                    {pct(row.weighted_rate)}
+                  </td>
+                  <td data-label="Points" className="text-center font-mono text-secondary">
+                    {row.weighted_found} / {row.weighted_total}
+                  </td>
+                </tr>
+              );
+            })}
+            <tr>
+              <td className="detail-label">Weighted total</td>
+              <td className="text-center font-mono">{metrics.tp + metrics.fn}</td>
+              <td className="text-center font-mono">{metrics.tp}</td>
+              <td className={`text-center font-mono ${metrics.weighted_rate >= 0.7 ? 'text-success' : metrics.weighted_rate >= 0.4 ? 'text-warning' : 'text-error'}`}>
+                {pct(metrics.weighted_rate)}
+              </td>
+              <td className="text-center font-mono text-secondary">
+                {metrics.weighted_found} / {metrics.weighted_total}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Inline editor for the FP cluster key. Findings sharing a key count as one
+// false positive, matching how several findings on one vuln count as one TP.
+function FpGroup({ scanId, finding, canEdit, onUpdate }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(finding.fp_group || '');
+
+  const save = async () => {
+    await api.post(`/scans/${scanId}/findings/${finding.id}/mark-fp`, { fp_group: draft.trim() || null });
+    setEditing(false);
+    onUpdate();
+  };
+
+  if (!canEdit) {
+    return finding.fp_group
+      ? <span className="text-muted text-xs font-mono">group: {finding.fp_group}</span>
+      : <span className="text-muted">FP</span>;
+  }
+  if (editing) {
+    return (
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+        <input className="form-input" value={draft} autoFocus
+               onChange={e => setDraft(e.target.value)}
+               placeholder="cluster key…"
+               style={{ width: 120, padding: '2px 6px', fontSize: '0.8rem' }}
+               onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }} />
+        <button className="btn btn-primary btn-sm" onClick={save}
+                style={{ height: 22, padding: '0 0.4rem', fontSize: '0.7rem' }}>Set</button>
+      </div>
+    );
+  }
+  return (
+    <span className="editable-field text-xs" onClick={() => { setDraft(finding.fp_group || ''); setEditing(true); }}
+          title="Group this false positive with others describing the same non-issue">
+      {finding.fp_group ? <span className="font-mono">group: {finding.fp_group}</span> : <span className="text-muted">FP — ungrouped</span>}
+    </span>
   );
 }
 
@@ -279,6 +460,13 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
         vuln_id: '',
         title: f.title || f.vuln_type || '',
         severity: (f.severity || 'medium').toLowerCase(),
+        // Deliberately unset: the operator has to state whether the flaw existed
+        // all along (prior scans take the miss) or was introduced by a code
+        // change (prior scans untouched). Defaulting it silently would make
+        // every historical number quietly wrong in one direction or the other.
+        existed_since: '',
+        impact_weight: '',
+        difficulty_tier: 'commodity',
         vuln_type: f.vuln_type || '',
         http_method: f.http_method || '',
         url: f.url || '',
@@ -297,6 +485,7 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
   const submitPromote = async () => {
     const overrides = { ...promoting.draft };
     if (!overrides.vuln_id) delete overrides.vuln_id;
+    if (!overrides.impact_weight) delete overrides.impact_weight;
     try {
       await api.post(`/scans/${scanId}/findings/${promoting.findingId}/promote`, overrides);
       setPromoting(null);
@@ -316,12 +505,17 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
         <div className="card">
           <div className="table-wrap">
             <table className="cards-on-mobile">
-              <thead><tr><th>Type</th><th>Location</th><th>Status</th><th>Matched Vuln</th><th></th></tr></thead>
+              <thead><tr>
+                <th>Type</th><th>Location</th><th>Status</th><th>Matched Vuln</th>
+                <th></th>
+              </tr></thead>
               <tbody>
                 {findings.map(f => {
                   const location = f.url || f.filename || '-';
                   const locationDisplay = f.http_method ? `${f.http_method} ${location}` : location;
                   const matchedVuln = f.matched_vuln_id ? knownVulns.find(v => v.id === f.matched_vuln_id) : null;
+                  const severityMismatch = !!(f.severity && matchedVuln?.severity &&
+                    f.severity.toLowerCase() !== matchedVuln.severity.toLowerCase());
                   const hasDetails = !!(f.title || f.severity || f.description || f.poc || f.remediation || f.code_location);
                   const isExpanded = expanded.has(f.id);
                   return (
@@ -341,6 +535,7 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                           </button>
                         )}
                         <span>{f.vuln_type}</span>
+                        {f.severity && <Badge severity={f.severity.toLowerCase()} />}
                       </div>
                       {f.title && f.title !== f.vuln_type && (
                         <div className="text-muted text-xs" style={{ marginTop: 2, marginLeft: hasDetails ? 18 : 0 }}>{f.title}</div>
@@ -376,6 +571,21 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                         matchedVuln ? <Link to={`/apps/${appId}/vulns/${matchedVuln.id}`}>{matchedVuln.vuln_id} - {matchedVuln.title}</Link> :
                         f.is_false_positive ? <span className="text-muted">FP</span> :
                         f.is_ignored ? <span className="text-muted">Ignored</span> : <span className="text-muted">Unmapped</span>
+                      )}
+                      {matchedVuln && matchedVuln.severity && (
+                        <div style={{ marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span style={severityMismatch ? { outline: '1px solid #f59e0b', borderRadius: 4 } : undefined}>
+                            <Badge severity={matchedVuln.severity.toLowerCase()} />
+                          </span>
+                          {severityMismatch && (
+                            <span title={`Reported ${f.severity} vs ground truth ${matchedVuln.severity}`} style={{ color: '#f59e0b', cursor: 'help' }}>⚠</span>
+                          )}
+                        </div>
+                      )}
+                      {!!f.is_false_positive && (
+                        <div style={{ marginTop: 2 }}>
+                          <FpGroup scanId={scanId} finding={f} canEdit={canEdit} onUpdate={onUpdate} />
+                        </div>
                       )}
                     </td>
                     <td data-label="">
@@ -437,6 +647,21 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
 }
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
+
+// The 1/3/9/27 scale. Log spacing is deliberate: with linear weights nine
+// informational findings would outscore two criticals.
+const WEIGHT_OPTIONS = [
+  [1, 'Informational — version disclosure, verbose errors, missing headers'],
+  [3, 'Medium — reflected XSS, open redirect, unauthenticated read of non-sensitive data'],
+  [9, 'High — cross-tenant IDOR, stored XSS with session theft, SSRF, single-step authz bypass'],
+  [27, 'Critical — chained exploit to admin, cross-tenant write, auth bypass, RCE, financial abuse'],
+];
+
+const TIER_OPTIONS = [
+  ['commodity', 'Commodity — a scanner with a signature finds it'],
+  ['business_logic', 'Business logic — needs understanding of what the app is for'],
+  ['chained', 'Chained — requires pivoting through more than one flaw'],
+];
 
 function FindingDetails({ finding }) {
   const hasGrid = !!(finding.severity || finding.code_location);
@@ -549,6 +774,63 @@ function PromoteForm({ draft, onChange, onSubmit, onCancel, error }) {
         </div>
       </div>
 
+      <div className="form-row">
+        <div className="form-group">
+          <label className="form-label" htmlFor="promote-weight">
+            Impact Weight <span className="text-muted text-xs">(scoring)</span>
+          </label>
+          <select
+            id="promote-weight"
+            className="form-select"
+            value={draft.impact_weight}
+            onChange={e => onChange({ impact_weight: e.target.value })}
+          >
+            <option value="">Derive from severity</option>
+            {WEIGHT_OPTIONS.map(([w, label]) => (
+              <option key={w} value={w}>{w} — {label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="promote-tier">Difficulty Tier</label>
+          <select
+            id="promote-tier"
+            className="form-select"
+            value={draft.difficulty_tier}
+            onChange={e => onChange({ difficulty_tier: e.target.value })}
+            required
+          >
+            {TIER_OPTIONS.map(([t, label]) => <option key={t} value={t}>{label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* The two-field split (existed_since vs known_since) exists precisely so
+          this question gets answered explicitly, once, by a human. */}
+      <div className="form-group">
+        <label className="form-label">Did this flaw exist before now?</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label className="text-sm" style={{ cursor: 'pointer' }}>
+            <input type="radio" name="existed-since" value="all_along"
+                   checked={draft.existed_since === 'all_along'}
+                   onChange={e => onChange({ existed_since: e.target.value })}
+                   style={{ accentColor: 'var(--accent)', marginRight: 6 }} />
+            It existed all along — every prior scan legitimately takes the miss
+          </label>
+          <label className="text-sm" style={{ cursor: 'pointer' }}>
+            <input type="radio" name="existed-since" value="this_revision"
+                   checked={draft.existed_since === 'this_revision'}
+                   onChange={e => onChange({ existed_since: e.target.value })}
+                   style={{ accentColor: 'var(--accent)', marginRight: 6 }} />
+            A code change introduced it — prior scans are untouched
+          </label>
+        </div>
+        <span className="text-muted text-xs">
+          Promoting opens a new ground-truth revision either way. This choice decides
+          whether older scans are re-scored against it.
+        </span>
+      </div>
+
       <div className="form-group">
         <label className="form-label" htmlFor="promote-description">Description</label>
         <textarea
@@ -593,7 +875,11 @@ function PromoteForm({ draft, onChange, onSubmit, onCancel, error }) {
       {error && <div className="alert alert-error">{error}</div>}
 
       <div className="flex gap-1">
-        <button type="submit" className="btn btn-primary" disabled={!draft.title.trim()}>Promote</button>
+        <button type="submit" className="btn btn-primary"
+                disabled={!draft.title.trim() || !draft.existed_since}
+                title={!draft.existed_since ? 'Choose whether the flaw existed before now' : undefined}>
+          Promote
+        </button>
         <button type="button" className="btn btn-outline" onClick={onCancel}>Cancel</button>
       </div>
     </form>

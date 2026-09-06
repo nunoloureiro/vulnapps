@@ -337,8 +337,14 @@ async def update_app(
     visibility: str,
     team_id: int | None,
     tech_stack: str,
+    benchmark_verified=None,
 ) -> dict:
     """Update an existing app. Returns the updated row as a dict.
+
+    *benchmark_verified* is tri-state: ``None`` leaves the flag alone. It marks
+    an app whose vulns have actually been hand-reviewed (weights/tiers set, not
+    just backfilled), so it is a deliberate setting rather than something a
+    routine app edit toggles by omission.
 
     Raises ``ValueError`` if app not found.
     Raises ``PermissionError`` if access denied or visibility invalid.
@@ -360,6 +366,11 @@ async def update_app(
            visibility=?, team_id=?, updated_at=datetime('now') WHERE id=?""",
         (name, version, description, url, visibility, team_id, app_id),
     )
+    if benchmark_verified is not None:
+        await db.execute(
+            "UPDATE apps SET benchmark_verified=? WHERE id=?",
+            (1 if benchmark_verified in (True, 1, "1", "true", "yes") else 0, app_id),
+        )
     await _save_tech_stack(db, app_id, tech_stack)
     await db.commit()
 

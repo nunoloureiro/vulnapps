@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import csv
+import io
+
 from app.dependencies import get_team_role
 from app.visibility import app_visibility_filter
+from app import scoring
+from app.services import scoring as scoring_service
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +34,14 @@ _FIELD_CAPS = {
     "poc": 10000,
     "remediation": 10000,
 }
+
+# Column order for CSV export. Matches exactly what bulk import reads from a
+# CSV row (see import_vulns below), so an exported file round-trips.
+EXPORT_FIELDS = (
+    "vuln_id", "title", "severity", "vuln_type", "http_method", "url",
+    "parameter", "filename", "line_number", "description", "code_location",
+    "poc", "remediation", "impact_weight", "difficulty_tier",
+)
 
 
 def _cap(value, field):
@@ -141,6 +154,47 @@ async def list_vulns(db, user, app_id: int) -> list:
     return [dict(row) for row in await cursor.fetchall()]
 
 
+def _csv_safe(value) -> str:
+    """Stringify a cell and neutralize spreadsheet formula injection.
+
+    A value starting with =, +, -, or @ is interpreted as a formula by Excel/
+    Sheets when the CSV is opened; prefixing it with a quote forces text.
+    """
+    if value is None:
+        return ""
+    s = value if isinstance(value, str) else str(value)
+    if s and s[0] in ("=", "+", "-", "@"):
+        return "'" + s
+    return s
+
+
+async def export_vulns_csv(db, user, app_id: int) -> tuple[str, str]:
+    """Return (csv_text, app_name) for every vulnerability on *app_id*.
+
+    Visible to anyone who can view the app (same rule as :func:`list_vulns`) —
+    export is read-only, so it carries no write-permission check. Unlike the
+    display list this is never capped at ``MAX_VULNS_PER_APP``: it's a single
+    file, not a paginated response, so the OOM concern behind that cap doesn't
+    apply here.
+
+    Raises ``ValueError`` if the app is not found / not visible.
+    """
+    app = await _get_visible_app(db, user, app_id)
+
+    cursor = await db.execute(
+        "SELECT * FROM vulnerabilities WHERE app_id = ? ORDER BY severity, title",
+        (app_id,),
+    )
+    rows = await cursor.fetchall()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(EXPORT_FIELDS)
+    for row in rows:
+        writer.writerow([_csv_safe(row[f]) for f in EXPORT_FIELDS])
+    return buf.getvalue(), app["name"]
+
+
 async def get_vuln(db, user, app_id: int, vuln_id: int) -> dict:
     """Return a single vulnerability with a ``can_edit`` flag.
 
@@ -161,13 +215,61 @@ async def get_vuln(db, user, app_id: int, vuln_id: int) -> dict:
     return {"vuln": dict(vuln), "app": dict(app), "can_edit": can_edit}
 
 
+def _scoring_fields(vuln_data: dict, existing=None) -> tuple[int, str, bool]:
+    """Resolve (impact_weight, difficulty_tier, tier_was_explicit) for a write.
+
+    **`impact_weight` derives from `severity`.** Ground-truth severity IS
+    contextual severity — a directory listing is Low by convention but stored as
+    critical in an app where it exposes the database and the JWT signing key — so
+    the 1:1 map (info/low→1, medium→3, high→9, critical→27) is the rule and an
+    explicit weight is exceptional, not expected. The column is still stored
+    because the revision scheme needs an immutable per-revision value.
+
+    Both fields are validated against the scale and the three tiers — SQLite
+    cannot express those as CHECK constraints on an added column, so the
+    constraint lives here.
+
+    On an update, *existing* is the current row, and omitting a field means
+    "leave it alone" — the inline table editor sends only the columns it knows
+    about and must not reset a deliberate override. The one exception is a
+    changed `severity`: since severity determines the weight, re-deriving is the
+    whole point, so an unstated weight follows the new severity.
+    """
+    weight = scoring.validate_weight(vuln_data.get("impact_weight"))
+    if weight is None:
+        severity = vuln_data.get("severity")
+        severity_changed = (
+            existing is not None
+            and severity is not None
+            and str(severity).strip().lower()
+            != str(scoring.field(existing, "severity", "")).strip().lower()
+        )
+        if existing is not None and not severity_changed:
+            weight = scoring.weight_of(existing)
+        else:
+            weight = scoring.weight_from_severity(severity)
+
+    tier = scoring.validate_tier(vuln_data.get("difficulty_tier"))
+    tier_was_explicit = tier is not None
+    if tier is None:
+        tier = scoring.tier_of(existing) if existing is not None else scoring.DEFAULT_TIER
+    return weight, tier, tier_was_explicit
+
+
 async def create_vuln(db, user, app_id: int, vuln_data: dict) -> dict:
     """Create a vulnerability on the given app. Returns the new row as a dict.
 
     *vuln_data* keys: vuln_id, title, severity, vuln_type, http_method, url,
-    parameter, filename, line_number, description, code_location, poc, remediation.
+    parameter, filename, line_number, description, code_location, poc,
+    remediation, impact_weight, difficulty_tier, existed_since_revision.
 
-    Raises ``ValueError`` if app not found.
+    Adding a vuln changes ground truth, so on an app that already has scans this
+    opens a new revision (reason ``new_prior_vuln``). ``existed_since_revision``
+    defaults to 1 — the flaw was in the app all along and prior scans take the
+    miss on re-score — and can be set to the new revision when a code change
+    introduced it.
+
+    Raises ``ValueError`` if app not found or a scoring field is invalid.
     Raises ``PermissionError`` if access denied.
     """
     app = await _get_visible_app(db, user, app_id)
@@ -185,12 +287,26 @@ async def create_vuln(db, user, app_id: int, vuln_data: dict) -> dict:
         except (ValueError, TypeError):
             line_number = None
 
+    impact_weight, difficulty_tier, tier_reviewed = _scoring_fields(vuln_data)
+
+    revision, _created = await scoring_service.revision_for_corpus_change(
+        db, app_id, "new_prior_vuln",
+        notes=f"Added vuln: {vuln_data.get('vuln_id') or vuln_data.get('title')}",
+        user=user,
+    )
+    existed_since = vuln_data.get("existed_since_revision")
+    try:
+        existed_since = int(existed_since) if existed_since not in (None, "") else 1
+    except (TypeError, ValueError):
+        existed_since = 1
+
     cursor = await db.execute(
         """INSERT INTO vulnerabilities
            (app_id, vuln_id, title, severity, vuln_type, http_method, url,
             parameter, filename, line_number, description, code_location,
-            poc, remediation, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            poc, remediation, created_by, impact_weight, difficulty_tier,
+            weight_verified, existed_since_revision, known_since_revision)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             app_id,
             _cap(vuln_data.get("vuln_id"), "vuln_id"),
@@ -207,6 +323,11 @@ async def create_vuln(db, user, app_id: int, vuln_data: dict) -> dict:
             _cap(vuln_data.get("poc"), "poc"),
             _cap(vuln_data.get("remediation"), "remediation"),
             user["sub"],
+            impact_weight,
+            difficulty_tier,
+            1 if tier_reviewed else 0,
+            existed_since,
+            revision,
         ),
     )
     await db.commit()
@@ -229,7 +350,8 @@ async def update_vuln(db, user, app_id: int, vuln_id: int, vuln_data: dict) -> d
         "SELECT * FROM vulnerabilities WHERE id = ? AND app_id = ?",
         (vuln_id, app_id),
     )
-    if not await cursor.fetchone():
+    existing = await cursor.fetchone()
+    if not existing:
         raise ValueError("Vulnerability not found")
 
     line_number = vuln_data.get("line_number")
@@ -239,10 +361,28 @@ async def update_vuln(db, user, app_id: int, vuln_id: int, vuln_data: dict) -> d
         except (ValueError, TypeError):
             line_number = None
 
+    impact_weight, difficulty_tier, tier_reviewed = _scoring_fields(vuln_data, existing)
+
+    # Weights are immutable within a revision: changing one changes every
+    # weighted number ever computed for this app, so it opens a revision
+    # (reason `weight_change`) and the app must be re-scored. The tier is a
+    # reporting axis only — it never moves the weighted total, so it does not.
+    if impact_weight != scoring.weight_of(existing):
+        await scoring_service.revision_for_corpus_change(
+            db, app_id, "weight_change",
+            notes=(
+                f"{existing['vuln_id']} impact_weight "
+                f"{scoring.weight_of(existing)} → {impact_weight}"
+            ),
+            user=user,
+        )
+
     await db.execute(
         """UPDATE vulnerabilities SET vuln_id=?, title=?, severity=?, vuln_type=?,
            http_method=?, url=?, parameter=?, filename=?, line_number=?,
-           description=?, code_location=?, poc=?, remediation=?
+           description=?, code_location=?, poc=?, remediation=?,
+           impact_weight=?, difficulty_tier=?,
+           weight_verified=MAX(weight_verified, ?)
            WHERE id=?""",
         (
             _cap(vuln_data.get("vuln_id"), "vuln_id"),
@@ -258,6 +398,9 @@ async def update_vuln(db, user, app_id: int, vuln_id: int, vuln_data: dict) -> d
             _cap(vuln_data.get("code_location"), "code_location"),
             _cap(vuln_data.get("poc"), "poc"),
             _cap(vuln_data.get("remediation"), "remediation"),
+            impact_weight,
+            difficulty_tier,
+            1 if tier_reviewed else 0,
             vuln_id,
         ),
     )
@@ -270,17 +413,68 @@ async def update_vuln(db, user, app_id: int, vuln_id: int, vuln_data: dict) -> d
 async def delete_vuln(db, user, app_id: int, vuln_id: int) -> None:
     """Delete a vulnerability.
 
-    Raises ``ValueError`` if app not found.
+    Only for ground truth that was never measured. A vuln some scan already
+    matched cannot be deleted — that would rewrite history and orphan the
+    finding; invalidate it instead (see :func:`invalidate_vuln`), which retires
+    it from the next revision on while leaving every recorded number intact.
+
+    Raises ``ValueError`` if app not found or the vuln has been matched.
     Raises ``PermissionError`` if access denied.
     """
     app = await _get_visible_app(db, user, app_id)
     await _require_app_write(db, user, app)
+
+    cursor = await db.execute(
+        "SELECT COUNT(*) AS c FROM scan_findings WHERE matched_vuln_id = ?", (vuln_id,)
+    )
+    matched = (await cursor.fetchone())["c"]
+    if matched:
+        raise ValueError(
+            f"This vulnerability is matched by {matched} scan finding(s) and cannot be "
+            "deleted. Invalidate it instead so historical scorings stay reproducible."
+        )
 
     await db.execute(
         "DELETE FROM vulnerabilities WHERE id = ? AND app_id = ?",
         (vuln_id, app_id),
     )
     await db.commit()
+
+
+async def invalidate_vuln(db, user, app_id: int, vuln_id: int, notes=None) -> dict:
+    """Retire a vuln from ground truth without destroying history.
+
+    Opens a revision (reason ``vuln_invalidated``) and stamps
+    ``invalidated_at_revision`` with it, so the scope rule keeps the vuln in
+    scope for every earlier revision — scorings computed back then stay exactly
+    reproducible — while dropping it from this revision onward.
+
+    Raises ``ValueError`` if app or vuln not found.
+    Raises ``PermissionError`` if access denied.
+    """
+    app = await _get_visible_app(db, user, app_id)
+    await _require_app_write(db, user, app)
+
+    cursor = await db.execute(
+        "SELECT * FROM vulnerabilities WHERE id = ? AND app_id = ?", (vuln_id, app_id)
+    )
+    vuln = await cursor.fetchone()
+    if not vuln:
+        raise ValueError("Vulnerability not found")
+    if vuln["invalidated_at_revision"] is not None:
+        raise ValueError("Vulnerability is already invalidated")
+
+    revision, _created = await scoring_service.revision_for_corpus_change(
+        db, app_id, "vuln_invalidated",
+        notes=notes or f"Invalidated {vuln['vuln_id']}: {vuln['title']}",
+        user=user,
+    )
+    await db.execute(
+        "UPDATE vulnerabilities SET invalidated_at_revision = ? WHERE id = ?",
+        (revision, vuln_id),
+    )
+    await db.commit()
+    return {"ok": True, "vuln_id": vuln_id, "invalidated_at_revision": revision}
 
 
 async def inline_update_vuln(
@@ -300,10 +494,37 @@ async def inline_update_vuln(
     allowed = {
         "vuln_id", "title", "severity", "vuln_type", "http_method",
         "url", "parameter", "filename", "line_number",
+        "impact_weight", "difficulty_tier",
     }
     filtered = {k: v for k, v in updates.items() if k in allowed}
     if not filtered:
         raise ValueError("No valid fields to update")
+
+    if "impact_weight" in filtered:
+        filtered["impact_weight"] = scoring.validate_weight(filtered["impact_weight"])
+    if "difficulty_tier" in filtered:
+        filtered["difficulty_tier"] = scoring.validate_tier(filtered["difficulty_tier"])
+        if filtered["difficulty_tier"] is not None:
+            # Stating a tier explicitly is what distinguishes a reviewed
+            # 'commodity' from the migration-024 placeholder.
+            filtered["weight_verified"] = 1
+
+    # Same rule as the full update: a weight change opens a revision, because it
+    # moves every weighted number already recorded for this app.
+    if filtered.get("impact_weight") is not None:
+        cursor = await db.execute(
+            "SELECT * FROM vulnerabilities WHERE id = ? AND app_id = ?", (vuln_id, app_id)
+        )
+        existing = await cursor.fetchone()
+        if existing and filtered["impact_weight"] != scoring.weight_of(existing):
+            await scoring_service.revision_for_corpus_change(
+                db, app_id, "weight_change",
+                notes=(
+                    f"{existing['vuln_id']} impact_weight "
+                    f"{scoring.weight_of(existing)} → {filtered['impact_weight']}"
+                ),
+                user=user,
+            )
 
     set_clause = ", ".join(f"{k}=?" for k in filtered)
     values = list(filtered.values()) + [vuln_id, app_id]
@@ -320,10 +541,23 @@ def _valid_vuln_rows(vulns_data: list) -> int:
     return sum(1 for v in vulns_data if isinstance(v, dict) and v.get("title"))
 
 
-async def import_vulns(db, user, app_id: int, vulns_data: list) -> dict:
+async def import_vulns(db, user, app_id: int, vulns_data: list,
+                       existed_since: str | None = None) -> dict:
     """Bulk-import vulnerabilities from a list of dicts (parsed JSON/CSV).
 
-    Returns an audit dict ``{imported, skipped_over_cap, truncated_fields}``:
+    On an app that already has scans this opens one revision (reason
+    ``corpus_change``) for the whole batch. *existed_since* says whether the
+    imported flaws were present all along:
+
+      ``all_along``     — ``existed_since_revision = 1``; every prior scan takes
+                          the miss once re-scored.
+      ``this_revision`` — the default. Prior scans are untouched.
+
+    The default is deliberately the conservative one: a bulk upload cannot ask
+    the operator, and silently lowering every historical recall is not something
+    to do by accident.
+
+    Returns an audit dict ``{imported, skipped_over_cap, truncated_fields, revision}``:
     - ``imported``        — rows written
     - ``skipped_over_cap``— valid rows dropped because the per-app cap
                             (``MAX_VULNS_PER_APP``) was reached
@@ -338,7 +572,15 @@ async def import_vulns(db, user, app_id: int, vulns_data: list) -> dict:
     await _require_app_write(db, user, app)
 
     if not vulns_data:
-        return {"imported": 0, "skipped_over_cap": 0, "truncated_fields": 0}
+        return {"imported": 0, "skipped_over_cap": 0, "truncated_fields": 0, "revision": None}
+
+    revision, _created = await scoring_service.revision_for_corpus_change(
+        db, app_id, "corpus_change",
+        notes=f"Bulk import of {_valid_vuln_rows(vulns_data)} vuln(s)",
+        user=user,
+    )
+    import_revision = 1 if (existed_since or "").strip().lower() == "all_along" else revision
+    known_revision = revision
 
     # Get existing vuln count for auto-generating vuln_ids and for enforcing
     # the per-app cap. Bulk import is the primary flood vector, so we stop at
@@ -396,13 +638,23 @@ async def import_vulns(db, user, app_id: int, vulns_data: list) -> dict:
             except (ValueError, TypeError):
                 line_number = None
 
+        try:
+            impact_weight, difficulty_tier, tier_reviewed = _scoring_fields({**v, "severity": severity})
+        except ValueError:
+            # A bad weight in one row of a bulk upload must not fail the batch;
+            # fall back to the severity map, same as a row that omits it.
+            impact_weight = scoring.weight_from_severity(severity)
+            difficulty_tier = scoring.DEFAULT_TIER
+            tier_reviewed = False
+
         stats = {"truncated": 0}
         await db.execute(
             """INSERT INTO vulnerabilities
                (app_id, vuln_id, title, severity, vuln_type, http_method, url,
                 parameter, filename, line_number, description, code_location,
-                poc, remediation, created_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                poc, remediation, created_by, impact_weight, difficulty_tier,
+                weight_verified, existed_since_revision, known_since_revision)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 app_id,
                 _cap_field(_safe_str(vuln_id), "vuln_id", stats),
@@ -419,6 +671,11 @@ async def import_vulns(db, user, app_id: int, vulns_data: list) -> dict:
                 _cap_field(_safe_str(v.get("poc")), "poc", stats),
                 _cap_field(_safe_str(v.get("remediation")), "remediation", stats),
                 user["sub"],
+                impact_weight,
+                difficulty_tier,
+                1 if tier_reviewed else 0,
+                import_revision,
+                known_revision,
             ),
         )
         truncated_fields += stats["truncated"]
@@ -429,4 +686,6 @@ async def import_vulns(db, user, app_id: int, vulns_data: list) -> dict:
         "imported": imported,
         "skipped_over_cap": skipped_over_cap,
         "truncated_fields": truncated_fields,
+        "revision": revision,
+        "existed_since_revision": import_revision,
     }

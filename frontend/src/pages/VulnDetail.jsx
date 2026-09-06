@@ -2,6 +2,12 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 
+const TIER_LABELS = {
+  commodity: 'Commodity',
+  business_logic: 'Business logic',
+  chained: 'Chained',
+};
+
 export default function VulnDetail() {
   const { appId, id } = useParams();
 
@@ -9,21 +15,34 @@ export default function VulnDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const result = await api.get('/apps/' + appId + '/vulns/' + id);
-        setData(result);
-      } catch (err) {
-        setError(err.message || 'Failed to load vulnerability');
-      } finally {
-        setLoading(false);
-      }
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.get('/apps/' + appId + '/vulns/' + id);
+      setData(result);
+    } catch (err) {
+      setError(err.message || 'Failed to load vulnerability');
+    } finally {
+      setLoading(false);
     }
-    load();
-  }, [appId, id]);
+  };
+
+  useEffect(() => { load(); }, [appId, id]);
+
+  // Retiring ground truth is a revision event, not a delete: earlier scorings
+  // keep this vuln in scope and stay reproducible, and the finding that matched
+  // it is not orphaned.
+  const invalidate = async () => {
+    const notes = prompt('Why is this no longer valid ground truth?');
+    if (notes === null) return;
+    try {
+      await api.post(`/apps/${appId}/vulns/${id}/invalidate`, { notes });
+      await load();
+    } catch (err) {
+      setError(err.message || 'Failed to invalidate');
+    }
+  };
 
   if (loading) {
     return <div className="container"><div className="empty-state"><p>Loading...</p></div></div>;
@@ -48,6 +67,12 @@ export default function VulnDetail() {
           {can_edit && (
             <Link to={'/apps/' + appId + '/vulns/' + id + '/edit'} className="btn btn-outline">Edit</Link>
           )}
+          {can_edit && vuln.invalidated_at_revision == null && (
+            <button className="btn btn-outline" onClick={invalidate}
+                    title="Retire from ground truth at a new revision. Historical scorings stay reproducible.">
+              Invalidate
+            </button>
+          )}
           <Link to={'/apps/' + appId} className="btn btn-outline">Back to App</Link>
         </div>
       </div>
@@ -63,6 +88,36 @@ export default function VulnDetail() {
           <span className="detail-label">Severity</span>
           <span className="detail-value">
             <span className={'badge badge-' + vuln.severity}>{vuln.severity}</span>
+          </span>
+
+          <span className="detail-label">
+            Impact Weight
+            <span className="text-muted text-xs" style={{ marginLeft: 4 }}>(scoring)</span>
+          </span>
+          <span className="detail-value font-mono">
+            {vuln.impact_weight != null ? `${vuln.impact_weight} pts` : '-'}
+          </span>
+
+          <span className="detail-label">Difficulty Tier</span>
+          <span className="detail-value">{TIER_LABELS[vuln.difficulty_tier] || '-'}</span>
+
+          {/* Ground-truth history: which revisions this vuln is in scope for. */}
+          <span className="detail-label">Ground Truth</span>
+          <span className="detail-value text-sm">
+            <span className="font-mono">
+              existed since rev{vuln.existed_since_revision ?? 1}
+            </span>
+            {vuln.known_since_revision != null
+              && vuln.known_since_revision !== (vuln.existed_since_revision ?? 1) && (
+              <span className="text-muted" style={{ marginLeft: 8 }}>
+                known since rev{vuln.known_since_revision}
+              </span>
+            )}
+            {vuln.invalidated_at_revision != null && (
+              <span className="text-warning" style={{ marginLeft: 8 }}>
+                invalidated at rev{vuln.invalidated_at_revision}
+              </span>
+            )}
           </span>
 
           <span className="detail-label">Type</span>

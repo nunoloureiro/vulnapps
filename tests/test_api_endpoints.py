@@ -38,7 +38,7 @@ async def _run_migrations():
     await run_migrations(db)
     await db.close()
 
-asyncio.get_event_loop().run_until_complete(_run_migrations())
+asyncio.run(_run_migrations())
 
 from app.main import app  # noqa: E402
 from app.auth import create_token  # noqa: E402

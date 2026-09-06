@@ -13,6 +13,7 @@ Requires: ANTHROPIC_API_KEY environment variable for Claude API access.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -110,6 +111,22 @@ class Spinner:
             self._thread.join()
 
 
+class AmbiguousAppError(Exception):
+    """More than one app matches a name+version lookup.
+
+    The `apps` table lost its UNIQUE(name, version) in migration 010, so a
+    name+version pair can resolve to several rows with different ground truth and
+    different scan histories. Guessing means a scan is scored against a corpus
+    the operator did not choose.
+    """
+
+    def __init__(self, name, version, matches):
+        self.name = name
+        self.version = version
+        self.matches = matches
+        super().__init__(f"{len(matches)} apps match '{name}' version '{version or ''}'")
+
+
 class LLMCallError(Exception):
     """Raised by run_llm_mapping* on a recoverable failure (subprocess
     non-zero exit, API error, malformed JSON). Caller decides whether to
@@ -169,7 +186,38 @@ information, regardless of whether the finding mapped to a known vuln. The \
 user reads these fields to confirm the mapping was correct and to spot \
 forced/wrong matches. Only leave a field empty when the report itself gives \
 no value for it.
+- `severity` is MANDATORY for EVERY finding, mapped or unmapped. This is not \
+one of the fields you may skip for a matched finding — a mapped finding \
+without a severity is a measurement lost, because the platform compares the \
+severity the tool assigned against the severity the flaw actually carries in \
+that application.
+- `severity` must be the severity THE REPORT ASSIGNS, transcribed, not your own \
+assessment of how bad the issue is. If the report says "Low" for something you \
+would call critical, record "low" — the disagreement is the signal being \
+measured. Only when the report states no severity at all for a finding may you \
+infer one from the report's own language (e.g. an explicit "Critical findings" \
+section heading); if there is genuinely nothing to go on, leave it empty rather \
+than substituting your judgement.
 - severity must be one of: "critical", "high", "medium", "low", "info".
+- For every finding that maps to a known vulnerability, report which \
+MILESTONES the report actually evidences for it. Judge only from what the \
+report demonstrates — never from what a scanner could plausibly have done:
+    * `surface`: the report locates the vulnerable surface (endpoint, \
+parameter, file) — it knows WHERE.
+    * `flaw`: the report identifies the actual flaw and why the code is wrong \
+— it knows WHAT.
+    * `poc`: the report contains a concrete, reproducible proof of concept — a \
+request, payload or command that triggers it. A description of how one might \
+exploit it is NOT a PoC.
+    * `impact`: the report demonstrates realized impact — data actually \
+extracted, an account actually taken over, a privilege actually gained. \
+Speculation about impact ("could allow an attacker to...") is NOT impact.
+  Milestones are cumulative in practice but judge each independently, and set \
+all four explicitly to true or false. Omit the object for unmapped findings.
+- When several findings describe the SAME non-issue and are false positives, \
+give them an identical short `fp_group` slug (e.g. "missing-headers") so they \
+count as one false positive rather than three. Leave `fp_group` empty for a \
+false positive that stands alone.
 
 Respond with ONLY valid JSON (no markdown fencing) in this exact format:
 {
@@ -189,8 +237,9 @@ Respond with ONLY valid JSON (no markdown fencing) in this exact format:
             "filename": "string - affected source file or empty string",
             "matched_vuln_db_id": 123 or null,
             "is_false_positive": false,
+            "fp_group": "string - shared slug for false positives describing the same non-issue, else empty",
             "reasoning": "string - brief explanation of why this maps (or doesn't) to the known vuln",
-            "severity": "critical|high|medium|low|info — always when the report has it",
+            "severity": "critical|high|medium|low|info — MANDATORY, transcribed from the report, for mapped and unmapped findings alike",
             "description": "string — what the issue is, why it matters (always when the report has it)",
             "poc": "string — proof-of-concept / reproduction steps (always when the report has it)",
             "remediation": "string — how to fix (always when the report has it)",
@@ -281,13 +330,25 @@ class VulnappsClient:
         return resp.json()
 
     def find_app(self, name: str, version: str) -> dict | None:
-        """Return the first app matching name+version exactly, else None."""
+        """Return the app matching name+version exactly, or None.
+
+        Raises ``AmbiguousAppError`` when more than one app matches. Migration
+        010 rebuilt the `apps` table without the original UNIQUE(name, version),
+        so duplicates are possible and at least one pair exists — taking the
+        first row would silently attach a scan to whichever duplicate the query
+        happened to return first, and the scan would then be measured against
+        that app's ground truth. Refusing is the only safe answer: which app is
+        meant is a decision the operator has to make with --app-id.
+        """
         resp = self.client.get("/api/apps", params={"q": name})
         resp.raise_for_status()
-        for a in resp.json().get("apps", []):
-            if a.get("name") == name and (a.get("version") or "") == (version or ""):
-                return a
-        return None
+        matches = [
+            a for a in resp.json().get("apps", [])
+            if a.get("name") == name and (a.get("version") or "") == (version or "")
+        ]
+        if len(matches) > 1:
+            raise AmbiguousAppError(name, version, matches)
+        return matches[0] if matches else None
 
     def create_app(self, payload: dict) -> dict:
         resp = self.client.post("/api/apps", json=payload)
@@ -322,12 +383,14 @@ class VulnappsClient:
         resp.raise_for_status()
         return resp.json()
 
-    def mark_fp(self, scan_id: int, finding_id: int) -> dict:
+    def mark_fp(self, scan_id: int, finding_id: int, fp_group: str | None = None) -> dict:
         resp = self.client.post(
             f"/api/scans/{scan_id}/findings/{finding_id}/mark-fp",
+            json={"fp_group": fp_group} if fp_group else None,
         )
         resp.raise_for_status()
         return resp.json()
+
 
     def get_labels(self) -> list:
         resp = self.client.get("/api/labels")
@@ -588,8 +651,14 @@ def print_mapping_table(mapping: dict, vulns: list):
     print(f"\n  {C.DIM}Summary:{C.RESET} {' / '.join(parts)}")
 
 
-def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_public: bool, notes: str, cost: float | None = None, tokens: int | None = None, duration: int | None = None, scanner_version: str | None = None):
-    """Submit the scan and apply LLM-corrected matches. `duration` is in SECONDS."""
+def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_public: bool, notes: str, cost: float | None = None, tokens: int | None = None, duration: int | None = None, scanner_version: str | None = None, config: dict | None = None):
+    """Submit the scan and apply LLM-corrected matches. `duration` is in SECONDS.
+
+    *config* holds the configuration fingerprint fields (model, reasoning
+    effort, harness version, token budget, seed, run group, trial index) plus
+    the matcher identity. Without them a run cannot later be attributed to what
+    produced it, so the importer always sends whatever it knows.
+    """
     findings_payload = []
     for f in mapping.get("findings", []):
         item = {
@@ -599,7 +668,8 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
             "parameter": f.get("parameter", ""),
             "filename": f.get("filename", ""),
         }
-        for k in ("title", "severity", "description", "poc", "remediation", "code_location"):
+        for k in ("title", "severity", "description", "poc", "remediation",
+                  "code_location", "fp_group"):
             v = f.get(k)
             if v:
                 item[k] = v
@@ -614,6 +684,9 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
     }
     if scanner_version:
         scan_data["scanner_version"] = scanner_version
+    for key, value in (config or {}).items():
+        if value not in (None, ""):
+            scan_data[key] = value
     if cost is not None:
         scan_data["cost"] = cost
     if tokens is not None:
@@ -642,17 +715,35 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
             lf = llm_findings[i]
 
             if lf.get("is_false_positive"):
-                client.mark_fp(scan_id, sf["id"])
+                client.mark_fp(scan_id, sf["id"], lf.get("fp_group"))
                 fp_marks += 1
-            elif lf.get("matched_vuln_db_id") is not None:
-                if sf.get("matched_vuln_id") != lf["matched_vuln_db_id"]:
-                    client.match_finding(scan_id, sf["id"], lf["matched_vuln_db_id"])
-                    corrections += 1
+                continue
+
+            matched = lf.get("matched_vuln_db_id")
+            if matched is not None and sf.get("matched_vuln_id") != matched:
+                client.match_finding(scan_id, sf["id"], matched)
+                corrections += 1
 
     if corrections or fp_marks:
         print(f"  {colored('✓', 'GREEN')} Applied {colored(str(corrections), 'CYAN')} match corrections, {colored(str(fp_marks), 'CYAN')} FP marks")
     else:
         print(f"  {colored('✓', 'GREEN')} Heuristic matching was already correct")
+
+    # Severity coverage on MATCHED findings, reported at import time. Severity
+    # band error can only be computed where the tool's own severity was captured,
+    # and a silent gap here reads downstream as a well-calibrated scanner.
+    matched = [lf for lf in llm_findings
+               if lf.get("matched_vuln_db_id") is not None and not lf.get("is_false_positive")]
+    with_sev = [lf for lf in matched if lf.get("severity")]
+    if matched:
+        pct = 100 * len(with_sev) / len(matched)
+        mark, colour = ("✓", "GREEN") if pct == 100 else ("⚠", "YELLOW")
+        print(f"  {colored(mark, colour)} Severity reported on "
+              f"{colored(f'{len(with_sev)}/{len(matched)}', 'CYAN')} matched findings "
+              f"({pct:.0f}%)")
+        if pct < 100:
+            print(f"    {C.DIM}Findings without a reported severity are excluded from "
+                  f"severity band error.{C.RESET}")
 
     return scan_id
 
@@ -926,6 +1017,38 @@ def _as_int(v) -> int | None:
     return int(f) if f is not None else None
 
 
+def _matcher_identity(args) -> tuple:
+    """(matcher_version, matcher_prompt_sha256) for this import run.
+
+    The importer IS the matcher: the LLM decides the final finding→vuln mapping
+    and the server-side heuristic is only its first pass. Recording the mapping
+    model and a hash of the mapping prompt is what keeps a metric change
+    attributable — otherwise a shift could come from the model under test, the
+    corpus revision, or the mapper, with no way to tell which.
+    """
+    engine = "cli" if args.use_cli else "api"
+    version = f"llm-{engine}:{args.model}" if args.model else f"llm-{engine}"
+    sha = hashlib.sha256(SYSTEM_PROMPT_MAP.encode("utf-8")).hexdigest()
+    return version, sha
+
+
+def _scan_config(args, scan_model: str | None) -> dict:
+    """Configuration fingerprint fields to send with the scan."""
+    matcher_version, matcher_sha = _matcher_identity(args)
+    return {
+        "model": scan_model,
+        "model_version": args.model_version,
+        "reasoning_effort": args.reasoning_effort,
+        "harness_version": args.harness_version,
+        "token_budget": args.token_budget,
+        "seed": args.seed,
+        "run_group": args.run_group,
+        "trial_index": args.trial_index,
+        "matcher_version": matcher_version,
+        "matcher_prompt_sha256": matcher_sha,
+    }
+
+
 def parse_scan_start(s: str) -> str:
     """Parse --scan-start. Accepts 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD'.
     Returns a normalized 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD' string.
@@ -986,11 +1109,27 @@ def show_pretty_help():
     {c}--tokens{r} {d}<n>{r}               Token count {d}(private, auto-captured if omitted){r}
     {c}--duration{r} {d}<min>{r}           Scan duration in minutes {d}(private){r}
 
+  {b}Configuration fingerprint{r} {d}(what produced the run — record these or the run{r}
+  {d}cannot be attributed later){r}{b}:{r}
+    {c}--scan-model{r} {d}<m>{r}           Model that RAN the scan, e.g. {c}claude-opus-5{r}
+                              {d}(overrides the model read from the report){r}
+    {c}--model-version{r} {d}<v>{r}        Model snapshot/version, e.g. {c}20260415{r}
+    {c}--reasoning-effort{r} {d}<e>{r}     Effort the scanner ran with, e.g. {c}low{r}, {c}high{r}, {c}max{r}
+    {c}--harness-version{r} {d}<v>{r}      Harness/agent version or git commit
+    {c}--token-budget{r} {d}<n>{r}         Token budget the scanner was given
+    {c}--seed{r} {d}<s>{r}                 Run seed {d}(excluded from the fingerprint){r}
+    {c}--run-group{r} {d}<g>{r}            Ties k trials of one configuration together
+    {c}--trial-index{r} {d}<i>{r}          0-based trial index within the run group
+                              {d}Scanner+version+model+version+effort+harness+budget form{r}
+                              {d}the fingerprint; seed and trial index are excluded, so{r}
+                              {d}k trials aggregate into a mean and a min–max band.{r}
+                              {d}Reporting needs ≥5 trials per configuration.{r}
+
   {b}LLM mapping{r} {d}(used by the importer to map findings to known vulns){r}{b}:{r}
     {c}--model{r} {d}<model>{r}            Claude model used by the importer for mapping/extraction
                               {d}(default: claude-haiku-4-5 for extract-only, claude-{r}
-                              {d}sonnet-4-6 for mapping). This is NOT the model{r}
-                              {d}used to run the scan itself — record that with a label.{r}
+                              {d}sonnet-4-6 for mapping). This is NOT the model that ran{r}
+                              {d}the scan — use {r}{c}--scan-model{r}{d} for that.{r}
     {c}--provider{r} {d}<p>{r}             anthropic|vertex {d}(default: auto from CLAUDE_CODE_USE_VERTEX){r}
     {c}--vertex-region{r} {d}<r>{r}        Vertex region (default: $ANTHROPIC_VERTEX_LOCATION or us-east5)
     {c}--vertex-project{r} {d}<p>{r}       GCP project ID (default: $ANTHROPIC_VERTEX_PROJECT_ID)
@@ -1020,6 +1159,10 @@ def show_pretty_help():
     ./scanimport.sh --create-app {o}'{{"name":"juice-shop","version":"14"}}'{r} --file ./scan.md
     ./scanimport.sh --app-id 1 --dir ./scans/ --scanner {o}"Snyk COS"{r} --scanner-version 101 --scan-start {o}"2026-08-04"{r} --labels {o}"claude-opus-4-7,greybox,used-sast"{r}
     ./scanimport.sh --app-id 1 --probely abc123,def456
+    {d}# one trial of a configuration sweep (repeat with --trial-index 1..4){r}
+    ./scanimport.sh --app-id 1 --dir ./trial-0/ --scanner {o}"Snyk COS"{r} --scan-model {o}claude-opus-5{r} \\
+      --reasoning-effort high --harness-version 7d37b87 --token-budget 500000 \\
+      --run-group {o}sweep-2026-08-01{r} --trial-index 0 --seed 0
 """)
 
 
@@ -1055,6 +1198,27 @@ def main():
     parser.add_argument("--probely", default=None, help="Import from Probely: scan ID(s), comma-separated (max 2). Requires PROBELY_API_KEY env var.")
     parser.add_argument("--scanner", default=None, help="Scanner name (overrides LLM-detected name)")
     parser.add_argument("--scanner-version", default=None, help="Scanner version, e.g. '2.14.0'")
+    # ── Configuration fingerprint ────────────────────────────
+    # These describe the run under test. Together with scanner name/version they
+    # form the config_fingerprint the server computes; --seed and --trial-index
+    # are deliberately excluded from it, so k trials of one configuration
+    # aggregate into a mean and a min–max band instead of k separate results.
+    parser.add_argument("--scan-model", default=None,
+                        help="Model that PERFORMED the scan, e.g. 'claude-opus-5' (overrides the value read from the report). Distinct from --model, which is the model used for this mapping step.")
+    parser.add_argument("--model-version", default=None,
+                        help="Version/snapshot of the scanning model, e.g. '20260415'")
+    parser.add_argument("--reasoning-effort", default=None,
+                        help="Reasoning effort the scanner ran with, e.g. 'low', 'high', 'max'")
+    parser.add_argument("--harness-version", default=None,
+                        help="Harness/agent version or git commit that produced the scan")
+    parser.add_argument("--token-budget", type=int, default=None,
+                        help="Token budget the scanner was given (part of the configuration)")
+    parser.add_argument("--seed", default=None,
+                        help="Run seed. Excluded from the fingerprint so trials group together.")
+    parser.add_argument("--run-group", default=None,
+                        help="Label tying k trials of one configuration together, e.g. 'sweep-2026-08-01'")
+    parser.add_argument("--trial-index", type=int, default=None,
+                        help="0-based index of this trial within its run group")
     parser.add_argument("--scan-start", default=None,
                         help="Scan start time in 'YYYY-MM-DD HH:MM' (overrides LLM-detected date). "
                              "Plain 'YYYY-MM-DD' also accepted.")
@@ -1206,6 +1370,19 @@ def main():
                 existing = client.find_app(app_name, app_version)
         except httpx.HTTPStatusError as e:
             print(f"  {colored('✗', 'RED')} App lookup failed: {e.response.status_code}", file=sys.stderr)
+            sys.exit(1)
+        except AmbiguousAppError as e:
+            # Refuse rather than pick. Attaching a scan to the wrong duplicate
+            # measures it against ground truth the operator never chose, and
+            # nothing downstream would reveal the mistake.
+            print(f"  {colored('✗', 'RED')} {e}", file=sys.stderr)
+            print(f"    {C.DIM}Duplicate name+version rows exist. Pass --app-id to say "
+                  f"which one you mean:{C.RESET}", file=sys.stderr)
+            for a in e.matches:
+                print(f"      {colored('id ' + str(a['id']), 'CYAN')}  "
+                      f"visibility={a.get('visibility')}  "
+                      f"vulns={a.get('vuln_count', '?')}  "
+                      f"created={a.get('created_at', '?')}", file=sys.stderr)
             sys.exit(1)
 
         if existing:
@@ -1609,11 +1786,13 @@ def main():
         # --duration is minutes; backend expects seconds. The report's
         # duration_seconds is already in seconds.
         duration_s = int(args.duration * 60) if args.duration is not None else _as_int(mapping.get("duration_seconds"))
-        # Auto-add the model that ran the scan (read from the report) as a label.
-        scan_model = mapping.get("scan_model")
+        # Auto-add the model that ran the scan as a label. Precedence: explicit
+        # --scan-model > the value the LLM read from the report.
+        scan_model = args.scan_model or mapping.get("scan_model")
         if scan_model and scan_model not in label_names:
             label_names.append(scan_model)
-        scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, cost, tokens, duration_s, args.scanner_version)
+        config = _scan_config(args, scan_model)
+        scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, cost, tokens, duration_s, args.scanner_version, config)
         for label_name in label_names:
             client.add_label(scan_id, label_name)
         if label_names:

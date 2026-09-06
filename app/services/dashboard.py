@@ -98,7 +98,13 @@ async def get_dashboard(
     # 2. Known vulnerabilities for visible apps (with severity filter)
     # ------------------------------------------------------------------
     app_placeholders = ",".join("?" * len(visible_app_ids))
-    vulns_sql = f"SELECT * FROM vulnerabilities WHERE app_id IN ({app_placeholders})"
+    # The dashboard is a "current" view, so ground truth is scoped to each app's
+    # latest revision — which for vulns reduces to "not invalidated", since
+    # nothing can carry a revision above the newest one.
+    vulns_sql = (
+        f"SELECT * FROM vulnerabilities WHERE app_id IN ({app_placeholders}) "
+        "AND invalidated_at_revision IS NULL"
+    )
     vulns_params: list = list(visible_app_ids)
 
     if severities_filter:
@@ -278,14 +284,24 @@ async def get_dashboard(
 
             # TP: unique (app_id, matched_vuln_id) where matched to an in-scope vuln
             scan_matched = set()
-            scan_fp = 0
+            # FPs are clustered the same way TPs are, so both sides of precision
+            # are counted at one granularity: distinct fp_group within the scan,
+            # plus one for each ungrouped FP. Group keys are per-scan, so this
+            # cannot be hoisted out of the loop.
+            fp_groups: set = set()
+            ungrouped_fp = 0
             for f in findings:
                 if f["matched_vuln_id"] is not None and f["matched_vuln_id"] in app_vuln_ids:
                     tp_pairs.add((aid, f["matched_vuln_id"]))
                     scan_matched.add(f["matched_vuln_id"])
                 if f["is_false_positive"] == 1:
-                    fp_count += 1
-                    scan_fp += 1
+                    group = (f["fp_group"] or "").strip().lower()
+                    if group:
+                        fp_groups.add(group)
+                    else:
+                        ungrouped_fp += 1
+            scan_fp = len(fp_groups) + ungrouped_fp
+            fp_count += scan_fp
 
             # Per-app metrics
             scan_tp = len(scan_matched)

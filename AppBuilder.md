@@ -104,6 +104,7 @@ vulnapps/
 │   ├── auth.py               # bcrypt hash/verify, JWT create/decode (HS256)
 │   ├── dependencies.py       # get_current_user, require_user, require_admin, require_app_write, require_scan_write, get_team_role, require_scope
 │   ├── matching.py           # Shared scan finding matching logic (DAST + SAST)
+│   ├── scoring.py            # PURE scoring: weight scale, tiers, revision scope, compute_metrics
 │   ├── visibility.py         # App/scan visibility filter (public/team/private)
 │   ├── models.py             # Pydantic schemas
 │   ├── seed.py               # TaintedPort seed data (25+ vulns, auto-seeded on first admin registration)
@@ -124,6 +125,7 @@ vulnapps/
 │   │   ├── apps.py           # App CRUD, cloning, visibility checks
 │   │   ├── vulns.py          # Vulnerability CRUD, import (JSON/CSV)
 │   │   ├── scans.py          # Scan CRUD, submit, matching, compare, metrics
+│   │   ├── scoring.py        # Ground-truth revisions, scope queries, live scoring
 │   │   ├── labels.py         # Label CRUD, scan-label association, admin label management
 │   │   ├── teams.py          # Team CRUD, member management
 │   │   └── users.py          # Admin user management (list, update, delete, profiles)
@@ -175,7 +177,12 @@ vulnapps/
 │   ├── 005_viewer_role.sql              # Add viewer role to users
 │   ├── 006_teams.sql                    # Teams + team_members tables
 │   ├── 007_app_visibility.sql           # App visibility + team_id
-│   ├── ...                              # 008-011: incremental changes
+│   ├── ...                              # 008-023: incremental changes
+│   ├── 024_vuln_weights.sql             # impact_weight + difficulty_tier (+ backfill)
+│   ├── 025_ground_truth_revisions.sql   # revisions table, existed/known/invalidated, scans.corpus_revision
+│   ├── 028_chains.sql                   # chains, chain_members (credited iff all members matched)
+│   ├── 030_fp_group.sql                 # scan_findings.fp_group (FP clustering)
+│   ├── 032_benchmark_corpus.sql         # apps.benchmark_verified, vulns.weight_verified
 │   ├── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
 │   ├── 013_api_keys.sql                 # API keys table with scopes
 │   ├── 014_scan_labels.sql              # Labels + scan_labels junction table
@@ -247,7 +254,7 @@ Uses `python-dotenv` to load `.env` file.
 
 ---
 
-## Database Schema (migrations 001-023)
+## Database Schema (migrations 001-032)
 
 ```sql
 PRAGMA journal_mode=WAL;
@@ -394,6 +401,73 @@ CREATE TABLE IF NOT EXISTS scan_labels (
 
 CREATE INDEX IF NOT EXISTS idx_scan_labels_scan ON scan_labels(scan_id);
 CREATE INDEX IF NOT EXISTS idx_scan_labels_label ON scan_labels(label_id);
+
+-- Migration 024: severity weighting and difficulty tiers.
+-- `severity` stays the DISPLAY field; `impact_weight` is the SCORING field and
+-- may diverge from it where realized impact in the target app differs.
+ALTER TABLE vulnerabilities ADD COLUMN impact_weight   INTEGER;  -- 1 | 3 | 9 | 27
+ALTER TABLE vulnerabilities ADD COLUMN difficulty_tier TEXT;     -- commodity | business_logic | chained
+-- Backfill: info/low→1, medium→3, high→9, critical→27; tier→'commodity'.
+-- SQLite cannot add CHECK constraints via ALTER, so both are validated in
+-- app/scoring.py (validate_weight / validate_tier) on every write path.
+
+-- Migration 025: ground-truth revisions.
+CREATE TABLE IF NOT EXISTS ground_truth_revisions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    app_id     INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    revision   INTEGER NOT NULL,
+    reason     TEXT NOT NULL,   -- new_prior_vuln | weight_change | vuln_invalidated | corpus_change
+    notes      TEXT,
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(app_id, revision)
+);
+CREATE INDEX IF NOT EXISTS idx_gt_revisions_app ON ground_truth_revisions(app_id);
+
+ALTER TABLE vulnerabilities ADD COLUMN existed_since_revision  INTEGER DEFAULT 1;
+ALTER TABLE vulnerabilities ADD COLUMN known_since_revision    INTEGER DEFAULT 1;
+ALTER TABLE vulnerabilities ADD COLUMN invalidated_at_revision INTEGER;
+ALTER TABLE scans          ADD COLUMN corpus_revision          INTEGER;
+-- Every existing app gets revision 1; every vuln existed_since/known_since 1;
+-- every scan corpus_revision 1.
+
+-- Migration 028: exploit chains. A chain is its own ground-truth entity with
+-- its own weight; members keep theirs. Chains obey the revision scope rule.
+-- Credited (full weight) only when every member is matched — matching members
+-- independently is not evidence the chain was walked; there is no separate
+-- chain-level partial-credit tracking.
+CREATE TABLE IF NOT EXISTS chains (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    chain_id      TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    impact_weight INTEGER NOT NULL,
+    description   TEXT,
+    existed_since_revision  INTEGER DEFAULT 1,
+    invalidated_at_revision INTEGER,
+    UNIQUE(app_id, chain_id)
+);
+CREATE TABLE IF NOT EXISTS chain_members (
+    chain_pk   INTEGER NOT NULL REFERENCES chains(id) ON DELETE CASCADE,
+    vuln_id    INTEGER NOT NULL REFERENCES vulnerabilities(id) ON DELETE CASCADE,
+    step_order INTEGER NOT NULL,
+    PRIMARY KEY (chain_pk, vuln_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chains_app ON chains(app_id);
+
+-- Migration 030: false-positive clustering (the FP-side equivalent of
+-- matched_vuln_id — findings describing one non-issue share a group key).
+ALTER TABLE scan_findings ADD COLUMN fp_group TEXT;
+CREATE INDEX IF NOT EXISTS idx_findings_fp_group ON scan_findings(scan_id, fp_group);
+
+-- Migration 032: flag hand-curated apps and hand-reviewed vulns.
+-- benchmark_verified: this app's vulns have actually been reviewed (weights/
+-- tiers hand-set, not just backfilled). Set via the UI (App edit → "Benchmark
+-- corpus") or PUT /api/apps/{id} — never inferred from name/version.
+ALTER TABLE apps ADD COLUMN benchmark_verified INTEGER NOT NULL DEFAULT 0;
+-- weight_verified: this single vuln's contextual severity and tier have been
+-- hand-reviewed, as opposed to still carrying the 024 backfill/placeholder.
+ALTER TABLE vulnerabilities ADD COLUMN weight_verified INTEGER NOT NULL DEFAULT 0;
 ```
 
 ### Tech Stack
@@ -505,7 +579,21 @@ When the first admin registers, `seed_taintedport(db, user_id)` is called to pop
 ### Seed Data: TaintedPort (`app/seed.py`)
 Pre-populated app: **TaintedPort v1.0** — intentionally vulnerable wine store (PHP + Next.js + SQLite).
 
-25 vulnerabilities seeded with full details (description, code_location, poc, remediation):
+25 vulnerabilities seeded with full details (description, code_location, poc, remediation).
+
+Each entry may also carry `impact_weight` (1/3/9/27) and `difficulty_tier`
+(commodity | business_logic | chained). Where an entry omits them, seeding derives
+the weight from `severity` and defaults the tier to `commodity` — the same
+fallback migration 024 applied to existing databases. Those derived values are a
+starting point, not a measurement: `impact_weight` is meant to reflect realized
+impact in *this* app, and a placeholder tier makes the tier matrix claim every
+flaw here is commodity, which is false for the price-manipulation, discount-bypass
+and JWT-forgery entries. Both need a pass by hand. Seeding also inserts the app's
+`ground_truth_revisions` row for revision 1.
+
+The severity column below is contextual severity: it is what the flaw is worth *in this
+application*, and `impact_weight` derives from it 1:1.
+
 
 | ID | Title | Severity | Type |
 |----|-------|----------|------|
@@ -570,10 +658,12 @@ All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT 
 |--------|------|-------------|-------------|
 | GET | `/api/apps/{id}/vulns` | None / read | List vulns for app |
 | GET | `/api/apps/{id}/vulns/{vid}` | None / read | Vuln detail |
-| POST | `/api/apps/{id}/vulns` | App write / full | Create vuln |
-| PUT | `/api/apps/{id}/vulns/{vid}` | App write / full | Update vuln |
-| DELETE | `/api/apps/{id}/vulns/{vid}` | App write / full | Delete vuln |
-| POST | `/api/apps/{id}/vulns/import` | App write / full | Import vulns from JSON/CSV (file upload or JSON body) |
+| POST | `/api/apps/{id}/vulns` | App write / full | Create vuln. `impact_weight` (1\|3\|9\|27) and `difficulty_tier` are required by the forms and validated server-side; omitted, the weight derives from `severity` and the tier defaults to `commodity`. Opens a `new_prior_vuln` revision when the app has scans |
+| PUT | `/api/apps/{id}/vulns/{vid}` | App write / full | Update vuln. Omitting the scoring fields PRESERVES the stored values (never resets a hand-corrected weight). A changed `impact_weight` opens a `weight_change` revision |
+| DELETE | `/api/apps/{id}/vulns/{vid}` | App write / full | Delete vuln. **409** if any finding matched it — invalidate instead |
+| POST | `/api/apps/{id}/vulns/{vid}/invalidate` | App write / full | Retire from ground truth at a new revision. Body (optional): `{notes}`. Stays in scope for earlier revisions |
+| POST | `/api/apps/{id}/vulns/import` | App write / full | Import vulns from JSON/CSV (file upload or JSON body). Optional `existed_since` (`all_along` \| `this_revision`, default `this_revision`) decides whether prior scans are re-scored against the batch |
+| GET | `/api/apps/{id}/vulns/export` | None / read | Download all vulns for the app as a CSV file (`Content-Disposition: attachment`). Never capped by `MAX_VULNS_PER_APP` — unlike the list/detail endpoints, it's one file rather than a paginated response. Columns match what `import` reads, so an export round-trips through import unchanged. String cells starting with `=`, `+`, `-`, or `@` get a leading `'` to defuse spreadsheet formula injection |
 
 ### Scans (`/api/scans` + `/api/apps/{id}/scans`)
 | Method | Path | Auth / Scope | Description |
@@ -582,12 +672,14 @@ All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT 
 | GET | `/api/scans/{id}` | Varies / read | Scan detail with metrics, findings, missed vulns, labels |
 | PUT | `/api/scans/{id}` | Scan write / vuln-mapper | Update scan metadata: `{scanner_name, scan_date, authenticated, notes}` |
 | DELETE | `/api/scans/{id}` | Scan write | Delete scan |
-| POST | `/api/apps/{id}/scans` | User+ / vuln-mapper | Submit scan. Body: `{scanner_name, scan_date, authenticated, is_public, notes, cost, tokens, findings, labels}`. Each finding may include `{vuln_type, http_method, url, parameter, filename, title, severity, description, poc, remediation, code_location}` — the last six are optional rich details preserved for later promotion |
+| POST | `/api/apps/{id}/scans` | User+ / vuln-mapper | Submit scan. Body: `{scanner_name, scanner_version, scan_date, authenticated, is_public, notes, cost, tokens, duration, findings, labels}`. The server stamps `corpus_revision` with the app's latest revision. Each finding may include `{vuln_type, http_method, url, parameter, filename, title, severity, description, poc, remediation, code_location, fp_group}` |
 | POST | `/api/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Map finding to vuln: `{vuln_id: int\|null}` |
-| POST | `/api/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive |
+| POST | `/api/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive. Optional body `{fp_group}` clusters findings describing the same non-issue so precision counts them once |
 | POST | `/api/scans/{id}/findings/{fid}/ignore` | Scan write / vuln-mapper | Set/clear the "Ignored" state. Body `{ignored: bool}` (default `true`). Ignoring clears any match/FP; clearing returns to Pending |
-| POST | `/api/scans/{id}/findings/{fid}/promote` | App write / vuln-mapper | Promote a pending finding into a new vuln on the scan's app. Body (all optional): `{vuln_id, title, severity, vuln_type, http_method, url, parameter, filename, description, poc, remediation, code_location}` — missing fields fall back to the finding's stored values; `vuln_id` auto-generates as the next `DISC-NNN` slug if blank. The finding is linked to the new vuln on success |
-| POST | `/api/scans/{id}/rematch` | Scan write / vuln-mapper | Re-run automatic matching for all findings |
+| POST | `/api/scans/{id}/findings/{fid}/promote` | App write / vuln-mapper | Promote a pending finding into a new vuln on the scan's app. Body: `{vuln_id, title, severity, vuln_type, http_method, url, parameter, filename, description, poc, remediation, code_location, impact_weight, difficulty_tier}` — missing fields fall back to the finding's stored values; `vuln_id` auto-generates as the next `DISC-NNN` slug if blank. **`existed_since` is REQUIRED** (`all_along` \| `this_revision`) — **400** without it. Always opens a `new_prior_vuln` revision. The finding is linked to the new vuln on success |
+| POST | `/api/scans/{id}/rematch` | Scan write / vuln-mapper | Re-run automatic matching for all findings (in-scope vulns only) |
+| GET | `/api/apps/{id}/revisions` | None / read | Ground-truth revision history + `latest_revision` |
+| POST | `/api/apps/{id}/revisions` | App write / vuln-mapper | Open a revision: `{reason, notes}`. Required before a weight change takes effect |
 | POST | `/api/scans/{id}/labels` | Scan write | Add label to scan: `{name, color}`. Upserts label, links to scan |
 | DELETE | `/api/scans/{id}/labels/{label_id}` | Scan write | Remove label from scan |
 
@@ -714,8 +806,10 @@ React context providing `{user, loading, login, register, logout, refreshUser}`.
   "cost": 0.05,
   "tokens": 12500,
   "labels": ["label-name"],
+
   "findings": [
-    {"vuln_type": "XSS", "http_method": "GET", "url": "/search", "parameter": "q"}
+    {"vuln_type": "XSS", "http_method": "GET", "url": "/search", "parameter": "q"},
+    {"vuln_type": "Missing Security Headers", "url": "/", "fp_group": "headers-noise"}
   ]
 }
 ```
@@ -765,6 +859,10 @@ Uses a **scoring-based system** instead of binary matching. Each known vuln is s
 - **Metrics**: Pending **and Ignored** findings are excluded from TP/FP. Ignored findings are neutral — they are neither TP nor FP, so precision/recall/F1 are unchanged by ignoring; they are also dropped from the scan-list Pending count and severity pills. `rematch` never auto-touches an ignored finding.
 - **Compare page**: Pending and Ignored findings excluded from the FP matrix
 
+The heuristic in `app/matching.py` is only the first pass — the CLI importer's LLM
+makes the final call and corrects the match afterwards. It also emits a shared
+`fp_group` slug for false positives describing the same non-issue.
+
 Two matching modes based on finding content:
 
 **DAST matching** (when finding has `url`):
@@ -790,25 +888,202 @@ Hardcoded Secret,,,,src/config.py
 ```
 
 ### Metrics Computation
-```
-TP      = count of UNIQUE matched vulns (not finding count) — multiple findings matching the same vuln count as 1 TP
-FP      = count of findings where is_false_positive = 1
-Pending = count of findings where matched_vuln_id IS NULL AND is_false_positive = 0 AND is_ignored = 0
-Ignored = count of findings where is_ignored = 1  (neutral — excluded from precision/recall/F1)
-FN      = known vulns for the app NOT matched by any finding in this scan
 
-precision = TP / (TP + FP)     if (TP + FP) > 0 else 0
-recall    = TP / (TP + FN)     if (TP + FN) > 0 else 0
-f1        = 2 * P * R / (P+R)  if (P + R) > 0 else 0
+All metrics come from ONE pure function, `compute_metrics()` in `app/scoring.py` —
+no DB access, no live app state. `app/services/scoring.py` fetches its inputs;
+`scans.py` and `dashboard.py` consume its output. See **Scoring and Measurement**
+below for the full normative definition; the summary:
+
 ```
+TP        = count of UNIQUE matched vulns IN SCOPE (multiple findings on one vuln = 1 TP)
+FP        = count of findings where is_false_positive = 1        (raw, kept for continuity)
+FP groups = distinct fp_group among FPs + 1 per ungrouped FP     (used by precision)
+Pending   = findings with matched_vuln_id IS NULL AND is_false_positive = 0 AND is_ignored = 0
+Ignored   = findings where is_ignored = 1  (neutral — excluded from precision/recall/F1)
+FN        = in-scope vulns NOT matched by any finding in this scan
+
+precision_upper = TP / (TP + FPgroups)                      -- every pending turns out real
+precision_lower = TP / (TP + FPgroups + Pending)            -- every pending turns out an FP
+recall          = TP / (TP + FN)
+f1              = 2 * precision_upper * recall / (…)        -- upper bound, so F1 is
+                                                            -- unchanged for adjudicated scans
+weighted_found  = Σ over in-scope vulns and chains of impact_weight × credit
+weighted_total  = Σ over in-scope vulns and chains of impact_weight
+weighted_rate   = weighted_found / weighted_total            -- THE HEADLINE METRIC
+```
+
+**A matched vuln always earns its full weight** — a match IS the evidence, there is no
+partial credit. **A chain earns its full weight only when every member is matched** —
+matching members independently is NOT evidence the chain was walked, so a chain with only
+some members matched earns nothing; there is no separate chain-level credit tracking.
 
 **TP counts unique vulns, not findings.** If 3 scanner findings all match the same known vuln, TP=1. This prevents inflated precision when scanners report the same vuln multiple times (e.g., "Missing CSP", "Missing HSTS", "Missing X-Frame-Options" all matching TP-016 "Missing Security Headers"). In the scan list SQL, this uses `COUNT(DISTINCT matched_vuln_id)`.
 
+**FPs are clustered the same way.** Counting TP per vuln while counting FP per finding
+made precision non-comparable across tools with different reporting granularity — three
+findings on one real vuln scored 1 TP, three on one bogus issue scored 3 FP. Precision
+uses `fp_groups`; the raw count is still shown beneath it when the two differ.
+
+**Precision is a range until adjudication completes.** A scan with 5 TP, 0 FP and 50
+pending findings used to report precision = 1.0 with nothing signalling that it was
+meaningless. The bounds converge as findings are adjudicated; `adjudication_complete`
+(pending == 0) says whether they have, and the comparison view suppresses the single
+value until they do.
+
 **Duplicate indicator:** When multiple findings match the same vuln, a badge shows "N findings" next to the matched vuln link.
 
-Pending findings are excluded from precision/recall calculations — they haven't been classified yet.
+Displayed in a metrics-grid: Weighted Detection (orange, headline, with `found/total pts`
+beneath), TP (green), FP clusters (red), FN (red), Ignored (muted), Precision (orange, or a
+yellow `lower–upper` range when unadjudicated), Recall/F1 (orange). Below it, the
+difficulty-tier matrix. The heading carries `app@revN`.
 
-Displayed in a metrics-grid: TP (green), FP (red), Pending (yellow), FN (red), Precision/Recall/F1 (orange, as percentages).
+---
+
+## Scoring and Measurement
+
+Normative. Vulnapps' primary use case is measuring how scanner/agent configurations
+perform against curated ground truth, with the methodology published so third parties can
+reproduce it. That demands more than count-based TP/FP/FN: ground truth has to be
+versioned so a metric can be recomputed at the revision it was measured against.
+
+### Weight scale (1 / 3 / 9 / 27)
+
+| Weight | Class | Examples |
+|---|---|---|
+| 1 | Informational | version disclosure, verbose errors, missing headers |
+| 3 | Medium | reflected XSS, open redirect, unauthenticated read of non-sensitive data |
+| 9 | High | IDOR exposing another tenant's data, stored XSS with session theft, SSRF to internal service, single-step authz bypass |
+| 27 | Critical | chained exploit reaching admin, cross-tenant write, auth bypass, RCE, business logic abuse with financial impact |
+
+Log spacing is deliberate: with linear weights, nine informational findings would outscore
+two criticals.
+
+**`impact_weight` derives from `severity`.** Ground-truth severity IS contextual severity:
+TP-013 is a directory listing, Low by convention, but in TaintedPort it exposes
+`database.db` and the JWT signing key, so it is *stored* as critical. Once severity means
+"what this is worth in this application", the map is 1:1 (info/low→1, medium→3, high→9,
+critical→27) and there is no remaining case where the two should diverge. The column is
+still stored because the revision scheme needs an immutable per-revision value, and an
+explicit override is accepted, but it is exceptional rather than expected.
+
+Write-path rule: a payload that omits `impact_weight` leaves the stored value alone — the
+inline table editor sends only the columns it knows about — *unless* `severity` changed, in
+which case the weight follows the new severity. A changed weight opens a `weight_change`
+revision either way.
+
+Why it matters — two configurations on a 30-vuln corpus worth 382 points:
+
+| Config | Raw count | Weighted |
+|---|---|---|
+| A: all 12 commodity + 4 business logic (3 high, 1 crit) | 16/30 = 53% | 94/382 = 25% |
+| B: 6 commodity + 9 business logic (5 high, 4 crit) + 2 chained | 17/30 = 57% | 227/382 = 59% |
+
+Indistinguishable on raw counts, 2.4x apart weighted. `tests/test_scoring.py` reproduces
+both figures exactly and fails if the scale or credit rules stop separating them.
+
+### Difficulty tiers
+
+`commodity` | `business_logic` | `chained`. **A reporting axis, never a multiplier** —
+blending difficulty into the weight yields one opaque number and destroys the diagnostic.
+The point is to see *where on the difficulty curve* a configuration improved. Default
+reporting view:
+
+```
+Tier             Ground truth   Found   Weighted rate
+Commodity                  12      12            100%
+Business logic             14       4             29%
+Chained                     4       0              0%
+Weighted total         382 pts     16             25%
+```
+
+Chains are reported in the `chained` row alongside vulns tagged `chained`.
+
+### Exploit chains
+
+A chain is its own ground-truth entity with its own weight; its members keep their
+individual weights. The partial double-count is deliberate: demonstrating a chain end to
+end is worth more than finding its parts separately.
+
+**Vulns and chains are asymmetric on purpose:**
+
+> For a vuln, the match IS the evidence. For a chain, matching its members is NOT evidence
+> of chaining.
+
+A chain is credited its full weight only when EVERY member is matched; otherwise it
+contributes zero — there is no partial chain credit. The chain's weight sits *on top of*
+its members, and that double count is only defensible when the chain requires all of its
+members to actually be demonstrated together. The chain still sits in `weighted_total`, so
+an unmatched chain costs points rather than vanishing.
+
+### Ground-truth revisions
+
+`ground_truth_revisions`, one sequence per app.
+Reasons: `new_prior_vuln`, `weight_change`, `vuln_invalidated`, `corpus_change`.
+
+Each vuln carries two revision fields, and they mean different things:
+- `existed_since_revision` — when the flaw was present in the application. Drives scope.
+- `known_since_revision` — when we learned about it. Audit only.
+
+**Scope rule.** A vuln (or chain) is in scope for scoring scan *S* at revision *R* when:
+
+```
+existed_since_revision <= R                                    -- known ground truth at R
+AND existed_since_revision <= S.corpus_revision                 -- existed when S ran
+AND (invalidated_at_revision IS NULL OR invalidated_at_revision > R)
+```
+
+The second clause is not in the original design and is not optional: without it, a vuln
+introduced by a code change (`existed_since = N`) would count as a miss for every older
+scan the moment they were re-scored at revision N — a decline the scanner did not cause.
+A vuln that "existed all along" (`existed_since = 1`) still reaches every scan, which is
+exactly the retroactive re-scoring that is wanted. In the compare matrix, an out-of-scope
+cell renders `n/a`, not `✗`.
+
+**Promotion rule.** Promoting a discovery finding into a vuln always opens a revision
+(`new_prior_vuln`) and the operator MUST state which case it is — the API rejects the
+request otherwise, and the UI disables the submit button until a radio is chosen:
+- *existed all along* → `existed_since_revision = 1`, `known_since_revision = N`. Every
+  prior scan legitimately takes the miss once re-scored.
+- *introduced by a code change* → `existed_since_revision = N`. Prior scans untouched.
+
+**Weights are immutable within a revision.** Changing an `impact_weight` opens a
+`weight_change` revision. Changing a `difficulty_tier` does not — it never moves the
+weighted total.
+
+**Revision churn control.** A corpus change on an app with NO scans stays on the current
+revision: there is no history to preserve, so authoring 28 seed vulns does not create 28
+revisions. From the first scan onward, every corpus change opens one.
+
+**Invalidation replaces deletion.** A vuln that any finding matched cannot be deleted
+(409) — that would rewrite history and orphan the finding. `POST /api/apps/{id}/vulns/{vid}/invalidate`
+opens a `vuln_invalidated` revision and stamps `invalidated_at_revision`, so the vuln stays
+in scope for earlier revisions while the current revision drops it.
+
+Metrics are always computed live — there is no persisted scoring history — so a number can
+shift over time as ground truth grows, including retroactively if a vuln is promoted as
+"existed all along". This is correct: every chart and table is labelled with the revision
+it was scored at, because an unlabelled downward shift reads as a regression when it may
+just be a bigger corpus.
+
+**Benchmark-corpus and weight-review flags.** Migration 024 derived weights from severity
+for ~55k vulns across 217 apps — fine for apps nobody is curating. `apps.benchmark_verified`
+marks an app whose vulns have actually been hand-reviewed (set via App edit → "Benchmark
+corpus", or `PUT /api/apps/{id}`; never inferred from name/version, since this database has
+duplicate app names). `vulnerabilities.weight_verified` marks one vuln's severity/tier as
+hand-confirmed rather than still carrying the migration-024 backfill/placeholder; any write
+path that states a tier explicitly sets it, including re-confirming `commodity`. Both are
+informational badges on the App page today — no export/aggregation feature currently reads
+them (see `tasks/scorings-table.md` and `tasks/config-fingerprinting.md` for the deferred
+work that would).
+
+### Reporting guards
+
+`GET /api/apps/{id}/compare` returns a `guards` payload and the UI renders a warning
+banner — advisory only, never blocking: hard-refusing an exploratory comparison would break
+day-to-day use, including looking at an old scan next to a new one, which is how you notice
+ground truth moved. Guards: mixed `corpus_revision` among the compared scans;
+adjudication-incomplete scans, which suppresses the single precision value in the UI in
+favor of the lower–upper range.
 
 ### Editable Scan Metadata
 
@@ -838,19 +1113,33 @@ Comparison page at `/apps/:id/compare` (API: `GET /api/apps/{id}/compare?scans=1
 - Scans ordered by date in the selector
 
 **Comparison data includes:**
-- **F1-over-time chart**: an inline-SVG scatter shown at the **end** of the
-  comparison (after the detection/FP matrices), via `F1TimelineChart` in
-  `ScanCompare.jsx`. X = scan date (multiple `YY-MM-DD` ticks), Y = F1 (fixed
-  0–100% axis). One accent point per scan, directly labeled with the scanner
-  name (labels are vertically de-collided with leader lines when points crowd),
-  plus a **least-squares trend line** (dashed, clipped to the plot) and a hover
-  tooltip (`scanner · YY-MM-DD · F1%`). F1 is read from the severity-filtered
-  metrics, so the chart recomputes live with the filter. Single series → no
-  legend; no charting dependency.
-- **Metrics Table**: TP, FP, FN, Precision, Recall, F1, Detection Rate per scanner. Color-coded: green >=70%, yellow >=40%, red <40%
-- **Detection Matrix**: Rows = known vulnerabilities, Columns = scanners. Green checkmark (found) or gray X (missed). Coverage summary per vuln.
+- **Reporting guards banner** (top): warns on mixed corpus revisions among the
+  compared scans, and on incomplete adjudication. Advisory only — never blocking.
+- **Metrics Table**: Weighted Detection (headline, with `found/total pts`), TP,
+  FP clusters, FN, Pending, Precision (a `lower–upper` range while unadjudicated),
+  Recall, F1, and a per-tier detection breakdown. Color-coded: green >=70%, yellow
+  >=40%, red <40%. The 🏆 marks the highest **weighted** rate, not the highest F1.
+- **Detection Matrix**: Rows = known vulnerabilities (with weight and tier),
+  Columns = scanners. Checkmark (found), X (missed), or `n/a` where the vuln
+  postdates that run. Coverage summary per vuln counts only applicable scans.
 - **False Positives Table**: FPs grouped by scanner with vuln_type, method, URL, parameter.
+- **Trend chart**: an inline-SVG scatter shown at the **end** of the comparison
+  (after the detection/FP matrices), via `TrendChart` in `ScanCompare.jsx`.
+  X = scan date (multiple `YY-MM-DD` ticks), Y = the selected metric (fixed 0–100%
+  axis) — Weighted Detection by default, F1 one click away. One accent point per
+  scan, directly labeled with the scanner name (labels are vertically de-collided
+  with leader lines when points crowd), plus a **least-squares trend line**
+  (dashed, clipped to the plot) and a hover tooltip
+  (`scanner · YY-MM-DD · metric%`). Values are read from the severity-filtered
+  metrics, so the chart recomputes live with the filter. Single series → no
+  legend; no charting dependency. The chart carries the `app@revN` label, because
+  scores drift downward as ground truth grows and an unlabelled downward trend
+  reads as a regression.
 - Scanner names in comparison link to scan detail page
+
+Under a severity filter the metrics are recomputed client-side from the matrix
+(vulns only — chains are excluded and the heading says so). Unfiltered, the
+server's live-computed numbers are used verbatim.
 
 ---
 

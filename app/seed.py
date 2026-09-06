@@ -1,4 +1,22 @@
-"""Seed TaintedPort app with all known vulnerabilities on first startup."""
+"""Seed TaintedPort app with all known vulnerabilities on first startup.
+
+``impact_weight`` derives from ``severity`` (info/low→1, medium→3, high→9,
+critical→27), so entries below do not set it: the severity IS the scoring
+decision. Severity here means CONTEXTUAL severity — what the flaw is worth in
+*this* application — which is why a directory listing that exposes the database
+and the JWT signing key belongs above its conventional Low.
+
+``difficulty_tier`` (commodity | business_logic | chained) is optional per entry
+and defaults to ``commodity``, matching the fallback migration 024 applied to
+existing databases. That default is a placeholder, not a measurement: it makes
+the tier matrix claim every flaw here is commodity, which is plainly false for
+the price-manipulation and JWT-forgery entries. Stating a tier explicitly also
+marks it reviewed, which the benchmark export requires.
+
+See ``tasks/taintedport-weights.md`` for the outstanding per-vuln review.
+"""
+
+from app.scoring import DEFAULT_TIER, weight_from_severity
 
 TAINTEDPORT_APP = {
     "name": "TaintedPort",
@@ -406,12 +424,21 @@ async def seed_taintedport(db, admin_user_id: int):
             (app_id, tech),
         )
 
+    # Revision 1 of this app's ground truth. Everything seeded here existed from
+    # the start, so every scan is measured against all of it.
+    await db.execute(
+        """INSERT INTO ground_truth_revisions (app_id, revision, reason, notes, created_by)
+           VALUES (?, 1, 'corpus_change', 'Seeded ground truth', ?)""",
+        (app_id, admin_user_id),
+    )
+
     for v in TAINTEDPORT_VULNS:
         await db.execute(
             """INSERT INTO vulnerabilities
                (app_id, vuln_id, title, severity, vuln_type, http_method, url, parameter,
-                description, code_location, poc, remediation, created_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                description, code_location, poc, remediation, created_by,
+                impact_weight, difficulty_tier, existed_since_revision, known_since_revision)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)""",
             (
                 app_id,
                 v["vuln_id"],
@@ -426,6 +453,8 @@ async def seed_taintedport(db, admin_user_id: int):
                 v.get("poc"),
                 v.get("remediation"),
                 admin_user_id,
+                v.get("impact_weight") or weight_from_severity(v["severity"]),
+                v.get("difficulty_tier") or DEFAULT_TIER,
             ),
         )
 

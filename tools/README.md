@@ -97,7 +97,15 @@ python tools/import_scan.py \
 | `--file` | Single `.md` file (instead of `--dir`) | |
 | `--scanner` | Scanner name (overrides LLM-detected name) | |
 | `--scan-date` | Scan date in YYYY-MM-DD (overrides LLM-detected date) | |
-| `--model` | Claude model to use | `claude-sonnet-4-6` (mapping), `claude-haiku-4-5` (extract-only) |
+| `--scan-model` | Model that **ran the scan**, e.g. `claude-opus-5` (overrides the value read from the report) | |
+| `--model-version` | Version/snapshot of the scanning model | |
+| `--reasoning-effort` | Reasoning effort the scanner ran with, e.g. `low`, `high`, `max` | |
+| `--harness-version` | Harness/agent version or git commit that produced the scan | |
+| `--token-budget` | Token budget the scanner was given | |
+| `--seed` | Run seed — excluded from the configuration fingerprint | |
+| `--run-group` | Label tying k trials of one configuration together | |
+| `--trial-index` | 0-based index of this trial within its run group | |
+| `--model` | Claude model used by the importer for **mapping** (not the scan) | `claude-sonnet-4-6` (mapping), `claude-haiku-4-5` (extract-only) |
 | `--provider` | `anthropic` or `vertex` | auto-detected |
 | `--vertex-region` | Vertex AI region | `$ANTHROPIC_VERTEX_LOCATION` |
 | `--vertex-project` | GCP project ID | `$ANTHROPIC_VERTEX_PROJECT_ID` |
@@ -183,6 +191,44 @@ python tools/import_scan.py \
 
 If an app named "WordPress" version "6.4.2" already exists, it's reused.
 Otherwise it's created (requires `full` scope on the API key).
+
+### Configuration fingerprints and trials
+
+`--scan-model`, `--model-version`, `--reasoning-effort`, `--harness-version` and
+`--token-budget` (together with `--scanner`/`--scanner-version`) identify the
+**configuration** under test. The server hashes them into `config_fingerprint`;
+`--seed` and `--trial-index` are deliberately excluded, so k trials of one
+configuration share a fingerprint and are reported as a mean with a min–max band.
+
+Record them. A scan imported without them can never be attributed to the model or
+harness that produced it, and `GET /api/apps/{id}/benchmark` refuses to publish it.
+Reporting also needs **at least 5 trials** per configuration — a single agent run is
+not a configuration result.
+
+```bash
+# a 5-trial sweep of one configuration
+for i in 0 1 2 3 4; do
+  ./scanimport.sh --app-id 1 --dir "./trial-$i/" \
+    --scanner "Snyk COS" --scanner-version 101 \
+    --scan-model claude-opus-5 --reasoning-effort high \
+    --harness-version "$(git rev-parse --short HEAD)" --token-budget 500000 \
+    --run-group sweep-2026-08-01 --trial-index "$i" --seed "$i"
+done
+```
+
+The importer also identifies itself as the matcher (`matcher_version` =
+`llm-{api|cli}:{model}` plus a sha256 of its mapping prompt), and asks the LLM for
+per-finding **milestones** (`surface`, `flaw`, `poc`, `impact`) and a shared
+`fp_group` slug for false positives describing the same non-issue. Milestones give
+partial credit within a vuln (`flaw` 30%, `poc` 35%, `impact` 35%; `surface` is
+recorded but earns nothing, since a row only exists for an already-matched finding);
+`fp_group` makes three findings about one non-issue count as one false positive.
+
+Judge milestones from what the report *demonstrates*, never from what the tool
+claims: a description of how one might exploit something is not a `poc`, and
+"could allow an attacker to…" is not `impact`. The same standard applies to every
+scanner — that is what makes a DAST report honestly earn `flaw` and `poc` but not
+`impact`, rather than being scored by a different rule because of what tool it is.
 
 ## How It Works
 

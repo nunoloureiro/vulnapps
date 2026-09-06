@@ -26,7 +26,7 @@ echo ""
 
 IMAGE="nunoloureiro/vulnapps:latest"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PYTHON="$SCRIPT_DIR/venv/bin/python"
+PYTHON="$SCRIPT_DIR/.venv/bin/python"
 
 show_help() {
     echo -e "${BOLD}Usage:${NC} ./build.sh [OPTIONS]"

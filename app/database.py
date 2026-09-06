@@ -1,3 +1,5 @@
+import sqlite3
+
 import aiosqlite
 from pathlib import Path
 from app.config import DATABASE_PATH
@@ -26,6 +28,17 @@ async def run_migrations(db: aiosqlite.Connection):
         if await cursor.fetchone():
             continue
         sql = migration_file.read_text()
-        await db.executescript(sql)
+        try:
+            await db.executescript(sql)
+        except sqlite3.OperationalError as e:
+            # A column an ADD COLUMN wants already exists -- the desired end state is
+            # already true, most likely because an earlier deploy applied a since-
+            # edited version of this same filename (tracking is by filename only, so
+            # editing an already-applied file's content never replays it) or a
+            # column was added by a one-off manual reconciliation. Either way this
+            # is not a real failure; a mismatched table/other-column error still
+            # raises normally.
+            if "duplicate column name" not in str(e):
+                raise
         await db.execute("INSERT INTO _migrations (name) VALUES (?)", (name,))
         await db.commit()

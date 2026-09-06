@@ -86,8 +86,47 @@ function ScanSelector({ scans, selected, onToggle, onCompare }) {
   );
 }
 
+const TIER_ROWS = [
+  ['commodity', 'Commodity'],
+  ['business_logic', 'Business logic'],
+  ['chained', 'Chained'],
+];
+
+// Reporting guards. Advisory here on purpose: comparing an old scan with a new
+// one is how you notice ground truth moved, so this view never refuses. The
+// strict version is GET /api/apps/{id}/benchmark, which returns 409 with these
+// same reasons rather than emitting a number that cannot be reproduced.
+function ReportingGuards({ guards, label, appId }) {
+  if (!guards) return null;
+  const warnings = [];
+
+  if (guards.corpus_revision_mismatch) {
+    warnings.push(
+      `These scans ran against different corpus revisions (${guards.corpus_revisions.join(', ')}). ` +
+      `Each is judged only on ground truth that existed when it ran, so cells for later ` +
+      `additions read "n/a" rather than as a miss.`
+    );
+  }
+  if (guards.suppress_precision) {
+    warnings.push(
+      `${guards.adjudication_incomplete_scans.length} scan(s) are not fully adjudicated, ` +
+      `so precision is shown as a range instead of a single value.`
+    );
+  }
+
+  if (!warnings.length) return null;
+  return (
+    <div className="alert alert-warning mb-2">
+      <strong>{label}</strong>
+      <ul style={{ margin: '0.5rem 0 0 1rem', padding: 0 }}>
+        {warnings.map((w, i) => <li key={i} className="text-sm">{w}</li>)}
+      </ul>
+    </div>
+  );
+}
+
 function ComparisonView({ data, appId }) {
-  const { scanners, matrix, fp_matrix } = data;
+  const { scanners, matrix, fp_matrix, guards, label } = data;
   const ALL_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
   const [sevFilter, setSevFilter] = useState(new Set(ALL_SEVERITIES));
 
@@ -102,40 +141,61 @@ function ComparisonView({ data, appId }) {
 
   const filteredMatrix = matrix.filter(row => sevFilter.has(row.vuln.severity));
 
+  // Unfiltered, the server's numbers are authoritative — they include chains.
+  // Under a severity filter we recompute from the matrix, which covers vulns
+  // only; the heading says "(filtered)" wherever that is the case.
   const computeMetrics = (scannerIdx) => {
-    const s = scanners[scannerIdx];
-    const tp = filteredMatrix.filter(row => row.detections[scannerIdx]).length;
-    const fn = filteredMatrix.filter(row => !row.detections[scannerIdx]).length;
-    const fp = s.metrics.fp;
-    const precision = (tp + fp) > 0 ? tp / (tp + fp) : 0;
+    const m = scanners[scannerIdx].metrics;
+    const applicable = filteredMatrix.filter(row => row.applicable[scannerIdx]);
+    const tp = applicable.filter(row => row.detections[scannerIdx]).length;
+    const fn = applicable.filter(row => !row.detections[scannerIdx]).length;
+    const fpGroups = m.fp_groups;
+    const pending = m.pending;
+    const precisionUpper = (tp + fpGroups) > 0 ? tp / (tp + fpGroups) : 0;
+    const precisionLower = (tp + fpGroups + pending) > 0 ? tp / (tp + fpGroups + pending) : 0;
     const recall = (tp + fn) > 0 ? tp / (tp + fn) : 0;
-    const f1 = (precision + recall) > 0 ? 2 * precision * recall / (precision + recall) : 0;
-    return { tp, fn, fp, pending: s.metrics.pending, precision, recall, f1 };
+    const f1 = (precisionUpper + recall) > 0
+      ? 2 * precisionUpper * recall / (precisionUpper + recall) : 0;
+    const weightedTotal = applicable.reduce((a, row) => a + (row.vuln.impact_weight || 0), 0);
+    const weightedFound = applicable.reduce(
+      (a, row) => a + (row.vuln.impact_weight || 0) * (row.credits[scannerIdx] || 0), 0);
+    return {
+      tp, fn, fp: m.fp, fp_groups: fpGroups, pending,
+      precision_lower: precisionLower, precision_upper: precisionUpper, recall, f1,
+      adjudication_complete: m.adjudication_complete,
+      weighted_found: Math.round(weightedFound * 100) / 100,
+      weighted_total: weightedTotal,
+      weighted_rate: weightedTotal > 0 ? weightedFound / weightedTotal : 0,
+      tiers: m.tiers,
+    };
   };
 
-  const filteredMetrics = scanners.map((_, i) => computeMetrics(i));
+  const isSevFiltered = sevFilter.size < ALL_SEVERITIES.length;
+  const filteredMetrics = scanners.map((s, i) => isSevFiltered ? computeMetrics(i) : s.metrics);
   const filteredVulnCount = filteredMatrix.length;
-  const isFiltered = sevFilter.size < ALL_SEVERITIES.length;
+  const isFiltered = isSevFiltered;
 
-  // F1 winner — the scanner with the highest F1 (only if it's strictly better
-  // than the runner-up; on ties we don't crown anyone).
+  // Winner is crowned on the WEIGHTED detection rate, not F1: raw counts treat a
+  // missed reflected XSS the same as a missed chained authz bypass, which is the
+  // whole reason the weighted metric exists. Only if it's strictly better than
+  // the runner-up; on ties we don't crown anyone.
   const winnerIdx = (() => {
     if (filteredMetrics.length < 2) return -1;
     let bestIdx = 0;
-    let bestF1 = filteredMetrics[0].f1;
+    let best = filteredMetrics[0].weighted_rate;
     let tie = false;
     for (let i = 1; i < filteredMetrics.length; i++) {
-      const f1 = filteredMetrics[i].f1;
-      if (f1 > bestF1) { bestF1 = f1; bestIdx = i; tie = false; }
-      else if (f1 === bestF1) { tie = true; }
+      const v = filteredMetrics[i].weighted_rate;
+      if (v > best) { best = v; bestIdx = i; tie = false; }
+      else if (v === best) { tie = true; }
     }
-    return bestF1 > 0 && !tie ? bestIdx : -1;
+    return best > 0 && !tie ? bestIdx : -1;
   })();
 
   const ScannerHeader = ({ s, isWinner }) => (
     <>
       {isWinner && (
-        <div title="Highest F1" style={{ fontSize: '1rem', lineHeight: 1, marginBottom: '0.15rem' }}>🏆</div>
+        <div title="Highest weighted detection rate" style={{ fontSize: '1rem', lineHeight: 1, marginBottom: '0.15rem' }}>🏆</div>
       )}
       <Link to={`/scans/${s.scan.id}`}>{s.scan.scanner_name}</Link>
       {s.scan.scanner_version && <span className="text-muted text-xs"> v{s.scan.scanner_version}</span>}
@@ -162,16 +222,21 @@ function ComparisonView({ data, appId }) {
 
   const METRIC_TOOLTIPS = {
     tp: 'Known vulnerabilities detected by the scanner (unique matched vulns)',
-    fp: 'Findings that don\'t correspond to any known vulnerability',
+    fp_groups: 'Distinct false-positive clusters. Findings sharing an fp_group count once, so a verbose scanner is not penalised for describing one non-issue three times.',
     fn: 'Known vulnerabilities the scanner failed to detect',
     pending: 'Findings not yet mapped to a known vulnerability',
-    precision: 'TP / (TP + FP) — How many of the scanner\'s findings are real vulnerabilities',
+    precision: 'TP / (TP + FP clusters). Shown as a range while findings are still unadjudicated: the lower bound counts every pending finding as a false positive, the upper bound as a true one.',
     recall: 'TP / (TP + FN) — How many of the known vulnerabilities were found',
     f1: 'Harmonic mean of Precision and Recall — Overall scanner accuracy',
+    weighted_rate: 'Severity-weighted detection rate: points found / points available on the 1/3/9/27 scale. The headline metric.',
   };
 
   const MetricLabel = ({ k }) => {
-    const names = { tp: 'True Positives', fp: 'False Positives', fn: 'False Negatives', pending: 'Pending', precision: 'Precision', recall: 'Recall', f1: 'F1 Score' };
+    const names = {
+      tp: 'True Positives', fp_groups: 'False Positives', fn: 'False Negatives',
+      pending: 'Pending', precision: 'Precision', recall: 'Recall', f1: 'F1 Score',
+      weighted_rate: 'Weighted Detection',
+    };
     const tip = METRIC_TOOLTIPS[k];
     return (
       <>
@@ -191,6 +256,8 @@ function ComparisonView({ data, appId }) {
 
   return (
     <>
+      <ReportingGuards guards={guards} label={label} appId={appId} />
+
       <div className="flex gap-1 items-center mb-2" style={{ flexWrap: 'wrap' }}>
         <span className="text-muted text-sm" style={{ marginRight: '0.25rem' }}>Severity:</span>
         {ALL_SEVERITIES.map(sev => (
@@ -204,7 +271,10 @@ function ComparisonView({ data, appId }) {
       </div>
 
       <div className="card mb-2">
-        <h3 className="card-title mb-2">Metrics Comparison{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}</h3>
+        <h3 className="card-title mb-2">
+          Metrics Comparison{isFiltered ? <span className="text-muted text-sm"> (filtered — vulns only, chains excluded)</span> : ''}
+          <span className="text-muted text-sm font-mono" style={{ marginLeft: 8 }}>{label}</span>
+        </h3>
         <div className="compare-scroll">
           <table>
             <thead>
@@ -222,38 +292,92 @@ function ComparisonView({ data, appId }) {
               </tr>
             </thead>
             <tbody>
-              {['tp', 'fp', 'fn', 'pending'].map(k => (
+              {/* Headline first: the weighted rate is what separates a scanner
+                  with a chat interface from an agent that chains authz bypasses. */}
+              <tr>
+                <td className="detail-label sticky-col"><MetricLabel k="weighted_rate" /></td>
+                {filteredMetrics.map((m, i) => {
+                  const baseStyle = winnerStyle(i);
+                  const style = i === winnerIdx ? { ...baseStyle, fontWeight: 700 } : baseStyle;
+                  return (
+                    <td key={scanners[i].scan.id} className={`text-center font-mono ${pctColor(m.weighted_rate)}`} style={style}>
+                      {(m.weighted_rate * 100).toFixed(1)}%
+                      <div className="text-muted text-xs">{m.weighted_found}/{m.weighted_total} pts</div>
+                    </td>
+                  );
+                })}
+              </tr>
+              {['tp', 'fp_groups', 'fn', 'pending'].map(k => (
                 <tr key={k}>
                   <td className="detail-label sticky-col"><MetricLabel k={k} /></td>
                   {filteredMetrics.map((m, i) => (
                     <td
                       key={scanners[i].scan.id}
-                      className={`text-center font-mono ${k === 'tp' ? 'text-success' : k === 'fp' || k === 'fn' ? 'text-error' : 'text-warning'}`}
+                      className={`text-center font-mono ${k === 'tp' ? 'text-success' : k === 'fp_groups' || k === 'fn' ? 'text-error' : 'text-warning'}`}
                       style={winnerStyle(i)}
                     >
                       {m[k]}
+                      {k === 'fp_groups' && m.fp !== m.fp_groups && (
+                        <div className="text-muted text-xs">{m.fp} findings</div>
+                      )}
                     </td>
                   ))}
                 </tr>
               ))}
-              {['precision', 'recall', 'f1'].map(k => (
+              {/* Precision is a range until adjudication completes, and a range
+                  is what gets shown — never the flattering upper bound alone. */}
+              <tr>
+                <td className="detail-label sticky-col"><MetricLabel k="precision" /></td>
+                {filteredMetrics.map((m, i) => (
+                  <td key={scanners[i].scan.id}
+                      className={`text-center font-mono ${m.adjudication_complete ? pctColor(m.precision_upper) : 'text-warning'}`}
+                      style={winnerStyle(i)}>
+                    {m.adjudication_complete
+                      ? `${(m.precision_upper * 100).toFixed(1)}%`
+                      : `${(m.precision_lower * 100).toFixed(1)}–${(m.precision_upper * 100).toFixed(1)}%`}
+                    {!m.adjudication_complete && (
+                      <div className="text-muted text-xs">{m.pending} pending</div>
+                    )}
+                  </td>
+                ))}
+              </tr>
+              {['recall', 'f1'].map(k => (
                 <tr key={k}>
                   <td className="detail-label sticky-col"><MetricLabel k={k} /></td>
-                  {filteredMetrics.map((m, i) => {
-                    const isWinnerF1 = k === 'f1' && i === winnerIdx;
-                    const baseStyle = winnerStyle(i);
-                    const style = isWinnerF1 ? { ...baseStyle, fontWeight: 700 } : baseStyle;
-                    return (
-                      <td
-                        key={scanners[i].scan.id}
-                        className={`text-center font-mono ${pctColor(m[k])}`}
-                        style={style}
-                      >
-                        {(m[k] * 100).toFixed(1)}%
-                      </td>
-                    );
-                  })}
+                  {filteredMetrics.map((m, i) => (
+                    <td
+                      key={scanners[i].scan.id}
+                      className={`text-center font-mono ${pctColor(m[k])}`}
+                      style={winnerStyle(i)}
+                    >
+                      {(m[k] * 100).toFixed(1)}%
+                    </td>
+                  ))}
                 </tr>
+              ))}
+              {/* Per-tier detection: where on the difficulty curve each run sits.
+                  Only meaningful unfiltered, where the server's tiers apply. */}
+              {!isFiltered && TIER_ROWS.map(([tier, tierLabel]) => (
+                filteredMetrics.some(m => m.tiers?.[tier]?.count > 0) && (
+                  <tr key={tier}>
+                    <td className="detail-label sticky-col" style={{ paddingLeft: '1.25rem' }}>
+                      <span className="text-muted text-sm">{tierLabel}</span>
+                    </td>
+                    {filteredMetrics.map((m, i) => {
+                      const t = m.tiers?.[tier];
+                      return (
+                        <td key={scanners[i].scan.id} className="text-center font-mono text-secondary text-sm" style={winnerStyle(i)}>
+                          {t && t.count > 0 ? (
+                            <>
+                              {(t.rate * 100).toFixed(0)}%
+                              <span className="text-muted text-xs"> ({t.found}/{t.count})</span>
+                            </>
+                          ) : '-'}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                )
               ))}
               {scanners.some(s => s.scan.duration != null) && (
                 <tr>
@@ -303,13 +427,40 @@ function ComparisonView({ data, appId }) {
               {filteredMatrix.map((row, i) => (
                 <tr key={i}>
                   <td className="font-mono text-sm sticky-col" style={{ left: 0 }}>{row.vuln.vuln_id}</td>
-                  <td className="sticky-col" style={{ left: 70 }}>{row.vuln.title}</td>
-                  <td><Badge severity={row.vuln.severity} /></td>
-                  {row.detections.map((d, j) => (
-                    <td key={j} className={`text-center ${d ? 'matrix-hit' : 'matrix-miss'}`}>{d ? '✓' : '✗'}</td>
-                  ))}
-                  <td className={`text-center font-mono ${row.found_by === scanners.length ? 'text-success' : row.found_by === 0 ? 'text-error' : 'text-warning'}`}>
-                    {row.found_by}/{scanners.length}
+                  <td className="sticky-col" style={{ left: 70 }}>
+                    {row.vuln.title}
+                    {row.vuln.difficulty_tier && row.vuln.difficulty_tier !== 'commodity' && (
+                      <span className="text-muted text-xs" style={{ marginLeft: 6 }}>
+                        {row.vuln.difficulty_tier === 'business_logic' ? 'business logic' : 'chained'}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    <Badge severity={row.vuln.severity} />
+                    {row.vuln.impact_weight != null && (
+                      <span className="text-muted text-xs font-mono" style={{ marginLeft: 4 }}>
+                        {row.vuln.impact_weight}p
+                      </span>
+                    )}
+                  </td>
+                  {row.detections.map((d, j) => {
+                    // A vuln that postdates the run is not a miss for it.
+                    if (!row.applicable[j]) {
+                      return (
+                        <td key={j} className="text-center text-muted"
+                            title="Not in scope for this scan — the flaw did not exist when it ran">
+                          n/a
+                        </td>
+                      );
+                    }
+                    return (
+                      <td key={j} className={`text-center ${d ? 'matrix-hit' : 'matrix-miss'}`}>
+                        {d ? '✓' : '✗'}
+                      </td>
+                    );
+                  })}
+                  <td className={`text-center font-mono ${row.found_by === row.applicable_count ? 'text-success' : row.found_by === 0 ? 'text-error' : 'text-warning'}`}>
+                    {row.found_by}/{row.applicable_count ?? scanners.length}
                   </td>
                 </tr>
               ))}
@@ -350,7 +501,7 @@ function ComparisonView({ data, appId }) {
         </div>
       )}
 
-      <F1TimelineChart scanners={scanners} metrics={filteredMetrics} isFiltered={isFiltered} />
+      <TrendChart scanners={scanners} metrics={filteredMetrics} isFiltered={isFiltered} label={label} />
 
       <div className="mt-2">
         <Link to={`/apps/${appId}/compare`} className="btn btn-outline">Change Selection</Link>
@@ -359,12 +510,24 @@ function ComparisonView({ data, appId }) {
   );
 }
 
-// F1-vs-date scatter shown above the metrics table. Single series (all points
-// are scans of this app), so one accent hue + direct labels carry identity —
-// no legend, no rank-based coloring. F1 comes from the severity-filtered
+const TREND_METRICS = [
+  ['weighted_rate', 'Weighted Detection'],
+  ['f1', 'F1 Score'],
+];
+
+// Metric-vs-date scatter shown below the matrices. Single series (all points are
+// scans of this app), so one accent hue + direct labels carry identity — no
+// legend, no rank-based coloring. Values come from the severity-filtered
 // metrics, so the chart recomputes live with the filter. Honest 0–100% y-axis.
-function F1TimelineChart({ scanners, metrics, isFiltered }) {
+//
+// Defaults to the weighted detection rate — the headline metric — with F1 kept
+// one click away. The chart carries the app@revision label because scores are
+// expected to drift downward as ground truth grows: an unlabelled downward
+// trend reads as a regression when it can just as easily be a bigger corpus.
+function TrendChart({ scanners, metrics, isFiltered, label }) {
   const [hover, setHover] = useState(null);
+  const [metricKey, setMetricKey] = useState('weighted_rate');
+  const metricLabel = TREND_METRICS.find(([k]) => k === metricKey)[1];
 
   const pts = scanners.map((s, i) => {
     const raw = String(s.scan.scan_date || '');
@@ -375,7 +538,7 @@ function F1TimelineChart({ scanners, metrics, isFiltered }) {
       version: s.scan.scanner_version,
       dateLabel: s.short_date || raw,
       t: Number.isFinite(t) ? t : null,
-      f1: metrics[i].f1,
+      f1: metrics[i][metricKey],
     };
   });
   if (pts.length < 2) return null;
@@ -459,9 +622,23 @@ function F1TimelineChart({ scanners, metrics, isFiltered }) {
 
   return (
     <div className="card mb-2">
-      <h3 className="card-title mb-2">F1 Score over Time{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}</h3>
+      <div className="flex items-center justify-between mb-2" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
+        <h3 className="card-title" style={{ margin: 0 }}>
+          {metricLabel} over Time{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}
+          <span className="text-muted text-sm font-mono" style={{ marginLeft: 8 }}>{label}</span>
+        </h3>
+        <div className="flex gap-1">
+          {TREND_METRICS.map(([k, name]) => (
+            <button key={k} onClick={() => setMetricKey(k)}
+              className={`btn btn-sm ${metricKey === k ? 'btn-primary' : 'btn-outline'}`}
+              style={{ height: 24, padding: '0 0.5rem', fontSize: '0.7rem' }}>
+              {name}
+            </button>
+          ))}
+        </div>
+      </div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', maxHeight: 380 }}
-        role="img" aria-label="F1 score of each scan plotted against its scan date, with a linear trend line">
+        role="img" aria-label={`${metricLabel} of each scan plotted against its scan date, with a linear trend line`}>
         <defs>
           <clipPath id={clipId}><rect x={M.left} y={M.top} width={plotW} height={plotH} /></clipPath>
         </defs>
@@ -505,7 +682,7 @@ function F1TimelineChart({ scanners, metrics, isFiltered }) {
 
         {hover != null && (() => {
           const p = pts[hover], x = xOf(p, hover), y = yOf(p.f1);
-          const label = `${p.name}${p.version ? ' v' + p.version : ''} · ${p.t != null ? fmtYMD(p.t) : p.dateLabel} · F1 ${(p.f1 * 100).toFixed(1)}%`;
+          const label = `${p.name}${p.version ? ' v' + p.version : ''} · ${p.t != null ? fmtYMD(p.t) : p.dateLabel} · ${metricLabel} ${(p.f1 * 100).toFixed(1)}%`;
           const w = Math.min(360, 14 + label.length * 6.1);
           const tx = Math.min(Math.max(x - w / 2, 4), W - w - 4);
           const ty = y - 34 < M.top ? y + 14 : y - 34;

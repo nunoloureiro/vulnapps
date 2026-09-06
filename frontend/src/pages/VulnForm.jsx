@@ -5,6 +5,26 @@ import { api } from '../api/client';
 const HTTP_METHODS = ['', 'GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'];
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 
+// `severity` is the display label; `impact_weight` is the scoring field and is
+// allowed to diverge from it where realized impact in THIS app differs. The
+// 1/3/9/27 spacing is deliberate — with linear weights nine informational
+// findings would outscore two criticals.
+const WEIGHTS = [
+  [1, 'Informational', 'version disclosure, verbose errors, missing headers'],
+  [3, 'Medium', 'reflected XSS, open redirect, unauthenticated read of non-sensitive data'],
+  [9, 'High', "cross-tenant IDOR, stored XSS with session theft, SSRF, single-step authz bypass"],
+  [27, 'Critical', 'chained exploit to admin, cross-tenant write, auth bypass, RCE, financial abuse'],
+];
+
+// A reporting axis, not a multiplier: it decides which row of the tier matrix
+// this vuln lands in, so the metric can show WHERE on the difficulty curve a
+// configuration improved.
+const TIERS = [
+  ['commodity', 'Commodity', 'a scanner with a signature finds it'],
+  ['business_logic', 'Business logic', 'needs understanding of what the app is for'],
+  ['chained', 'Chained', 'requires pivoting through more than one flaw'],
+];
+
 export default function VulnForm() {
   const { appId, id } = useParams();
   const navigate = useNavigate();
@@ -16,6 +36,8 @@ export default function VulnForm() {
     vuln_id: '',
     title: '',
     severity: '',
+    impact_weight: '',
+    difficulty_tier: '',
     vuln_type: '',
     http_method: '',
     url: '',
@@ -45,6 +67,8 @@ export default function VulnForm() {
             vuln_id: v.vuln_id || '',
             title: v.title || '',
             severity: v.severity || '',
+            impact_weight: v.impact_weight != null ? String(v.impact_weight) : '',
+            difficulty_tier: v.difficulty_tier || '',
             vuln_type: v.vuln_type || '',
             http_method: v.http_method || '',
             url: v.url || '',
@@ -98,6 +122,8 @@ export default function VulnForm() {
       vuln_id: form.vuln_id,
       title: form.title,
       severity: form.severity,
+      impact_weight: parseInt(form.impact_weight, 10),
+      difficulty_tier: form.difficulty_tier,
       vuln_type: form.vuln_type,
       http_method: form.http_method || null,
       url: form.url || null,
@@ -183,6 +209,51 @@ export default function VulnForm() {
                 <option value="">Select severity</option>
                 {SEVERITIES.map(s => (
                   <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="impact_weight">
+                Impact Weight
+                <span className="text-muted text-xs" style={{ marginLeft: 6 }}>
+                  scoring — may differ from severity
+                </span>
+              </label>
+              <select
+                id="impact_weight"
+                name="impact_weight"
+                className="form-select"
+                value={form.impact_weight}
+                onChange={handleChange}
+                required
+              >
+                <option value="">Select weight</option>
+                {WEIGHTS.map(([w, label, examples]) => (
+                  <option key={w} value={w} title={examples}>{w} — {label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label" htmlFor="difficulty_tier">
+                Difficulty Tier
+                <span className="text-muted text-xs" style={{ marginLeft: 6 }}>
+                  reporting axis, not a multiplier
+                </span>
+              </label>
+              <select
+                id="difficulty_tier"
+                name="difficulty_tier"
+                className="form-select"
+                value={form.difficulty_tier}
+                onChange={handleChange}
+                required
+              >
+                <option value="">Select tier</option>
+                {TIERS.map(([t, label, hint]) => (
+                  <option key={t} value={t} title={hint}>{label} — {hint}</option>
                 ))}
               </select>
             </div>

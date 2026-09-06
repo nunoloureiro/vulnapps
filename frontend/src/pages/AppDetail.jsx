@@ -115,6 +115,8 @@ export default function AppDetail() {
         'vuln_id', 'title', 'severity', 'vuln_type', 'http_method',
         'url', 'parameter', 'filename', 'line_number', 'description',
         'code_location', 'poc', 'remediation',
+        // Scoring fields ride along so an inline title edit can't drop them.
+        'impact_weight', 'difficulty_tier',
       ];
       for (const f of fields) {
         body[f] = vuln[f] || '';
@@ -255,6 +257,15 @@ export default function AppDetail() {
               </button>
             </>
           )}
+          {vulnCount > 0 && (
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => api.download('/apps/' + id + '/vulns/export', (app.name || 'app') + '-vulns.csv')}
+            >
+              Export CSV
+            </button>
+          )}
           {can_submit_scan && (
             <Link to={'/apps/' + id + '/scans/new'} className="btn btn-outline">Submit Scan</Link>
           )}
@@ -271,6 +282,8 @@ export default function AppDetail() {
           )}
         </div>
       </div>
+
+      <GroundTruth appId={id} app={app} vulns={vulns} />
 
       {can_edit && importOpen && (
         <div className="card mb-2">
@@ -400,6 +413,91 @@ export default function AppDetail() {
               <Link to={'/scans?app_id=' + id} className="btn btn-outline">View scans</Link>
             </>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const REVISION_REASONS = {
+  new_prior_vuln: 'vuln added',
+  weight_change: 'weight changed',
+  vuln_invalidated: 'vuln invalidated',
+  corpus_change: 'corpus changed',
+};
+
+// Ground-truth revisions: the axis that makes a historical number reproducible.
+// Recall legitimately drops when a vuln that existed all along is documented —
+// what used to be wrong is that the change was invisible. Collapsed by default;
+// an app with a single revision has nothing to explain.
+function GroundTruth({ appId, app, vulns = [] }) {
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  const load = useCallback(() => {
+    api.get(`/apps/${appId}/revisions`)
+      .then(setData)
+      .catch(() => setData(null));
+  }, [appId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!data) return null;
+  const latest = data.latest_revision;
+  const revisions = data.revisions || [];
+  const isCorpus = !!app?.benchmark_verified;
+  // Placeholder tiers from the migration-024 backfill. Only meaningful on a
+  // curated corpus, and they block the benchmark export there: a corpus whose
+  // tiers were never reviewed reports every flaw in it as commodity.
+  const unreviewed = vulns.filter(v => !v.weight_verified).length;
+
+  return (
+    <div className="card mb-2">
+      <div className="flex items-center justify-between" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
+        <h3 className="card-title" style={{ margin: 0 }}>
+          Ground Truth
+          <span className="text-muted text-sm font-mono" style={{ marginLeft: 8 }}>
+            revision {latest}
+          </span>
+          <span className={`badge badge-${isCorpus ? 'low' : 'ignored'}`} style={{ marginLeft: 8 }}
+            title={isCorpus
+              ? 'Hand-curated corpus: eligible for benchmark export and configuration aggregation'
+              : 'Not a benchmark corpus — weights and tiers come from the severity backfill, so this app is excluded from benchmark exports'}>
+            {isCorpus ? 'benchmark corpus' : 'not curated'}
+          </span>
+          {isCorpus && unreviewed > 0 && (
+            <span className="badge badge-medium" style={{ marginLeft: 6 }}
+              title="These carry the placeholder difficulty_tier from the backfill. The benchmark export refuses until they are reviewed.">
+              {unreviewed} tier{unreviewed === 1 ? '' : 's'} unreviewed
+            </span>
+          )}
+          {revisions.length > 1 && (
+            <button type="button" onClick={() => setOpen(!open)}
+              className="btn btn-outline btn-sm" style={{ marginLeft: 8, height: 20, padding: '0 0.4rem', fontSize: '0.7rem' }}>
+              {open ? 'Hide history' : `${revisions.length} revisions`}
+            </button>
+          )}
+        </h3>
+      </div>
+
+      {open && (
+        <div className="table-wrap mt-2">
+          <table className="cards-on-mobile">
+            <thead>
+              <tr><th>Revision</th><th>Reason</th><th>Notes</th><th>By</th><th>When</th></tr>
+            </thead>
+            <tbody>
+              {revisions.map(r => (
+                <tr key={r.id}>
+                  <td data-label="Revision" className="font-mono">rev{r.revision}</td>
+                  <td data-label="Reason">{REVISION_REASONS[r.reason] || r.reason}</td>
+                  <td data-label="Notes" className="text-sm text-secondary">{r.notes || '-'}</td>
+                  <td data-label="By" className="text-sm text-secondary">{r.created_by_name || '-'}</td>
+                  <td data-label="When" className="text-sm text-secondary">{r.created_at}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

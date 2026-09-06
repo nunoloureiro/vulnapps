@@ -10,6 +10,8 @@ from app.config import STATE_DIR, MAX_STATE_SIZE
 from app.matching import match_finding as match_finding_algo
 from app.visibility import scan_visibility_filter
 from app.dependencies import get_team_role
+from app import scoring
+from app.services import scoring as scoring_service
 
 
 # ---------------------------------------------------------------------------
@@ -98,39 +100,29 @@ async def _check_scan_view(db, user, scan, app) -> None:
     raise PermissionError("Access denied")
 
 
-def _compute_metrics(findings, all_vulns):
-    """Compute TP/FP/pending/FN/precision/recall/F1 from findings and known vulns."""
-    matched_vuln_ids = {
-        f["matched_vuln_id"] for f in findings if f["matched_vuln_id"] is not None
-    }
-    tp = len(matched_vuln_ids)
-    fp = sum(1 for f in findings if f["is_false_positive"] == 1)
-    ignored = sum(1 for f in findings if f["is_ignored"] == 1)
-    # Ignored findings are neutral — set aside, neither pending nor FP.
-    pending = sum(
-        1 for f in findings
-        if f["matched_vuln_id"] is None and f["is_false_positive"] == 0
-        and f["is_ignored"] == 0
-    )
-    missed_vulns = [v for v in all_vulns if v["id"] not in matched_vuln_ids]
-    fn = len(missed_vulns)
+def _as_int(value):
+    """Coerce to int, or None. Config fields arrive from JSON bodies and CLIs."""
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
-    # Ignored findings affect neither numerator nor denominator here: they are
-    # not TP (no match) and not FP, so precision/recall/F1 are unchanged.
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
 
-    return {
-        "tp": tp,
-        "fp": fp,
-        "pending": pending,
-        "ignored": ignored,
-        "fn": fn,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-    }, matched_vuln_ids, missed_vulns
+async def _live_metrics(db, scan, revision=None):
+    """Metrics for *scan* as they stand right now (the UI's "current" view).
+
+    Delegates to the single pure implementation in :mod:`app.scoring`; the only
+    job here is fetching the right inputs. Numbers that leave the tool come from
+    a ``scorings`` row instead — see :mod:`app.services.scoring`.
+    """
+    if revision is None:
+        revision = await scoring_service.latest_revision(db, scan["app_id"])
+    result = await scoring_service.score(db, scan, revision)
+    vulns_by_id = {v["id"]: v for v in result["vulns"]}
+    missed = [vulns_by_id[vid] for vid in result["metrics"]["missed_vuln_ids"] if vid in vulns_by_id]
+    return result, missed
 
 
 # ---------------------------------------------------------------------------
@@ -199,13 +191,26 @@ async def list_scans(
         "AND lower(COALESCE(NULLIF(sf.severity, ''), v.severity)) = ?)"
     )
 
+    # The list view is a "current" view: scoped to the app's latest revision,
+    # which for vulns reduces to "not invalidated" (nothing can have an
+    # existed_since or invalidated_at above the newest revision). fp_count is
+    # the CLUSTERED count — distinct fp_group values plus one per ungrouped FP —
+    # so TP and FP are finally counted at the same granularity.
+    tp_subquery = (
+        "(SELECT COUNT(DISTINCT sf.matched_vuln_id) FROM scan_findings sf "
+        "JOIN vulnerabilities v ON v.id = sf.matched_vuln_id "
+        "WHERE sf.scan_id = scans.id AND v.invalidated_at_revision IS NULL)"
+    )
     base_query = f"""SELECT scans.*, apps.name as app_name, apps.version as app_version,
                   users.name as submitter_name,
-                  (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL) as tp_count,
-                  (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1) as fp_count,
+                  {tp_subquery} as tp_count,
+                  (SELECT COUNT(*) FROM (
+                       SELECT DISTINCT COALESCE(NULLIF(fp_group, ''), 'ungrouped:' || id) AS g
+                       FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1
+                   )) as fp_count,
                   (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NULL AND is_false_positive=0 AND is_ignored=0) as pending_count,
-                  ((SELECT COUNT(*) FROM vulnerabilities WHERE app_id = scans.app_id)
-                   - (SELECT COUNT(DISTINCT matched_vuln_id) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NOT NULL)) as fn_count,
+                  ((SELECT COUNT(*) FROM vulnerabilities WHERE app_id = scans.app_id AND invalidated_at_revision IS NULL)
+                   - {tp_subquery}) as fn_count,
                   {sev_subquery} as sev_critical,
                   {sev_subquery} as sev_high,
                   {sev_subquery} as sev_medium,
@@ -335,18 +340,15 @@ async def get_scan(db, user, scan_id: int) -> dict:
         if not can_see:
             raise ValueError("Scan not found")
 
-    cursor = await db.execute(
-        "SELECT * FROM scan_findings WHERE scan_id = ?", (scan_id,)
-    )
-    findings = await cursor.fetchall()
-
-    cursor = await db.execute(
-        "SELECT * FROM vulnerabilities WHERE app_id = ? ORDER BY vuln_id",
-        (scan["app_id"],),
-    )
-    known_vulns = await cursor.fetchall()
-
-    metrics, matched_vuln_ids, missed_vulns = _compute_metrics(findings, known_vulns)
+    # Live "current" view: the app's latest ground-truth revision. The as-run
+    # number (at the scan's own corpus_revision) lives in the scorings rows
+    # returned below, so the drift between the two is always visible.
+    revision = await scoring_service.latest_revision(db, scan["app_id"])
+    scored, missed_vulns = await _live_metrics(db, scan, revision)
+    findings = scored["findings"]
+    known_vulns = scored["vulns"]
+    metrics = scored["metrics"]
+    chains = scored["chains"]
 
     # Finding counts per matched vuln (for duplicate indicator)
     vuln_finding_counts = dict(
@@ -405,16 +407,20 @@ async def get_scan(db, user, scan_id: int) -> dict:
     return {
         "scan": scan_out,
         "app": app,
-        "metrics": metrics,
+        "metrics": scoring.json_metrics(metrics),
         "findings": findings,
         "missed_vulns": missed_vulns,
         "known_vulns": known_vulns,
+        "chains": chains,
         "labels": labels,
         "all_labels": all_labels,
         "can_edit": can_edit,
         "can_view_cost": can_view_cost,
         "vuln_finding_counts": vuln_finding_counts,
         "vuln_finding_details": vuln_finding_details,
+        # Measurement context. Every rendered number is labelled with the
+        # revision it was computed against.
+        "revision": revision,
     }
 
 
@@ -446,10 +452,18 @@ async def submit_scan(
     if is_public and app["visibility"] != "public":
         is_public = 0
 
+    # The corpus revision this run is measured against ("as-run").
+    await scoring_service.ensure_initial_revision(db, app_id, user)
+    corpus_revision = await scoring_service.latest_revision(db, app_id)
+
     cursor = await db.execute(
-        """INSERT INTO scans (app_id, scanner_name, scanner_version, scan_date, is_public, notes, cost, tokens, duration, submitted_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (app_id, scanner_name, scanner_version, scan_date, is_public, notes, cost, tokens, duration, user["sub"]),
+        """INSERT INTO scans (app_id, scanner_name, scanner_version, scan_date, is_public,
+                              notes, cost, tokens, duration, submitted_by, corpus_revision)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            app_id, scanner_name, scanner_version, scan_date, is_public,
+            notes, cost, tokens, duration, user["sub"], corpus_revision,
+        ),
     )
     scan_id = cursor.lastrowid
 
@@ -460,12 +474,13 @@ async def submit_scan(
 
     for f in findings_data:
         matched_vuln_id, is_false_positive = match_finding_algo(f, known_vulns)
-        await db.execute(
+        fp_group = (f.get("fp_group") or "").strip() or None
+        cursor = await db.execute(
             """INSERT INTO scan_findings
                (scan_id, vuln_type, http_method, url, parameter, filename,
-                matched_vuln_id, is_false_positive,
+                matched_vuln_id, is_false_positive, fp_group,
                 title, severity, description, poc, remediation, code_location)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 scan_id,
                 f.get("vuln_type", ""),
@@ -475,6 +490,7 @@ async def submit_scan(
                 f.get("filename", ""),
                 matched_vuln_id,
                 is_false_positive,
+                fp_group,
                 f.get("title"),
                 f.get("severity"),
                 f.get("description"),
@@ -515,6 +531,7 @@ async def submit_scan(
             )
 
     await db.commit()
+
     return scan_id
 
 
@@ -604,7 +621,7 @@ async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id) -> dic
     # Matching (or clearing) a finding also lifts any "ignored" flag — the
     # states are mutually exclusive.
     await db.execute(
-        "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = ?, is_ignored = 0 WHERE id = ? AND scan_id = ?",
+        "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = ?, is_ignored = 0, fp_group = NULL WHERE id = ? AND scan_id = ?",
         (matched_vuln_id, is_false_positive, finding_id, scan_id),
     )
     await db.commit()
@@ -612,14 +629,19 @@ async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id) -> dic
     return {"ok": True, "matched_vuln_id": matched_vuln_id, "is_false_positive": is_false_positive}
 
 
-async def mark_finding_fp(db, user, scan_id: int, finding_id: int) -> None:
-    """Mark a finding as false positive (clears any match/ignore)."""
+async def mark_finding_fp(db, user, scan_id: int, finding_id: int, fp_group=None) -> None:
+    """Mark a finding as false positive (clears any match/ignore).
+
+    *fp_group* clusters findings that describe the SAME non-issue, so precision
+    counts one FP rather than three. Ungrouped FPs count individually.
+    """
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
+    group = (fp_group or "").strip() or None
     await db.execute(
-        "UPDATE scan_findings SET matched_vuln_id = NULL, is_false_positive = 1, is_ignored = 0 WHERE id = ? AND scan_id = ?",
-        (finding_id, scan_id),
+        "UPDATE scan_findings SET matched_vuln_id = NULL, is_false_positive = 1, is_ignored = 0, fp_group = ? WHERE id = ? AND scan_id = ?",
+        (group, finding_id, scan_id),
     )
     await db.commit()
 
@@ -632,7 +654,7 @@ async def set_finding_ignored(db, user, scan_id: int, finding_id: int, ignored: 
 
     if ignored:
         await db.execute(
-            "UPDATE scan_findings SET is_ignored = 1, matched_vuln_id = NULL, is_false_positive = 0 WHERE id = ? AND scan_id = ?",
+            "UPDATE scan_findings SET is_ignored = 1, matched_vuln_id = NULL, is_false_positive = 0, fp_group = NULL WHERE id = ? AND scan_id = ?",
             (finding_id, scan_id),
         )
     else:
@@ -670,12 +692,24 @@ async def promote_finding(
 
     *overrides* may supply or replace any of: vuln_id, title, severity, vuln_type,
     description, poc, remediation, code_location, http_method, url, parameter,
-    filename. Anything missing falls back to the finding's stored values; severity
-    defaults to "medium" and vuln_id auto-generates as the next DISC-NNN.
+    filename, impact_weight, difficulty_tier. Anything missing falls back to the
+    finding's stored values; severity defaults to "medium" and vuln_id
+    auto-generates as the next DISC-NNN.
+
+    Promotion changes ground truth, so it always opens a new revision with
+    reason ``new_prior_vuln``, and ``overrides["existed_since"]`` is REQUIRED:
+
+      ``all_along``     — the flaw was in the app from revision 1. Every prior
+                          scan legitimately takes the miss on re-score.
+      ``this_revision`` — a code change introduced it. Prior scans untouched.
+
+    That choice is the entire reason ``existed_since_revision`` and
+    ``known_since_revision`` are separate fields, so it is never defaulted
+    silently.
 
     Requires app-write (creating a vuln is an app-level action).
 
-    Returns {ok, vuln, finding_id}.
+    Returns {ok, vuln, finding_id, revision}.
     """
     overrides = overrides or {}
     scan, app = await _get_scan_and_app(db, scan_id)
@@ -695,19 +729,42 @@ async def promote_finding(
         val = finding[key] if key in finding.keys() else None
         return val if val not in (None, "") else default
 
+    existed_since_choice = (overrides.get("existed_since") or "").strip().lower()
+    if existed_since_choice not in ("all_along", "this_revision"):
+        raise ValueError(
+            "existed_since must be 'all_along' (the flaw was always present — prior "
+            "scans take the miss) or 'this_revision' (a code change introduced it)"
+        )
+
     title = _pick("title") or _pick("vuln_type") or "Untitled finding"
     severity = (_pick("severity") or "medium").lower()
     if severity not in _VALID_SEVERITIES:
         severity = "medium"
 
+    # Scoring fields. Weight defaults from severity (always present and
+    # validated) rather than rejecting the promotion; the tier defaults to
+    # commodity and both are meant to be corrected by hand afterwards.
+    impact_weight = scoring.validate_weight(overrides.get("impact_weight"))
+    if impact_weight is None:
+        impact_weight = scoring.weight_from_severity(severity)
+    difficulty_tier = scoring.validate_tier(overrides.get("difficulty_tier")) or scoring.DEFAULT_TIER
+
     vuln_id_slug = overrides.get("vuln_id") or await _next_disc_slug(db, app["id"])
+
+    new_revision = await scoring_service.create_revision(
+        db, app["id"], "new_prior_vuln",
+        notes=f"Promoted finding #{finding_id} from scan #{scan_id}: {title}",
+        user=user,
+    )
+    existed_since = 1 if existed_since_choice == "all_along" else new_revision
 
     cursor = await db.execute(
         """INSERT INTO vulnerabilities
            (app_id, vuln_id, title, severity, vuln_type, http_method, url,
             parameter, filename, description, code_location, poc, remediation,
-            created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            created_by, impact_weight, difficulty_tier,
+            existed_since_revision, known_since_revision)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             app["id"],
             vuln_id_slug,
@@ -723,12 +780,16 @@ async def promote_finding(
             _pick("poc"),
             _pick("remediation"),
             user["sub"],
+            impact_weight,
+            difficulty_tier,
+            existed_since,
+            new_revision,
         ),
     )
     new_vuln_id = cursor.lastrowid
 
     await db.execute(
-        "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = 0, is_ignored = 0 WHERE id = ?",
+        "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = 0, is_ignored = 0, fp_group = NULL WHERE id = ?",
         (new_vuln_id, finding_id),
     )
     await db.commit()
@@ -736,7 +797,13 @@ async def promote_finding(
     cursor = await db.execute("SELECT * FROM vulnerabilities WHERE id = ?", (new_vuln_id,))
     vuln_row = await cursor.fetchone()
 
-    return {"ok": True, "vuln": dict(vuln_row), "finding_id": finding_id}
+    return {
+        "ok": True,
+        "vuln": dict(vuln_row),
+        "finding_id": finding_id,
+        "revision": new_revision,
+        "existed_since_revision": existed_since,
+    }
 
 
 async def rematch_scan(db, user, scan_id: int) -> dict:
@@ -744,10 +811,10 @@ async def rematch_scan(db, user, scan_id: int) -> dict:
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
-    cursor = await db.execute(
-        "SELECT * FROM vulnerabilities WHERE app_id = ?", (scan["app_id"],)
-    )
-    known_vulns = await cursor.fetchall()
+    # Only vulns in scope at the current revision are match candidates —
+    # re-matching must never resurrect an invalidated vuln.
+    revision = await scoring_service.latest_revision(db, scan["app_id"])
+    known_vulns = await scoring_service.fetch_vulns_in_scope(db, scan["app_id"], revision)
 
     cursor = await db.execute(
         "SELECT * FROM scan_findings WHERE scan_id = ?", (scan_id,)
@@ -830,12 +897,12 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
             "can_edit": can_edit,
         }
 
-    # Known vulns
-    cursor = await db.execute(
-        "SELECT * FROM vulnerabilities WHERE app_id = ? ORDER BY severity, vuln_id",
-        (app_id,),
-    )
-    known_vulns = await cursor.fetchall()
+    # Compare at ONE revision — the app's latest — so every column shares a
+    # denominator. Mixing revisions silently compares against different ground
+    # truth, which is the whole defect this axis exists to fix.
+    revision = await scoring_service.latest_revision(db, app_id)
+    known_vulns = await scoring_service.fetch_vulns_in_scope(db, app_id, revision)
+    chains = await scoring_service.fetch_chains_in_scope(db, app_id, revision)
 
     # Build per-scanner comparison data
     scanners = []
@@ -847,10 +914,10 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
         if not scan:
             continue
 
-        cursor = await db.execute(
-            "SELECT * FROM scan_findings WHERE scan_id = ?", (sid,)
-        )
-        findings = await cursor.fetchall()
+        scored, _missed = await _live_metrics(db, scan, revision)
+        findings = scored["findings"]
+        metrics = scored["metrics"]
+        matched_ids = metrics["matched_vuln_ids"]
 
         cursor = await db.execute(
             """SELECT l.id, l.name, l.color FROM labels l
@@ -859,23 +926,6 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
             (sid,),
         )
         scan_labels = [dict(row) for row in await cursor.fetchall()]
-
-        matched_ids = {
-            f["matched_vuln_id"] for f in findings if f["matched_vuln_id"] is not None
-        }
-        tp = len(matched_ids)
-        fp = sum(1 for f in findings if f["is_false_positive"] == 1)
-        ignored = sum(1 for f in findings if f["is_ignored"] == 1)
-        pending = sum(
-            1 for f in findings
-            if f["matched_vuln_id"] is None and f["is_false_positive"] == 0
-            and f["is_ignored"] == 0
-        )
-        fn = sum(1 for v in known_vulns if v["id"] not in matched_ids)
-
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
 
         fp_findings = [dict(f) for f in findings if f["is_false_positive"] == 1]
 
@@ -901,25 +951,31 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
             "scan": scan,
             "short_date": short_date,
             "labels": scan_labels,
-            "metrics": {
-                "tp": tp, "fp": fp, "pending": pending, "ignored": ignored, "fn": fn,
-                "precision": precision, "recall": recall, "f1": f1,
-            },
+            "metrics": scoring.json_metrics(metrics),
             "matched_vuln_ids": matched_ids,
+            "credit_by_vuln": metrics["credit_by_vuln"],
+            # Which vulns this scan can be judged on: a flaw introduced after
+            # the run is not a miss for it.
+            "scope_vuln_ids": {v["id"] for v in scored["vulns"]},
             "fp_findings": fp_findings,
         })
 
     # Sort by scan date ascending (oldest first)
     scanners.sort(key=lambda s: (s["scan"]["scan_date"] or "", s["scan"]["id"]))
 
-    # Detection matrix
+    # Detection matrix. `credits` is 0/1 per scan (1 = matched); `applicable`
+    # is false where the vuln postdates the run, so the cell reads "not
+    # applicable" rather than a miss the scanner never had a chance at.
     matrix = []
     for v in known_vulns:
         row = {
             "vuln": v,
             "detections": [v["id"] in s["matched_vuln_ids"] for s in scanners],
+            "credits": [s["credit_by_vuln"].get(v["id"], 0.0) for s in scanners],
+            "applicable": [v["id"] in s["scope_vuln_ids"] for s in scanners],
         }
         row["found_by"] = sum(row["detections"])
+        row["applicable_count"] = sum(row["applicable"])
         matrix.append(row)
 
     # FP matrix
@@ -953,6 +1009,11 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
         fp["flagged_count"] = sum(fp["flagged_by"])
     fp_matrix.sort(key=lambda x: -x["flagged_count"])
 
+    for s in scanners:
+        s.pop("credit_by_vuln", None)
+        s.pop("scope_vuln_ids", None)
+        s["matched_vuln_ids"] = sorted(s["matched_vuln_ids"])
+
     return {
         "app": app,
         "available_scans": available_scans,
@@ -960,7 +1021,44 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
         "matrix": matrix,
         "fp_matrix": fp_matrix,
         "known_vuln_count": len(known_vulns),
+        "chains": chains,
         "can_edit": can_edit,
+        "revision": revision,
+        "label": f"{app['name']}@rev{revision}",
+        "guards": _reporting_guards(scanners, revision),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Reporting guards
+# ---------------------------------------------------------------------------
+
+def _reporting_guards(scanners: list, revision: int) -> dict:
+    """Machine-readable warnings about the comparison the caller just asked for.
+
+    Deliberately advisory, never blocking — hard-refusing an exploratory
+    scan-vs-scan comparison would break the tool's day-to-day use, including
+    looking at an old scan next to a new one, which is exactly how you notice
+    ground truth has moved.
+    """
+    corpus_revisions = sorted({
+        int(scoring.field(s["scan"], "corpus_revision", revision) or revision)
+        for s in scanners
+    })
+    incomplete = [
+        s["scan"]["id"] for s in scanners
+        if not s["metrics"]["adjudication_complete"]
+    ]
+
+    return {
+        "revision": revision,
+        "corpus_revisions": corpus_revisions,
+        # Scans run against different corpus revisions are still comparable —
+        # they are all re-scored at one revision — but the drift is worth saying.
+        "corpus_revision_mismatch": len(corpus_revisions) > 1,
+        "adjudication_incomplete_scans": incomplete,
+        # Precision is meaningless before full adjudication; show the bounds.
+        "suppress_precision": bool(incomplete),
     }
 
 

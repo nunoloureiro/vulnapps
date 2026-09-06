@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from app.database import get_connection
 from app.services import scans as scans_service
 from app.services import labels as labels_service
+from app.services import scoring as scoring_service
 from app.dependencies import require_user, require_scope, get_current_user
 
 router = APIRouter()
@@ -143,12 +144,26 @@ async def match_finding(request: Request, scan_id: int, finding_id: int):
 
 @router.post("/{scan_id}/findings/{finding_id}/mark-fp")
 async def mark_finding_fp(request: Request, scan_id: int, finding_id: int):
+    """Mark a finding as a false positive.
+
+    Optional body ``{"fp_group": "..."}`` clusters findings describing the same
+    non-issue so precision counts one FP instead of three — the FP-side
+    equivalent of matching several findings to one vuln.
+    """
     user = await require_user(request)
     require_scope(user, "vuln-mapper")
+    raw = await request.body()
+    fp_group = None
+    if raw:
+        import json
+        try:
+            fp_group = (json.loads(raw) or {}).get("fp_group")
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     db = await get_connection()
     try:
-        await scans_service.mark_finding_fp(db, user, scan_id, finding_id)
+        await scans_service.mark_finding_fp(db, user, scan_id, finding_id, fp_group)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionError as e:
@@ -156,7 +171,7 @@ async def mark_finding_fp(request: Request, scan_id: int, finding_id: int):
     finally:
         await db.close()
 
-    return {"ok": True}
+    return {"ok": True, "fp_group": fp_group}
 
 
 @router.post("/{scan_id}/findings/{finding_id}/ignore")
@@ -198,7 +213,11 @@ async def promote_finding(request: Request, scan_id: int, finding_id: int):
             db, user, scan_id, finding_id, overrides=overrides,
         )
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        msg = str(e)
+        # Missing/invalid existed_since, weight or tier is a bad request; a
+        # missing scan or finding is a 404.
+        status = 400 if ("must be" in msg or "existed_since" in msg) else 404
+        raise HTTPException(status_code=status, detail=msg)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     finally:
@@ -416,6 +435,63 @@ async def compare_scans(request: Request, app_id: int, scans: str = ""):
         await db.close()
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Ground-truth revisions, re-scoring and configuration reporting
+# (mounted at /api/apps)
+# ---------------------------------------------------------------------------
+
+@submit_router.get("/{app_id}/revisions")
+async def list_revisions(request: Request, app_id: int):
+    """Ground-truth revision history for an app."""
+    user = request.state.user
+    db = await get_connection()
+    try:
+        from app.visibility import app_visibility_filter
+        vis_clause, vis_params = app_visibility_filter(user)
+        cursor = await db.execute(
+            f"SELECT id FROM apps WHERE id = ? AND {vis_clause}", [app_id] + vis_params
+        )
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="App not found")
+        revisions = await scoring_service.list_revisions(db, app_id)
+        latest = await scoring_service.latest_revision(db, app_id)
+    finally:
+        await db.close()
+    return {"revisions": revisions, "latest_revision": latest}
+
+
+@submit_router.post("/{app_id}/revisions")
+async def create_revision(request: Request, app_id: int):
+    """Open a new ground-truth revision.
+
+    Body: ``{"reason": "weight_change" | "corpus_change" | "new_prior_vuln" |
+    "vuln_invalidated", "notes": "..."}``. Weight changes require this: weights
+    are immutable within a revision, so changing one without a new revision
+    would make two numbers incomparable while looking identical.
+    """
+    user = await require_user(request)
+    require_scope(user, "vuln-mapper")
+    body = await request.json()
+
+    db = await get_connection()
+    try:
+        from app.services import vulns as vulns_service
+        app = await vulns_service._get_visible_app(db, user, app_id)
+        await vulns_service._require_app_write(db, user, app)
+        revision = await scoring_service.create_revision(
+            db, app_id, body.get("reason", ""), body.get("notes"), user
+        )
+        await db.commit()
+    except ValueError as e:
+        msg = str(e)
+        raise HTTPException(status_code=400 if "must be one of" in msg else 404, detail=msg)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+    return {"ok": True, "revision": revision}
 
 
 # ---------------------------------------------------------------------------

@@ -98,6 +98,8 @@ async def update_app(request: Request, app_id: int):
             visibility=body.get("visibility", "private"),
             team_id=team_id,
             tech_stack=body.get("tech_stack", ""),
+            # Absent means "leave alone" — see update_app.
+            benchmark_verified=body.get("benchmark_verified"),
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

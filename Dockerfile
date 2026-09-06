@@ -1,5 +1,8 @@
 # Stage 1: Build React frontend
-FROM node:20-slim AS frontend
+# Built natively on the build host's arch — output is static assets, so it
+# doesn't need to match the target --platform, and running Node/esbuild
+# under QEMU emulation is unstable (crashes the Go runtime in esbuild).
+FROM --platform=$BUILDPLATFORM node:20-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json .
 RUN npm ci

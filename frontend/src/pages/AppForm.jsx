@@ -18,6 +18,7 @@ export default function AppForm() {
     description: '',
     url: '',
     tech_stack: '',
+    benchmark_verified: false,
     visibility: 'private',
     team_id: '',
   });
@@ -49,6 +50,7 @@ export default function AppForm() {
             description: app.description || '',
             url: app.url || '',
             tech_stack: (data.tech_stack || []).join(', '),
+            benchmark_verified: !!data.app?.benchmark_verified,
             visibility: app.visibility || 'private',
             team_id: app.team_id ? String(app.team_id) : '',
           });
@@ -62,6 +64,8 @@ export default function AppForm() {
             description: app.description || '',
             url: app.url || '',
             tech_stack: (data.tech_stack || []).join(', '),
+            // A clone starts uncurated — copied tiers are not reviewed tiers.
+            benchmark_verified: false,
             visibility: 'private',
             team_id: '',
           });
@@ -91,6 +95,7 @@ export default function AppForm() {
       description: form.description || null,
       url: form.url || null,
       tech_stack: form.tech_stack,
+      benchmark_verified: form.benchmark_verified,
       visibility: form.visibility,
       team_id: form.visibility === 'team' && form.team_id ? form.team_id : null,
     };
@@ -202,6 +207,33 @@ export default function AppForm() {
               />
               <span className="text-muted text-xs">Comma-separated list of technologies</span>
             </div>
+
+            {/* Gate on benchmark exports and configuration aggregation. Migration
+                024 derived weights from severity for every app; only a flagged
+                corpus claims hand-curated ground truth, so a weighted comparison
+                can never silently span curated and derived corpora.
+                Edit-only: a new app has nothing reviewed yet, and POST /api/apps
+                does not carry the flag — a checkbox that silently did nothing
+                would be worse than no checkbox. */}
+            {isEdit && (
+            <div className="form-group">
+              <label className="form-label" style={{ cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  name="benchmark_verified"
+                  checked={form.benchmark_verified}
+                  onChange={e => setForm(prev => ({ ...prev, benchmark_verified: e.target.checked }))}
+                  style={{ accentColor: 'var(--accent)', marginRight: 6 }}
+                />
+                Benchmark corpus
+              </label>
+              <span className="text-muted text-xs">
+                Hand-curated ground truth: severities and difficulty tiers have been
+                reviewed. Only these apps can be exported as a benchmark or aggregated
+                into configuration results.
+              </span>
+            </div>
+            )}
 
             <div className="form-row">
               <div className="form-group">
