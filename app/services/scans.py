@@ -11,6 +11,7 @@ from app.matching import match_finding as match_finding_algo
 from app.visibility import scan_visibility_filter
 from app.dependencies import get_team_role
 from app import scoring
+from app.services import audit as audit_service
 from app.services import scoring as scoring_service
 
 
@@ -598,23 +599,28 @@ async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id) -> dic
     await _check_scan_write(db, user, scan, app)
 
     cursor = await db.execute(
-        "SELECT id FROM scan_findings WHERE id = ? AND scan_id = ?",
+        "SELECT id, title, vuln_type, matched_vuln_id FROM scan_findings WHERE id = ? AND scan_id = ?",
         (finding_id, scan_id),
     )
-    if not await cursor.fetchone():
+    finding = await cursor.fetchone()
+    if not finding:
         raise ValueError("Finding not found")
+    finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
+    old_vuln_id = finding["matched_vuln_id"]
 
+    new_vuln_label = None
     if vuln_id is not None:
         try:
             matched_vuln_id = int(vuln_id)
         except (TypeError, ValueError):
             raise ValueError("vuln_id must be an integer")
         cursor = await db.execute(
-            "SELECT app_id FROM vulnerabilities WHERE id = ?", (matched_vuln_id,)
+            "SELECT app_id, vuln_id FROM vulnerabilities WHERE id = ?", (matched_vuln_id,)
         )
         row = await cursor.fetchone()
         if not row or row["app_id"] != scan["app_id"]:
             raise ValueError("Vulnerability not found")
+        new_vuln_label = row["vuln_id"]
         is_false_positive = 0
     else:
         matched_vuln_id = None
@@ -626,6 +632,32 @@ async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id) -> dic
         "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = ?, is_ignored = 0, fp_group = NULL WHERE id = ? AND scan_id = ?",
         (matched_vuln_id, is_false_positive, finding_id, scan_id),
     )
+
+    if matched_vuln_id != old_vuln_id:
+        if matched_vuln_id is None:
+            old_label = None
+            if old_vuln_id is not None:
+                cursor = await db.execute(
+                    "SELECT vuln_id FROM vulnerabilities WHERE id = ?", (old_vuln_id,)
+                )
+                old_row = await cursor.fetchone()
+                old_label = old_row["vuln_id"] if old_row else None
+            message = f"{user['name']} removed the mapping of \"{finding_label}\""
+            if old_label:
+                message += f" (was {old_label})"
+            action = "finding_unmatched"
+        elif old_vuln_id is None:
+            message = f"{user['name']} matched \"{finding_label}\" to {new_vuln_label}"
+            action = "finding_matched"
+        else:
+            message = f"{user['name']} changed the mapping of \"{finding_label}\" to {new_vuln_label}"
+            action = "finding_matched"
+        await audit_service.record_audit_event(
+            db, entity_type="scan_finding", action=action, actor=user, message=message,
+            entity_id=finding_id, scan_id=scan_id,
+            details={"old_vuln_id": old_vuln_id, "new_vuln_id": matched_vuln_id},
+        )
+
     await db.commit()
 
     return {"ok": True, "matched_vuln_id": matched_vuln_id, "is_false_positive": is_false_positive}
@@ -640,10 +672,24 @@ async def mark_finding_fp(db, user, scan_id: int, finding_id: int, fp_group=None
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
+    cursor = await db.execute(
+        "SELECT title, vuln_type FROM scan_findings WHERE id = ? AND scan_id = ?",
+        (finding_id, scan_id),
+    )
+    finding = await cursor.fetchone()
+    if not finding:
+        raise ValueError("Finding not found")
+    finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
+
     group = (fp_group or "").strip() or None
     await db.execute(
         "UPDATE scan_findings SET matched_vuln_id = NULL, is_false_positive = 1, is_ignored = 0, fp_group = ? WHERE id = ? AND scan_id = ?",
         (group, finding_id, scan_id),
+    )
+    await audit_service.record_audit_event(
+        db, entity_type="scan_finding", action="finding_marked_fp", actor=user,
+        message=f"{user['name']} marked \"{finding_label}\" as a false positive",
+        entity_id=finding_id, scan_id=scan_id,
     )
     await db.commit()
 
@@ -654,16 +700,34 @@ async def set_finding_ignored(db, user, scan_id: int, finding_id: int, ignored: 
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
+    cursor = await db.execute(
+        "SELECT title, vuln_type FROM scan_findings WHERE id = ? AND scan_id = ?",
+        (finding_id, scan_id),
+    )
+    finding = await cursor.fetchone()
+    if not finding:
+        raise ValueError("Finding not found")
+    finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
+
     if ignored:
         await db.execute(
             "UPDATE scan_findings SET is_ignored = 1, matched_vuln_id = NULL, is_false_positive = 0, fp_group = NULL WHERE id = ? AND scan_id = ?",
             (finding_id, scan_id),
         )
+        message = f"{user['name']} marked \"{finding_label}\" as ignored"
+        action = "finding_marked_ignored"
     else:
         await db.execute(
             "UPDATE scan_findings SET is_ignored = 0 WHERE id = ? AND scan_id = ?",
             (finding_id, scan_id),
         )
+        message = f"{user['name']} un-ignored \"{finding_label}\" (returned to Pending)"
+        action = "finding_unignored"
+
+    await audit_service.record_audit_event(
+        db, entity_type="scan_finding", action=action, actor=user, message=message,
+        entity_id=finding_id, scan_id=scan_id,
+    )
     await db.commit()
 
 
@@ -794,6 +858,21 @@ async def promote_finding(
         "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = 0, is_ignored = 0, fp_group = NULL WHERE id = ?",
         (new_vuln_id, finding_id),
     )
+
+    finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
+    await audit_service.record_audit_event(
+        db, entity_type="scan_finding", action="finding_promoted", actor=user,
+        message=f"{user['name']} promoted \"{finding_label}\" to new vulnerability {vuln_id_slug}",
+        entity_id=finding_id, scan_id=scan_id,
+        details={"new_vuln_id": new_vuln_id},
+    )
+    await audit_service.record_audit_event(
+        db, entity_type="vulnerability", action="vuln_created", actor=user,
+        message=f"{user['name']} created vulnerability {vuln_id_slug}: \"{title}\" ({severity}) via promotion from scan #{scan_id}",
+        entity_id=new_vuln_id, app_id=app["id"],
+        details={"scan_id": scan_id, "finding_id": finding_id},
+    )
+
     await db.commit()
 
     cursor = await db.execute("SELECT * FROM vulnerabilities WHERE id = ?", (new_vuln_id,))
@@ -845,8 +924,29 @@ async def rematch_scan(db, user, scan_id: int) -> dict:
             )
             updated += 1
 
+    if updated:
+        await audit_service.record_audit_event(
+            db, entity_type="scan_finding", action="scan_rematched", actor=user,
+            message=f"{user['name']} re-ran auto-matching on this scan — {updated} finding(s) changed",
+            scan_id=scan_id,
+            details={"updated": updated},
+        )
+
     await db.commit()
     return {"updated": updated}
+
+
+async def list_scan_history(db, user, scan_id: int) -> list[dict]:
+    """Audit-log entries for this scan's findings, most recent first.
+
+    Gated on the same write-access check as editing the scan — this app has
+    no account-level contributor/viewer role today (see
+    tasks/audit-log-plan.md SS0), so "contributor and admin can see it, viewer
+    and user can't" is exactly what per-resource write access already means.
+    """
+    scan, app = await _get_scan_and_app(db, scan_id)
+    await _check_scan_write(db, user, scan, app)
+    return await audit_service.list_audit_events(db, scan_id=scan_id)
 
 
 async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:

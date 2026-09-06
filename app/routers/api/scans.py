@@ -6,6 +6,7 @@ from app.database import get_connection
 from app.services import scans as scans_service
 from app.services import labels as labels_service
 from app.services import scoring as scoring_service
+from app.services import audit as audit_service
 from app.dependencies import require_user, require_scope, get_current_user
 
 router = APIRouter()
@@ -242,6 +243,22 @@ async def rematch_scan(request: Request, scan_id: int):
         await db.close()
 
     return result
+
+
+@router.get("/{scan_id}/history")
+async def get_scan_history(request: Request, scan_id: int):
+    user = request.state.user
+    db = await get_connection()
+    try:
+        entries = await scans_service.list_scan_history(db, user, scan_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+
+    return {"entries": entries}
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +499,14 @@ async def create_revision(request: Request, app_id: int):
         await vulns_service._require_app_write(db, user, app)
         revision = await scoring_service.create_revision(
             db, app_id, body.get("reason", ""), body.get("notes"), user
+        )
+        message = f"{user['name']} opened ground-truth revision {revision}"
+        if body.get("reason"):
+            message += f" ({body['reason']})"
+        await audit_service.record_audit_event(
+            db, entity_type="vulnerability", action="revision_opened", actor=user,
+            message=message, app_id=app_id,
+            details={"revision": revision, "reason": body.get("reason"), "notes": body.get("notes")},
         )
         await db.commit()
     except ValueError as e:

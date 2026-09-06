@@ -6,6 +6,7 @@ import io
 from app.dependencies import get_team_role
 from app.visibility import app_visibility_filter
 from app import scoring
+from app.services import audit as audit_service
 from app.services import scoring as scoring_service
 
 
@@ -330,9 +331,19 @@ async def create_vuln(db, user, app_id: int, vuln_data: dict) -> dict:
             revision,
         ),
     )
+    new_id = cursor.lastrowid
+
+    vuln_id_slug = vuln_data.get("vuln_id") or f"#{new_id}"
+    title = vuln_data.get("title") or "Untitled"
+    severity_label = vuln_data.get("severity") or "medium"
+    await audit_service.record_audit_event(
+        db, entity_type="vulnerability", action="vuln_created", actor=user,
+        message=f"{user['name']} created vulnerability {vuln_id_slug}: \"{title}\" ({severity_label})",
+        entity_id=new_id, app_id=app_id,
+    )
+
     await db.commit()
 
-    new_id = cursor.lastrowid
     cursor = await db.execute("SELECT * FROM vulnerabilities WHERE id = ?", (new_id,))
     return dict(await cursor.fetchone())
 
@@ -404,6 +415,44 @@ async def update_vuln(db, user, app_id: int, vuln_id: int, vuln_data: dict) -> d
             vuln_id,
         ),
     )
+
+    new_values = {
+        "vuln_id": _cap(vuln_data.get("vuln_id"), "vuln_id"),
+        "title": _cap(vuln_data.get("title"), "title"),
+        "severity": vuln_data.get("severity"),
+        "vuln_type": _cap(vuln_data.get("vuln_type"), "vuln_type"),
+        "http_method": _cap(vuln_data.get("http_method"), "http_method"),
+        "url": _cap(vuln_data.get("url"), "url"),
+        "parameter": _cap(vuln_data.get("parameter"), "parameter"),
+        "filename": _cap(vuln_data.get("filename"), "filename"),
+        "line_number": line_number,
+        "description": _cap(vuln_data.get("description"), "description"),
+        "code_location": _cap(vuln_data.get("code_location"), "code_location"),
+        "poc": _cap(vuln_data.get("poc"), "poc"),
+        "remediation": _cap(vuln_data.get("remediation"), "remediation"),
+        "impact_weight": impact_weight,
+        "difficulty_tier": difficulty_tier,
+    }
+    # Short, scalar fields are worth showing old -> new in the log; long
+    # free-text fields just note that they changed, to keep the message
+    # skimmable rather than dumping a paragraph diff.
+    changes = []
+    for field in ("vuln_id", "title", "severity", "vuln_type", "impact_weight", "difficulty_tier"):
+        if existing[field] != new_values[field]:
+            changes.append(f"{field} {existing[field]} → {new_values[field]}")
+    for field in ("http_method", "url", "parameter", "filename", "line_number",
+                  "description", "code_location", "poc", "remediation"):
+        if existing[field] != new_values[field]:
+            changes.append(field)
+
+    if changes:
+        vuln_id_slug = new_values["vuln_id"] or existing["vuln_id"]
+        await audit_service.record_audit_event(
+            db, entity_type="vulnerability", action="vuln_updated", actor=user,
+            message=f"{user['name']} updated {vuln_id_slug}: {', '.join(changes)}",
+            entity_id=vuln_id, app_id=app_id,
+        )
+
     await db.commit()
 
     cursor = await db.execute("SELECT * FROM vulnerabilities WHERE id = ?", (vuln_id,))
@@ -434,9 +483,24 @@ async def delete_vuln(db, user, app_id: int, vuln_id: int) -> None:
             "deleted. Invalidate it instead so historical scorings stay reproducible."
         )
 
+    # Captured only to describe the vuln in the audit message -- the row
+    # itself is gone right after the DELETE below.
+    cursor = await db.execute(
+        "SELECT vuln_id, title FROM vulnerabilities WHERE id = ? AND app_id = ?",
+        (vuln_id, app_id),
+    )
+    vuln = await cursor.fetchone()
+    if not vuln:
+        raise ValueError("Vulnerability not found")
+
     await db.execute(
         "DELETE FROM vulnerabilities WHERE id = ? AND app_id = ?",
         (vuln_id, app_id),
+    )
+    await audit_service.record_audit_event(
+        db, entity_type="vulnerability", action="vuln_deleted", actor=user,
+        message=f"{user['name']} deleted vulnerability {vuln['vuln_id']}: \"{vuln['title']}\"",
+        entity_id=vuln_id, app_id=app_id,
     )
     await db.commit()
 
@@ -472,6 +536,14 @@ async def invalidate_vuln(db, user, app_id: int, vuln_id: int, notes=None) -> di
     await db.execute(
         "UPDATE vulnerabilities SET invalidated_at_revision = ? WHERE id = ?",
         (revision, vuln_id),
+    )
+    await audit_service.record_audit_event(
+        db, entity_type="vulnerability", action="vuln_invalidated", actor=user,
+        message=(
+            f"{user['name']} invalidated {vuln['vuln_id']}: \"{vuln['title']}\" "
+            f"(opened ground-truth revision {revision})"
+        ),
+        entity_id=vuln_id, app_id=app_id,
     )
     await db.commit()
     return {"ok": True, "vuln_id": vuln_id, "invalidated_at_revision": revision}
@@ -681,6 +753,14 @@ async def import_vulns(db, user, app_id: int, vulns_data: list,
         truncated_fields += stats["truncated"]
         imported += 1
 
+    if imported:
+        await audit_service.record_audit_event(
+            db, entity_type="vulnerability", action="vulns_imported", actor=user,
+            message=f"{user['name']} bulk-imported {imported} vulnerabilit{'y' if imported == 1 else 'ies'}",
+            app_id=app_id,
+            details={"imported": imported, "skipped_over_cap": skipped_over_cap},
+        )
+
     await db.commit()
     return {
         "imported": imported,
@@ -689,3 +769,16 @@ async def import_vulns(db, user, app_id: int, vulns_data: list,
         "revision": revision,
         "existed_since_revision": import_revision,
     }
+
+
+async def list_app_history(db, user, app_id: int) -> list[dict]:
+    """Audit-log entries for this app's vulnerabilities, most recent first.
+
+    Gated on the same write-access check as editing the app's ground truth —
+    this app has no account-level contributor/viewer role today (see
+    tasks/audit-log-plan.md SS0), so "contributor and admin can see it, viewer
+    and user can't" is exactly what per-resource write access already means.
+    """
+    app = await _get_visible_app(db, user, app_id)
+    await _require_app_write(db, user, app)
+    return await audit_service.list_audit_events(db, app_id=app_id)

@@ -254,7 +254,7 @@ Uses `python-dotenv` to load `.env` file.
 
 ---
 
-## Database Schema (migrations 001-032)
+## Database Schema (migrations 001-036)
 
 ```sql
 PRAGMA journal_mode=WAL;
@@ -664,6 +664,7 @@ All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT 
 | POST | `/api/apps/{id}/vulns/{vid}/invalidate` | App write / full | Retire from ground truth at a new revision. Body (optional): `{notes}`. Stays in scope for earlier revisions |
 | POST | `/api/apps/{id}/vulns/import` | App write / full | Import vulns from JSON/CSV (file upload or JSON body). Optional `existed_since` (`all_along` \| `this_revision`, default `this_revision`) decides whether prior scans are re-scored against the batch |
 | GET | `/api/apps/{id}/vulns/export` | None / read | Download all vulns for the app as a CSV file (`Content-Disposition: attachment`). Never capped by `MAX_VULNS_PER_APP` — unlike the list/detail endpoints, it's one file rather than a paginated response. Columns match what `import` reads, so an export round-trips through import unchanged. String cells starting with `=`, `+`, `-`, or `@` get a leading `'` to defuse spreadsheet formula injection |
+| GET | `/api/apps/{id}/history` | App write | Audit-log entries for this app's vulnerabilities (created/updated/deleted/invalidated/bulk-imported), most recent first. Gated on app write access, not a separate role — see History Log below |
 
 ### Scans (`/api/scans` + `/api/apps/{id}/scans`)
 | Method | Path | Auth / Scope | Description |
@@ -678,6 +679,7 @@ All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT 
 | POST | `/api/scans/{id}/findings/{fid}/ignore` | Scan write / vuln-mapper | Set/clear the "Ignored" state. Body `{ignored: bool}` (default `true`). Ignoring clears any match/FP; clearing returns to Pending |
 | POST | `/api/scans/{id}/findings/{fid}/promote` | App write / vuln-mapper | Promote a pending finding into a new vuln on the scan's app. Body: `{vuln_id, title, severity, vuln_type, http_method, url, parameter, filename, description, poc, remediation, code_location, impact_weight, difficulty_tier}` — missing fields fall back to the finding's stored values; `vuln_id` auto-generates as the next `DISC-NNN` slug if blank. **`existed_since` is REQUIRED** (`all_along` \| `this_revision`) — **400** without it. Always opens a `new_prior_vuln` revision. The finding is linked to the new vuln on success |
 | POST | `/api/scans/{id}/rematch` | Scan write / vuln-mapper | Re-run automatic matching for all findings (in-scope vulns only) |
+| GET | `/api/scans/{id}/history` | Scan write | Audit-log entries for this scan's findings (matched/unmatched/marked FP/ignored/promoted/rematched), most recent first. Gated on scan write access, not a separate role — see History Log below |
 | GET | `/api/apps/{id}/revisions` | None / read | Ground-truth revision history + `latest_revision` |
 | POST | `/api/apps/{id}/revisions` | App write / vuln-mapper | Open a revision: `{reason, notes}`. Required before a weight change takes effect |
 | POST | `/api/scans/{id}/labels` | Scan write | Add label to scan: `{name, color}`. Upserts label, links to scan |
@@ -790,6 +792,7 @@ React context providing `{user, loading, login, register, logout, refreshUser}`.
 - **LabelBadge** — Color-coded scan label badge with optional remove button
 - **ConfirmButton** — Button that shows confirmation dialog before action
 - **EmptyState** — Placeholder for empty lists
+- **HistoryLog** — Audit-trail table (When / Event), parameterized by `scanId` or `appId`. Fetches its own data and only renders when `canView` (the page's `can_edit` flag) is true — the real access control is the API's 403, this is UI polish. Used at the end of `ScanDetail.jsx` and `AppDetail.jsx` (see History Log below)
 
 ---
 
@@ -829,11 +832,24 @@ Uses a **scoring-based system** instead of binary matching. Each known vuln is s
 | URL exact match | 100 | Strongest signal |
 | URL pattern match (placeholders) | 80 - 5*N | N = number of placeholder segments; min 50 |
 | URL prefix glob (`/admin/*`) | 40 | Moderate signal |
-| URL global wildcard (`/*`) | 10 | Weak — matches everything |
 | http_method match | 15 | Scanners sometimes differ |
 | parameter exact match | 20 | Strong differentiator |
 | parameter substring match | 10 | Handles `user_email` containing `email` |
 | SAST filename exact match | 100 | Strong signal for file-level findings |
+
+**A known vuln whose `url` is the global wildcard (`/*`) is never auto-matched
+on category + URL score alone** (removed after an incident: a pass-the-hash
+login bug, a 2FA-enrollment-without-reauth bug, and a TOTP-replay bug — three
+unrelated findings — all auto-matched to an unrelated "JWT none-algorithm
+accepted" vuln purely because vuln_type(50) + wildcard-URL(10) alone crossed
+the 60 threshold for any finding sharing that broad category). Instead, a
+wildcard-scoped vuln can still match, but only when the finding's own `title`
+shares a meaningful keyword with the vuln's `title` — graded by how many words
+overlap (50 + 10 + 5 per additional shared word beyond the first), so that a
+tie between two same-category wildcard vulns (e.g. "JWT none-algorithm" vs
+"JWT signature not verified") resolves to the more specific title match
+instead of list order. A missing title on either side is "can't confirm," not
+"allow." See `tests/test_matching.py` and `tasks/scanimport-resilience.md`.
 
 **URL pattern handling:**
 - Placeholder segments (`:id`, `{id}`, `(id)`, `<id>`, `[id]`) compiled to `([^/]+)` regex
@@ -860,8 +876,13 @@ Uses a **scoring-based system** instead of binary matching. Each known vuln is s
 - **Compare page**: Pending and Ignored findings excluded from the FP matrix
 
 The heuristic in `app/matching.py` is only the first pass — the CLI importer's LLM
-makes the final call and corrects the match afterwards. It also emits a shared
-`fp_group` slug for false positives describing the same non-issue.
+makes the final call and corrects the match afterwards, including *clearing* a
+match the heuristic wrongly applied (not just replacing it with a different
+one — a gap fixed alongside the wildcard-vuln issue above). It also emits a
+shared `fp_group` slug for false positives describing the same non-issue, and
+a `reasoning` string per finding (`scan_findings.reasoning`, migration 035)
+explaining why it did or didn't match — previously generated by the model and
+printed to the terminal, but discarded before reaching the API.
 
 Two matching modes based on finding content:
 
@@ -1183,6 +1204,57 @@ Team admins (and app admins) can add/remove members and change member roles (adm
   - Unauthenticated: public scans on public apps only
   - Logged in: public scans + own scans + scans on team apps
   - Admin: all scans
+
+---
+
+## History Log
+
+Append-only audit trail of operations on scan findings and on app
+vulnerabilities (ground truth). Scoped to exactly two consumers: a "History
+Log" section at the end of `ScanDetail.jsx` and one at the end of
+`AppDetail.jsx` — no audit logging anywhere else in the app.
+
+**Table** (`audit_log`, migration 036): `entity_type` (`scan_finding` |
+`vulnerability`), `entity_id` (nullable — null for bulk/aggregate events),
+`scan_id`/`app_id` (whichever applies, `ON DELETE CASCADE`), `action`,
+`actor_id`, a **pre-rendered** human-readable `message`, an optional JSON
+`details` blob, `created_at`. The message is rendered once, at write time
+(`app/services/audit.py::record_audit_event`) — not templated from
+structured fields by the frontend — because the actor's name, the matched
+vuln's title, or its `vuln_id` slug can all change after the fact, and a log
+entry must keep describing what happened at the time, not what's true now.
+
+**Gating**: "visible only to contributors and admin" is implemented by
+reusing each page's existing write-access check (`can_edit` on `get_scan`
+in `ScanDetail`, on `get_app` in `AppDetail`) rather than a role check —
+this app has no account-level `contributor`/`viewer` role today (migration
+012 collapsed them into `user`; `contributor`/`viewer` only exist as *team*
+roles, scoped to one team). Per-resource write access — global admin, or
+the scan submitter/app creator, or a team member whose team role is
+`admin`/`contributor` — is exactly that population. Enforced server-side on
+`GET /api/scans/{id}/history` and `GET /api/apps/{id}/history` (403/404 for
+anyone else); the frontend `HistoryLog` component additionally only renders
+for a `canView`-true caller, but that's UI polish, not the access boundary.
+
+**What's logged** (one row per human action; bulk/algorithmic operations get
+one aggregate row, never one per affected item):
+- Scan-scoped: `finding_matched`, `finding_unmatched` (`match_finding` — new
+  match, changed match, or a match cleared entirely), `finding_marked_fp`,
+  `finding_marked_ignored`/`finding_unignored`, `finding_promoted` (also
+  writes an app-scoped `vuln_created` row from the same call), `scan_rematched`
+  (one row for the whole "Re-match All" click, only if anything changed)
+- App-scoped: `vuln_created`, `vuln_updated` (lists which fields changed —
+  old → new for short scalar fields like severity/weight/tier, just the
+  field name for long free-text ones; a no-op update logs nothing),
+  `vuln_deleted`, `vuln_invalidated`, `vulns_imported` (one row per bulk
+  import call), `revision_opened` (only the standalone "open a revision"
+  endpoint — the four vuln-mutation call sites that also open one fold it
+  into their own message instead of emitting a second row)
+
+**Not touched by this feature**: the existing `ground_truth_revisions`
+table and `AppDetail.jsx`'s `GroundTruth` panel — that stays exactly as it
+was (ungated, revision-only, near the top of the page); the new gated
+History Log is a separate section at the bottom.
 
 ---
 

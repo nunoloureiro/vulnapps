@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { HistoryLog } from '../components/HistoryLog';
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 
@@ -415,6 +416,7 @@ export default function AppDetail() {
           )}
         </div>
       )}
+      <HistoryLog appId={id} canView={can_edit} />
     </div>
   );
 }

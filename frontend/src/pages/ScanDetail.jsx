@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import { Badge } from '../components/Badge';
 import { LabelBadge } from '../components/LabelBadge';
+import { HistoryLog } from '../components/HistoryLog';
 
 // Finding-action icons (12px, inherit currentColor).
 const svg = (children) => (props) => (
@@ -44,6 +45,7 @@ export default function ScanDetail() {
       <Findings findings={findings} knownVulns={known_vulns || []} canEdit={can_edit} scanId={id} appId={app.id}
                 onUpdate={load} />
       {missed_vulns && missed_vulns.length > 0 && <MissedVulns vulns={missed_vulns} appId={app.id} />}
+      <HistoryLog scanId={id} canView={can_edit} />
     </>
   );
 }

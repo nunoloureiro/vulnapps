@@ -526,3 +526,85 @@ async def test_bonus_unauth_protected(transport):
         r = await client.get("/api/account")
         assert r.status_code == 401
     print(f"  PASS: Protected endpoints return 401 without auth")
+
+
+@pytest.mark.asyncio
+async def test_26_scan_history_endpoint(transport, auth_headers, user_headers):
+    """GET /api/scans/{id}/history is gated the same as scan write access
+    (no account-level contributor/viewer role exists, so this is what "only
+    contributor/admin can see it" means in practice — see
+    tasks/audit-log-plan.md), and records a human-readable entry per action."""
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Fresh private, non-team app+scan owned by admin (user 1). Ricardo
+        # (user_headers) is a team-admin on team 1 elsewhere, but has no
+        # relation to this app at all, so this isolates the write-access
+        # check from any pre-existing team membership.
+        app_resp = await client.post("/api/apps", json={
+            "name": "History Test App", "version": "1.0", "visibility": "private",
+        }, headers=auth_headers)
+        assert app_resp.status_code == 200, app_resp.text
+        app_id = app_resp.json()["app"]["id"]
+
+        scan_resp = await client.post(f"/api/apps/{app_id}/scans", json={
+            "scanner_name": "Test", "scan_date": "2026-09-06",
+            "findings": [{"vuln_type": "XSS", "title": "Test Finding"}],
+        }, headers=auth_headers)
+        assert scan_resp.status_code == 200, scan_resp.text
+        scan_id = scan_resp.json()["scan_id"]
+
+        r = await client.get(f"/api/scans/{scan_id}/history", headers=user_headers)
+        assert r.status_code == 403, r.text
+
+        r = await client.get(f"/api/scans/{scan_id}/history", headers=auth_headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["entries"] == []
+
+        scan_detail = (await client.get(f"/api/scans/{scan_id}", headers=auth_headers)).json()
+        finding_id = scan_detail["findings"][0]["id"]
+        r = await client.post(f"/api/scans/{scan_id}/findings/{finding_id}/mark-fp", headers=auth_headers)
+        assert r.status_code == 200, r.text
+
+        r = await client.get(f"/api/scans/{scan_id}/history", headers=auth_headers)
+        assert r.status_code == 200
+        entries = r.json()["entries"]
+        assert len(entries) == 1
+        assert "false positive" in entries[0]["message"]
+    print(f"  PASS: scan history endpoint gated correctly, records mark-fp (app {app_id}, scan {scan_id})")
+
+
+@pytest.mark.asyncio
+async def test_27_app_history_endpoint(transport, auth_headers, user_headers):
+    """GET /api/apps/{id}/history — same gating, records a vuln_created entry.
+
+    Public (not private) on purpose: a private app invisible to Ricardo
+    would 404 before the write-access check ever runs (_get_visible_app
+    filters it out first) — that's an existing, separate behavior. A public
+    app IS visible to him but _require_app_write explicitly refuses non-admin
+    writes to public apps, which is the write-access boundary this test
+    exists to check.
+    """
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        app_resp = await client.post("/api/apps", json={
+            "name": "App History Test", "version": "1.0", "visibility": "public",
+        }, headers=auth_headers)
+        assert app_resp.status_code == 200, app_resp.text
+        app_id = app_resp.json()["app"]["id"]
+
+        r = await client.get(f"/api/apps/{app_id}/history", headers=user_headers)
+        assert r.status_code == 403, r.text
+
+        r = await client.get(f"/api/apps/{app_id}/history", headers=auth_headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["entries"] == []
+
+        vuln_resp = await client.post(f"/api/apps/{app_id}/vulns", json={
+            "vuln_id": "TP-001", "title": "SQL Injection", "severity": "critical",
+        }, headers=auth_headers)
+        assert vuln_resp.status_code == 200, vuln_resp.text
+
+        r = await client.get(f"/api/apps/{app_id}/history", headers=auth_headers)
+        assert r.status_code == 200
+        entries = r.json()["entries"]
+        assert len(entries) == 1
+        assert "TP-001" in entries[0]["message"]
+    print(f"  PASS: app history endpoint gated correctly, records vuln_created (app {app_id})")

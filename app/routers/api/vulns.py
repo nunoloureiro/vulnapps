@@ -262,3 +262,19 @@ async def import_vulns(
     # result: {imported, skipped_over_cap, truncated_fields}. `imported` stays
     # top-level for backward compatibility with existing clients.
     return result
+
+
+@router.get("/{app_id}/history")
+async def get_app_history(request: Request, app_id: int):
+    user = request.state.user
+    db = await get_connection()
+    try:
+        entries = await vulns_service.list_app_history(db, user, app_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+
+    return {"entries": entries}
