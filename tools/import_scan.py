@@ -553,6 +553,30 @@ above.)
 {scan_content}"""
 
 
+def _extract_json_text(text: str) -> str:
+    """Pull the JSON object out of a raw LLM response.
+
+    Despite the prompt saying "ONLY valid JSON (no markdown fencing)", the
+    model sometimes reasons in prose first — e.g. explaining that one report
+    finding maps to two known vulns — before emitting a ```json fenced
+    block, or fences the JSON without any surrounding prose. A bare
+    `text.startswith("```")` check misses the first case entirely (the text
+    doesn't start with the fence) and json.loads then fails immediately on
+    the leading prose with "Expecting value: line 1 column 1". Look for a
+    fenced block ANYWHERE in the text first; if there isn't one, fall back
+    to the outermost {...} span, which tolerates prose on either side with
+    no fence at all.
+    """
+    text = text.strip()
+    fence = re.search(r"```(?:json)?\s*\n(.*?)\n?```", text, re.DOTALL)
+    if fence:
+        return fence.group(1).strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        return text[start:end + 1]
+    return text
+
+
 def create_anthropic_client(provider: str, region: str | None, project_id: str | None):
     """Create the appropriate Anthropic client based on provider.
 
@@ -599,13 +623,7 @@ def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_
             text = stream.get_final_text()
             response = stream.get_final_message()
 
-    text = text.strip()
-    # Strip markdown code fences if present
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1]
-        if text.endswith("```"):
-            text = text[:-3]
-    result = json.loads(text)
+    result = json.loads(_extract_json_text(text))
     # Attach LLM usage stats
     if hasattr(response, "usage") and response.usage:
         result["_llm_tokens"] = response.usage.input_tokens + response.usage.output_tokens
@@ -668,20 +686,11 @@ Respond with ONLY valid JSON (no markdown fencing)."""
         # Claude CLI with --output-format json wraps the response
         text = cli_output.get("result", result.stdout) if isinstance(cli_output, dict) else result.stdout
         if isinstance(text, str):
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1]
-                if text.endswith("```"):
-                    text = text[:-3]
-            return json.loads(text)
+            return json.loads(_extract_json_text(text))
         return text
     except (json.JSONDecodeError, KeyError):
         # Try parsing stdout directly as the LLM response
-        text = result.stdout.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            if text.endswith("```"):
-                text = text[:-3]
-        return json.loads(text)
+        return json.loads(_extract_json_text(result.stdout))
 
 
 def format_duration(seconds: float) -> str:

@@ -6,6 +6,7 @@ importer-side defense-in-depth added alongside that fix.
 """
 
 import importlib.util
+import json
 import pathlib
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -90,6 +91,40 @@ def test_validate_llm_matches_no_warning_for_good_match():
 def test_validate_llm_matches_ignores_unmatched_findings():
     mapping = {"findings": [{"title": "Something", "matched_vuln_db_id": None}]}
     assert import_scan.validate_llm_matches(mapping, [_JWT_NONE_ALG_VULN]) == []
+
+
+# ── _extract_json_text ───────────────────────────────────────────────────
+#
+# Real incident: for a report finding that legitimately maps to two known
+# vulns, the LLM reasoned in prose ("I'll extract them as two mapped
+# findings...") before emitting a ```json fenced block, despite the prompt
+# saying "ONLY valid JSON (no markdown fencing)". The old `text.startswith
+# ("```")` check only handles a fence at the very start, so json.loads hit
+# the leading prose and failed with "Expecting value: line 1 column 1".
+
+def test_extract_json_text_plain_json_passthrough():
+    assert json.loads(import_scan._extract_json_text('{"a": 1}')) == {"a": 1}
+
+
+def test_extract_json_text_whole_response_fenced():
+    assert json.loads(import_scan._extract_json_text('```json\n{"a": 1}\n```')) == {"a": 1}
+
+
+def test_extract_json_text_prose_before_fenced_block():
+    """The exact real incident shape: reasoning prose, then a fence."""
+    text = (
+        "The report contains a single finding that combines two distinct "
+        "weaknesses. I'll extract them as two mapped findings.\n\n"
+        '```json\n{"findings": [{"matched_vuln_db_id": 1}, {"matched_vuln_db_id": 2}]}\n```'
+    )
+    result = json.loads(import_scan._extract_json_text(text))
+    assert len(result["findings"]) == 2
+
+
+def test_extract_json_text_prose_around_unfenced_json():
+    """No fence at all -- falls back to the outermost {...} span."""
+    text = 'Here is the mapping: {"a": 1} -- hope that helps!'
+    assert json.loads(import_scan._extract_json_text(text)) == {"a": 1}
 
 
 # ── --extra-info-mapping / --extra-info-extract ─────────────────────────
