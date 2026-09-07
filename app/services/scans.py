@@ -1032,6 +1032,19 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
 
         fp_findings = [dict(f) for f in findings if f["is_false_positive"] == 1]
 
+        # First reported severity per matched vuln (for the client-side
+        # severity-accuracy recompute under a severity filter — mirrors
+        # scoring.compute_metrics' reported_by_vuln, one value is enough here
+        # since the UI only needs match/mismatch, not the full set).
+        severity_by_vuln: dict = {}
+        for f in findings:
+            vid = f["matched_vuln_id"]
+            if vid is None or vid not in matched_ids:
+                continue
+            f_sev = (f["severity"] or "").strip().lower()
+            if f_sev and vid not in severity_by_vuln:
+                severity_by_vuln[vid] = f_sev
+
         # Short date: omit year if current year
         scan_date = scan["scan_date"]
         try:
@@ -1061,6 +1074,7 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
             # the run is not a miss for it.
             "scope_vuln_ids": {v["id"] for v in scored["vulns"]},
             "fp_findings": fp_findings,
+            "severity_by_vuln": severity_by_vuln,
         })
 
     # Sort by scan date ascending (oldest first)
@@ -1076,6 +1090,9 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
             "detections": [v["id"] in s["matched_vuln_ids"] for s in scanners],
             "credits": [s["credit_by_vuln"].get(v["id"], 0.0) for s in scanners],
             "applicable": [v["id"] in s["scope_vuln_ids"] for s in scanners],
+            # Reported severity of the matched finding, per scanner — None
+            # where not detected or the finding didn't report one.
+            "severity_reported": [s["severity_by_vuln"].get(v["id"]) for s in scanners],
         }
         row["found_by"] = sum(row["detections"])
         row["applicable_count"] = sum(row["applicable"])

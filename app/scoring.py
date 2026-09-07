@@ -44,6 +44,18 @@ DEFAULT_WEIGHT = 3
 # A reporting axis, never a multiplier. Blending difficulty into the weight
 # produces one opaque number and destroys the diagnostic: the point of the tier
 # is to see *where on the difficulty curve* a configuration improved.
+#
+# The split is about the DEFECT, not about how findable it happens to be:
+# `commodity` is a technical/input-handling flaw (injection, protocol,
+# crypto-implementation, config) — the kind of bug that exists independent of
+# what this particular application does. `business_logic` is a missing or
+# client-trusted authorization/business-rule check — BOLA/BFLA/BOPLA/mass
+# assignment all belong here even though dedicated tools exist that attempt
+# to find them, because "some tool could be built for this one shape" isn't
+# the same claim as "a signature generalizes across apps with no domain
+# input" — every one of those tools still has to be told, per endpoint,
+# what's self-scoped and what a privileged field is. That's the same
+# understanding the tier is naming, not a workaround around it.
 DIFFICULTY_TIERS = ("commodity", "business_logic", "chained")
 DEFAULT_TIER = "commodity"
 
@@ -177,6 +189,15 @@ def compute_metrics(
         The headline metric: ``weighted_found / weighted_total``. A matched
         vuln scores its full weight; a chain scores its full weight only when
         every member is matched.
+    ``severity_accuracy``
+        Of the TP findings that reported their own severity, the fraction
+        whose reported severity exactly matches the matched vuln's ground-truth
+        severity. Detecting a flaw is not the same as rating it correctly — a
+        scanner that finds a critical SQLi and calls it "low" is a materially
+        worse result than a silent miss, and this is the only axis that sees
+        that. Findings that reported no severity of their own do not count
+        against the scanner; ``severity_checked`` is the denominator actually
+        used, so a caller can tell "100% of 1" from "100% of 40".
     ``tiers``
         The default reporting view: per-tier count/found/weighted totals.
         Chains are reported in the ``chained`` tier alongside vulns tagged
@@ -225,6 +246,31 @@ def compute_metrics(
     tp = len(in_scope_matched)
     missed_vuln_ids = [field(v, "id") for v in vulns if field(v, "id") not in in_scope_matched]
     fn = len(missed_vuln_ids)
+
+    # --- severity accuracy -------------------------------------------------
+    # One finding can match a vuln more than once in theory; a vuln counts as
+    # correctly-rated if ANY of its matched findings reported the right
+    # severity, and as reported-but-wrong only if every finding that reported
+    # one got it wrong — this mirrors "detected" being an OR over findings,
+    # not a count of them.
+    vuln_severity = {
+        field(v, "id"): str(field(v, "severity", "") or "").strip().lower() for v in vulns
+    }
+    reported_by_vuln: dict = {}
+    for f in findings:
+        vid = field(f, "matched_vuln_id")
+        if vid not in in_scope_matched:
+            continue
+        f_sev = str(field(f, "severity", "") or "").strip().lower()
+        if not f_sev:
+            continue
+        reported_by_vuln.setdefault(vid, set()).add(f_sev)
+
+    severity_checked = len(reported_by_vuln)
+    severity_correct = sum(
+        1 for vid, sevs in reported_by_vuln.items() if vuln_severity.get(vid) in sevs
+    )
+    severity_accuracy = severity_correct / severity_checked if severity_checked else 0.0
 
     # --- count-based metrics ---------------------------------------------
     adjudication_complete = pending == 0
@@ -319,6 +365,9 @@ def compute_metrics(
         "recall": recall,
         "f1": f1,
         "adjudication_complete": adjudication_complete,
+        "severity_accuracy": severity_accuracy,
+        "severity_checked": severity_checked,
+        "severity_correct": severity_correct,
         # weighted
         "weighted_found": weighted_found,
         "weighted_total": float(weighted_total),

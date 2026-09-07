@@ -183,6 +183,10 @@ vulnapps/
 │   ├── 028_chains.sql                   # chains, chain_members (credited iff all members matched)
 │   ├── 030_fp_group.sql                 # scan_findings.fp_group (FP clustering)
 │   ├── 032_benchmark_corpus.sql         # apps.benchmark_verified, vulns.weight_verified
+│   ├── 034_weight_verified_deploy_fix.sql  # deploy-pipeline fix (migration tracked by filename)
+│   ├── 035_finding_reasoning.sql        # scan_findings.reasoning (LLM mapping rationale)
+│   ├── 036_audit_log.sql                # audit_log table (scan/vuln history log)
+│   ├── 037_audit_log_chains.sql         # widen audit_log.entity_type to allow 'chain'
 │   ├── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
 │   ├── 013_api_keys.sql                 # API keys table with scopes
 │   ├── 014_scan_labels.sql              # Labels + scan_labels junction table
@@ -666,6 +670,14 @@ All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT 
 | GET | `/api/apps/{id}/vulns/export` | None / read | Download all vulns for the app as a CSV file (`Content-Disposition: attachment`). Never capped by `MAX_VULNS_PER_APP` — unlike the list/detail endpoints, it's one file rather than a paginated response. Columns match what `import` reads, so an export round-trips through import unchanged. String cells starting with `=`, `+`, `-`, or `@` get a leading `'` to defuse spreadsheet formula injection |
 | GET | `/api/apps/{id}/history` | App write | Audit-log entries for this app's vulnerabilities (created/updated/deleted/invalidated/bulk-imported), most recent first. Gated on app write access, not a separate role — see History Log below |
 
+### Chains (`/api/apps/{id}/chains`)
+| Method | Path | Auth / Scope | Description |
+|--------|------|-------------|-------------|
+| GET | `/api/apps/{id}/chains` | None / read | List chains, each with resolved ordered `members` |
+| POST | `/api/apps/{id}/chains` | App write / full | Create. See **Exploit chains** above for the full field list and modeling rule |
+| PUT | `/api/apps/{id}/chains/{pk}` | App write / full | Full update — title/description/weight/members |
+| DELETE | `/api/apps/{id}/chains/{pk}` | App write / full | Hard delete |
+
 ### Scans (`/api/scans` + `/api/apps/{id}/scans`)
 | Method | Path | Auth / Scope | Description |
 |--------|------|-------------|-------------|
@@ -931,6 +943,10 @@ f1              = 2 * precision_upper * recall / (…)        -- upper bound, so
 weighted_found  = Σ over in-scope vulns and chains of impact_weight × credit
 weighted_total  = Σ over in-scope vulns and chains of impact_weight
 weighted_rate   = weighted_found / weighted_total            -- THE HEADLINE METRIC
+
+severity_checked  = count of TP vulns whose matched finding reported its own severity
+severity_correct  = of those, count where the reported severity == the vuln's ground-truth severity
+severity_accuracy = severity_correct / severity_checked      -- 0 when severity_checked is 0
 ```
 
 **A matched vuln always earns its full weight** — a match IS the evidence, there is no
@@ -952,6 +968,15 @@ meaningless. The bounds converge as findings are adjudicated; `adjudication_comp
 value until they do.
 
 **Duplicate indicator:** When multiple findings match the same vuln, a badge shows "N findings" next to the matched vuln link.
+
+**Severity accuracy** measures rating quality, not detection: of the TP findings that
+reported their own `severity`, the fraction whose reported severity exactly matches the
+matched vuln's ground-truth `severity`. A finding that reported no severity of its own
+does not count against (or for) the scanner — the denominator (`severity_checked`) is the
+population actually adjudicable, which is why the UI always shows `correct/checked`
+alongside the percentage rather than the percentage alone. Detecting a critical SQLi and
+calling it "low" is a materially different failure than a silent miss, and until this
+metric existed nothing on the comparison page could see that difference.
 
 Displayed in a metrics-grid: Weighted Detection (orange, headline, with `found/total pts`
 beneath), TP (green), FP clusters (red), FN (red), Ignored (muted), Precision (orange, or a
@@ -1006,8 +1031,23 @@ both figures exactly and fails if the scale or credit rules stop separating them
 
 `commodity` | `business_logic` | `chained`. **A reporting axis, never a multiplier** —
 blending difficulty into the weight yields one opaque number and destroys the diagnostic.
-The point is to see *where on the difficulty curve* a configuration improved. Default
-reporting view:
+The point is to see *where on the difficulty curve* a configuration improved.
+
+**The split is about the nature of the defect, not about how findable it happens to
+be.** `commodity` is a technical/input-handling flaw — injection, protocol,
+crypto-implementation, config — a bug that exists independent of what this particular
+app does. `business_logic` is a missing or client-trusted authorization/business-rule
+check. This was corrected mid-session after TaintedPort's own BOLA/BFLA/BOPLA/mass-
+assignment vulns (#17/18/20/22/24/25) were initially left `commodity` on the reasoning
+that "a dedicated tool exists that checks for this OWASP API category" — that reasoning
+doesn't hold: every such tool still has to be told, per endpoint, what's self-scoped and
+what a privileged field is, which is exactly the "understanding what the app is for"
+the tier exists to name, not a way around it. All six were reclassified to
+`business_logic`, alongside TP-019/021/033/034 (price/discount/purchase/email-uniqueness
+business rules — no generic technique substitutes for knowing this app's actual rule)
+and TP-023/036 (each *contingent* on another vuln to be exploitable at all, and
+mistagged `chained`/`commodity` on their own before this review — see **Exploit
+chains** below). Default reporting view:
 
 ```
 Tier             Ground truth   Found   Weighted rate
@@ -1035,6 +1075,42 @@ contributes zero — there is no partial chain credit. The chain's weight sits *
 its members, and that double count is only defensible when the chain requires all of its
 members to actually be demonstrated together. The chain still sits in `weighted_total`, so
 an unmatched chain costs points rather than vanishing.
+
+**`difficulty_tier='chained'` is not a substitute for a real chain.** Until
+`app/services/chains.py` existed, `chains`/`chain_members` had no write path at all — the
+tables existed (migration 028) but nothing could ever populate them, so the only way a scan
+could get "chained"-tier credit was a single vuln mistagged `difficulty_tier='chained'`. That
+is exactly backwards: it lets a scanner earn chain-tier credit for flagging one isolated
+finding, with no requirement that it ever demonstrated a multi-step pivot. The rule going
+forward — reached after TaintedPort's TP-036 ("Pass-the-Hash") was found mistagged this
+way: **a vuln whose exploitability has an external precondition (e.g. "needs a password hash
+obtained elsewhere") is rated on its own standalone risk** (which is usually lower than the
+"if fully chained" scenario — TP-036 dropped from `high`/`chained` to `medium`/`business_logic`
+after this review), **and the amplified impact is only ever captured by registering a real
+chain** whose members are the *other*, independently-tracked vulns that supply the
+precondition. A scanner earns the chain's extra credit only by matching every member — i.e.
+only by actually finding the precondition-supplying vuln too, never by flagging the
+downstream vuln alone. The same review applied to TP-023 ("JWT Claim Forgery"): the
+`AdminController` trusting a JWT's `is_admin` claim is inert on its own — it only matters
+once something can forge/tamper that claim (TP-011 "none"-alg, TP-012 signature-not-verified)
+or steal the real signing secret (TP-027 SSRF + CODE-001 hardcoded secret) — so it was
+likewise downgraded standalone and re-expressed as three separate two-member chains (one per
+independent path in), rather than one vuln carrying `critical`/`chained` for an outcome it
+cannot produce by itself.
+
+**Chain CRUD** (`app/services/chains.py`, `app/routers/api/chains.py`) — the only write path
+for `chains`/`chain_members`:
+
+| Method | Route | Notes |
+|---|---|---|
+| GET | `/api/apps/{id}/chains` | List chains with resolved, ordered `members` (`vuln_code`, `vuln_title`, `step_order`) |
+| POST | `/api/apps/{id}/chains` | Create. Body: `chain_id` (auto-generated `CHAIN-NNN` if omitted), `title`, `description`, `impact_weight` (required, 1\|3\|9\|27), `member_vuln_ids` (≥2, must belong to this app). Opens a `new_prior_vuln` revision, same as adding a vuln |
+| PUT | `/api/apps/{id}/chains/{pk}` | Full update — title/description/weight/members. A weight change opens a `weight_change` revision |
+| DELETE | `/api/apps/{id}/chains/{pk}` | Hard delete |
+
+All three require app write access + `full` API scope, and log to `audit_log`
+(`entity_type='chain'`, actions `chain_created`/`chain_updated`/`chain_deleted`) exactly like
+vuln CRUD.
 
 ### Ground-truth revisions
 
@@ -1138,20 +1214,34 @@ Comparison page at `/apps/:id/compare` (API: `GET /api/apps/{id}/compare?scans=1
   compared scans, and on incomplete adjudication. Advisory only — never blocking.
 - **Metrics Table**: Weighted Detection (headline, with `found/total pts`), TP,
   FP clusters, FN, Pending, Precision (a `lower–upper` range while unadjudicated),
-  Recall, F1, and a per-tier detection breakdown. Color-coded: green >=70%, yellow
-  >=40%, red <40%. The 🏆 marks the highest **weighted** rate, not the highest F1.
+  Recall, F1, Severity Accuracy (`correct/checked`, `-` when nothing was
+  checkable), and a per-tier detection breakdown. Color-coded: green >=70%,
+  yellow >=40%, red <40%. The 🏆 marks the highest **weighted** rate, not the
+  highest F1.
 - **Coverage & Quality Shape**: a radar/spider chart, one small-multiple panel
   per scanner (`TierRadar`/`RadarPanel` in `ScanCompare.jsx`), shown right after
-  the Metrics Table. Axes: Commodity / Business logic / Chained rate (top half,
-  same gating as the table's tier rows — hidden under a severity filter, and a
-  tier axis only appears if some compared scan's ground truth actually has vulns
-  in it) and Precision (`precision_upper`) / Recall / F1 (bottom half, always
-  shown). One polygon per panel rather than N overlaid on one chart — this page
-  allows comparing an unbounded number of scans, and overlaid same-hue polygons
-  stop being tellable-apart long before that; each panel's own title carries
-  scanner identity instead. All panels share the app's single accent hue; the
-  weighted-detection winner's panel gets the same accent background wash + 🏆
-  the table uses, not a second hue. Hover a vertex for the exact rate + `found/total`.
+  the Metrics Table. Axes, clockwise from the top: Commodity / Business logic /
+  Chained rate (same gating as the table's tier rows — hidden under a severity
+  filter, and a tier axis only appears if some compared scan's ground truth
+  actually has vulns in it), then Severity Accuracy / Precision (`precision_upper`)
+  / Weighted Detection (always shown). One polygon per panel rather than N
+  overlaid on one chart — this page allows comparing an unbounded number of
+  scans, and overlaid same-hue polygons stop being tellable-apart long before
+  that; each panel's own title carries scanner identity instead. All panels
+  share the app's single accent hue; the weighted-detection winner's panel gets
+  an accent-colored border + 🏆 instead of a background wash — a background tint
+  over the panel's own near-black surface flattened the grid-line contrast to
+  the point the rings became illegible, so the winner is marked by a ring, not
+  a fill. Hover a vertex for the exact rate + `found/total` (or `correct/checked`
+  for Severity Accuracy).
+  **Column alignment:** best-effort, not guaranteed — a `ResizeObserver` on the
+  Metrics Table's header row measures each scanner `<th>`'s actual rendered
+  width plus the sticky label column's width; when available, the radar panels
+  render in a matching non-wrapping row (leading spacer + one fixed-width slot
+  per scanner) so panel N sits under table column N, with its own
+  `.compare-scroll` horizontal scroll for when the table itself needs one. Falls
+  back to the plain responsive `card-grid` (auto-fill, wraps on narrow screens)
+  whenever widths haven't been measured yet.
 - **Detection Matrix**: Rows = known vulnerabilities (with weight and tier),
   Columns = scanners. Checkmark (found), X (missed), or `n/a` where the vuln
   postdates that run. Coverage summary per vuln counts only applicable scans.

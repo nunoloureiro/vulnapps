@@ -660,8 +660,8 @@ const WEIGHT_OPTIONS = [
 ];
 
 const TIER_OPTIONS = [
-  ['commodity', 'Commodity — a scanner with a signature finds it'],
-  ['business_logic', 'Business logic — needs understanding of what the app is for'],
+  ['commodity', 'Commodity — a technical/input-handling defect (injection, protocol, config)'],
+  ['business_logic', 'Business logic — missing or client-trusted authorization/business-rule check'],
   ['chained', 'Chained — requires pivoting through more than one flaw'],
 ];
 

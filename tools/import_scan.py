@@ -836,9 +836,11 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
     else:
         print(f"  {colored('✓', 'GREEN')} Heuristic matching was already correct")
 
-    # Severity coverage on MATCHED findings, reported at import time. Severity
-    # band error can only be computed where the tool's own severity was captured,
-    # and a silent gap here reads downstream as a well-calibrated scanner.
+    # Severity accuracy, reported at import time. Sourced from the server's
+    # own compute_metrics() (app/scoring.py) rather than reimplemented here,
+    # so this number can never drift from what the Compare Scans page shows
+    # for the same scan. Re-fetched after applying corrections above, since
+    # those change which findings are matched to what.
     matched = [lf for lf in llm_findings
                if lf.get("matched_vuln_db_id") is not None and not lf.get("is_false_positive")]
     with_sev = [lf for lf in matched if lf.get("severity")]
@@ -850,7 +852,18 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
               f"({pct:.0f}%)")
         if pct < 100:
             print(f"    {C.DIM}Findings without a reported severity are excluded from "
-                  f"severity band error.{C.RESET}")
+                  f"severity accuracy.{C.RESET}")
+
+        final_scan = client.get_scan(scan_id)
+        m = final_scan.get("metrics") or {}
+        checked = m.get("severity_checked") or 0
+        if checked:
+            correct = m.get("severity_correct") or 0
+            acc_pct = 100 * m.get("severity_accuracy", 0)
+            mark, colour = ("✓", "GREEN") if acc_pct >= 70 else ("⚠", "YELLOW") if acc_pct >= 40 else ("✗", "RED")
+            print(f"  {colored(mark, colour)} Severity accuracy: "
+                  f"{colored(f'{acc_pct:.0f}%', 'CYAN')} ({correct}/{checked} rated at the "
+                  f"correct ground-truth severity)")
 
     return scan_id
 

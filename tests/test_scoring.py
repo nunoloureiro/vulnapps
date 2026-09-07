@@ -27,13 +27,14 @@ def vuln(vid, weight, tier="commodity", **kw):
     return row
 
 
-def finding(fid, matched=None, fp=0, ignored=0, fp_group=None):
+def finding(fid, matched=None, fp=0, ignored=0, fp_group=None, severity=None):
     return {
         "id": fid,
         "matched_vuln_id": matched,
         "is_false_positive": fp,
         "is_ignored": ignored,
         "fp_group": fp_group,
+        "severity": severity,
     }
 
 
@@ -301,4 +302,44 @@ def test_empty_corpus_does_not_divide_by_zero():
     assert m["weighted_rate"] == 0.0
     assert m["recall"] == 0.0
     assert m["f1"] == 0.0
-    assert m["adjudication_complete"] is True
+    assert m["severity_accuracy"] == 0.0
+    assert m["severity_checked"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Severity accuracy
+# ---------------------------------------------------------------------------
+
+def test_severity_accuracy_only_counts_findings_that_reported_one():
+    v1 = vuln(1, 9, severity="high")
+    v2 = vuln(2, 9, severity="high")
+    findings = [
+        finding(10, matched=1, severity="high"),   # correct
+        finding(11, matched=2, severity="low"),    # matched, wrong severity
+    ]
+    m = compute_metrics(findings, [v1, v2])
+    assert m["severity_checked"] == 2
+    assert m["severity_correct"] == 1
+    assert m["severity_accuracy"] == 0.5
+
+
+def test_severity_accuracy_ignores_findings_with_no_reported_severity():
+    v = vuln(1, 9, severity="high")
+    # A TP whose finding never reported a severity does not count against —
+    # or for — the scanner; the denominator is what was actually adjudicable.
+    m = compute_metrics([finding(10, matched=1, severity=None)], [v])
+    assert m["severity_checked"] == 0
+    assert m["severity_accuracy"] == 0.0
+
+
+def test_severity_accuracy_is_case_insensitive_and_ignores_fp_and_pending():
+    v = vuln(1, 9, severity="High")
+    findings = [
+        finding(10, matched=1, severity="HIGH"),
+        finding(11, fp=1, severity="critical"),      # FP: not counted
+        finding(12, matched=None, severity="medium"),  # pending: not counted
+    ]
+    m = compute_metrics(findings, [v])
+    assert m["severity_checked"] == 1
+    assert m["severity_correct"] == 1
+    assert m["severity_accuracy"] == 1.0

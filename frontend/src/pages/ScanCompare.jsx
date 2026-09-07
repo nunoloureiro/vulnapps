@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge } from '../components/Badge';
@@ -92,6 +92,15 @@ const TIER_ROWS = [
   ['chained', 'Chained'],
 ];
 
+// Detection Matrix's per-row tier tag. All three tiers are labelled the same
+// way — a vuln's tier is worth showing regardless of which one it is, not
+// just when it happens to be non-commodity.
+const DETECTION_TIER_LABELS = {
+  commodity: 'commodity',
+  business_logic: 'business logic',
+  chained: 'chained',
+};
+
 // Reporting guards. Advisory here on purpose: comparing an old scan with a new
 // one is how you notice ground truth moved, so this view never refuses. The
 // strict version is GET /api/apps/{id}/benchmark, which returns 409 with these
@@ -159,6 +168,41 @@ function ComparisonView({ data, appId }) {
     const weightedTotal = applicable.reduce((a, row) => a + (row.vuln.impact_weight || 0), 0);
     const weightedFound = applicable.reduce(
       (a, row) => a + (row.vuln.impact_weight || 0) * (row.credits[scannerIdx] || 0), 0);
+
+    // Severity accuracy: of the TP rows (detected + in scope) whose finding
+    // reported a severity at all, how many matched the vuln's ground-truth
+    // severity. Mirrors app/scoring.py's compute_metrics exactly, just
+    // recomputed over the severity-filtered vuln subset.
+    const tpRows = applicable.filter(row => row.detections[scannerIdx]);
+    const checkedRows = tpRows.filter(row => row.severity_reported?.[scannerIdx]);
+    const severityChecked = checkedRows.length;
+    const severityCorrect = checkedRows.filter(
+      row => row.severity_reported[scannerIdx].toLowerCase() === (row.vuln.severity || '').toLowerCase()
+    ).length;
+
+    // Per-tier rates, recomputed for the filtered vuln subset — 'commodity'
+    // and 'business_logic' are per-vuln fields so this works the same way
+    // every other filtered metric above does. 'chained' is deliberately
+    // omitted: chains aren't in the matrix at all (it's vulns only), so
+    // there is no filtered subset to compute a rate over — showing a
+    // leftover unfiltered number here would just be wrong, not "filtered".
+    const tiers = {};
+    for (const tier of ['commodity', 'business_logic']) {
+      const rows = applicable.filter(row => (row.vuln.difficulty_tier || 'commodity') === tier);
+      const count = rows.length;
+      const found = rows.filter(row => row.detections[scannerIdx]).length;
+      const tWeightedTotal = rows.reduce((a, row) => a + (row.vuln.impact_weight || 0), 0);
+      const tWeightedFound = rows.reduce(
+        (a, row) => a + (row.vuln.impact_weight || 0) * (row.credits[scannerIdx] || 0), 0);
+      tiers[tier] = {
+        count, found,
+        rate: count > 0 ? found / count : 0,
+        weighted_total: tWeightedTotal,
+        weighted_found: Math.round(tWeightedFound * 100) / 100,
+        weighted_rate: tWeightedTotal > 0 ? tWeightedFound / tWeightedTotal : 0,
+      };
+    }
+
     return {
       tp, fn, fp: m.fp, fp_groups: fpGroups, pending,
       precision_lower: precisionLower, precision_upper: precisionUpper, recall, f1,
@@ -166,9 +210,35 @@ function ComparisonView({ data, appId }) {
       weighted_found: Math.round(weightedFound * 100) / 100,
       weighted_total: weightedTotal,
       weighted_rate: weightedTotal > 0 ? weightedFound / weightedTotal : 0,
-      tiers: m.tiers,
+      severity_checked: severityChecked,
+      severity_correct: severityCorrect,
+      severity_accuracy: severityChecked > 0 ? severityCorrect / severityChecked : 0,
+      tiers,
     };
   };
+
+  // Best-effort alignment of the radar panels below with these table
+  // columns: measure each scanner <th>'s actual rendered width (and the
+  // sticky label column's), re-measuring on resize/reflow. Null until
+  // measured or when the table hasn't rendered scanner columns yet.
+  const metricsHeaderRef = useRef(null);
+  const [colWidths, setColWidths] = useState(null);
+  useEffect(() => {
+    const row = metricsHeaderRef.current;
+    if (!row) return;
+    const measure = () => {
+      const ths = Array.from(row.querySelectorAll('th'));
+      if (ths.length < 2) { setColWidths(null); return; }
+      setColWidths({
+        label: ths[0].getBoundingClientRect().width,
+        cols: ths.slice(1).map(th => th.getBoundingClientRect().width),
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(row);
+    return () => ro.disconnect();
+  }, [scanners.length]);
 
   const isSevFiltered = sevFilter.size < ALL_SEVERITIES.length;
   const filteredMetrics = scanners.map((s, i) => isSevFiltered ? computeMetrics(i) : s.metrics);
@@ -229,13 +299,14 @@ function ComparisonView({ data, appId }) {
     recall: 'TP / (TP + FN) — How many of the known vulnerabilities were found',
     f1: 'Harmonic mean of Precision and Recall — Overall scanner accuracy',
     weighted_rate: 'Severity-weighted detection rate: points found / points available on the 1/3/9/27 scale. The headline metric.',
+    severity_accuracy: 'Of the true positives that reported their own severity, the fraction rated at the same severity as ground truth. A miss is bad; a hit rated "low" when it is actually critical is a different kind of bad, and this is the axis that sees it.',
   };
 
   const MetricLabel = ({ k }) => {
     const names = {
       tp: 'True Positives', fp_groups: 'False Positives', fn: 'False Negatives',
       pending: 'Pending', precision: 'Precision', recall: 'Recall', f1: 'F1 Score',
-      weighted_rate: 'Weighted Detection',
+      weighted_rate: 'Weighted Detection', severity_accuracy: 'Severity Accuracy',
     };
     const tip = METRIC_TOOLTIPS[k];
     return (
@@ -278,7 +349,7 @@ function ComparisonView({ data, appId }) {
         <div className="compare-scroll">
           <table>
             <thead>
-              <tr>
+              <tr ref={metricsHeaderRef}>
                 <th className="sticky-col">Metric</th>
                 {scanners.map((s, i) => (
                   <th
@@ -355,9 +426,29 @@ function ComparisonView({ data, appId }) {
                   ))}
                 </tr>
               ))}
+              <tr>
+                <td className="detail-label sticky-col"><MetricLabel k="severity_accuracy" /></td>
+                {filteredMetrics.map((m, i) => (
+                  <td
+                    key={scanners[i].scan.id}
+                    className={`text-center font-mono ${m.severity_checked > 0 ? pctColor(m.severity_accuracy) : 'text-muted'}`}
+                    style={winnerStyle(i)}
+                  >
+                    {m.severity_checked > 0 ? `${(m.severity_accuracy * 100).toFixed(1)}%` : '-'}
+                    {m.severity_checked > 0 && (
+                      <div className="text-muted text-xs">{m.severity_correct}/{m.severity_checked}</div>
+                    )}
+                  </td>
+                ))}
+              </tr>
               {/* Per-tier detection: where on the difficulty curve each run sits.
-                  Only meaningful unfiltered, where the server's tiers apply. */}
-              {!isFiltered && TIER_ROWS.map(([tier, tierLabel]) => (
+                  Commodity/business logic are per-vuln fields, so they're
+                  recomputed for the filtered subset same as every other row
+                  above. Chained is server-only (chains aren't in the vuln
+                  matrix at all) and is hidden under a filter rather than
+                  show a stale unfiltered number mislabelled as filtered. */}
+              {TIER_ROWS.map(([tier, tierLabel]) => (
+                !(isFiltered && tier === 'chained') &&
                 filteredMetrics.some(m => m.tiers?.[tier]?.count > 0) && (
                   <tr key={tier}>
                     <td className="detail-label sticky-col" style={{ paddingLeft: '1.25rem' }}>
@@ -410,7 +501,7 @@ function ComparisonView({ data, appId }) {
         </div>
       </div>
 
-      <TierRadar scanners={scanners} metrics={filteredMetrics} isFiltered={isFiltered} winnerIdx={winnerIdx} label={label} />
+      <TierRadar scanners={scanners} metrics={filteredMetrics} isFiltered={isFiltered} winnerIdx={winnerIdx} label={label} colWidths={colWidths} />
 
       <div className="card mb-2">
         <h3 className="card-title mb-2">Detection Matrix{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}</h3>
@@ -431,11 +522,9 @@ function ComparisonView({ data, appId }) {
                   <td className="font-mono text-sm sticky-col" style={{ left: 0 }}>{row.vuln.vuln_id}</td>
                   <td className="sticky-col" style={{ left: 70 }}>
                     {row.vuln.title}
-                    {row.vuln.difficulty_tier && row.vuln.difficulty_tier !== 'commodity' && (
-                      <span className="text-muted text-xs" style={{ marginLeft: 6 }}>
-                        {row.vuln.difficulty_tier === 'business_logic' ? 'business logic' : 'chained'}
-                      </span>
-                    )}
+                    <span className="text-muted text-xs" style={{ marginLeft: 6 }}>
+                      {DETECTION_TIER_LABELS[row.vuln.difficulty_tier] || DETECTION_TIER_LABELS.commodity}
+                    </span>
                   </td>
                   <td>
                     <Badge severity={row.vuln.severity} />
@@ -711,23 +800,46 @@ const RADAR_AXES = [
   ['commodity', 'Commodity', true],
   ['business_logic', 'Business logic', true],
   ['chained', 'Chained', true],
+  ['severity_accuracy', 'Severity Accuracy', false],
   ['precision_upper', 'Precision', false],
-  ['recall', 'Recall', false],
-  ['f1', 'F1', false],
+  ['weighted_rate', 'Weighted Detection', false],
 ];
 
-function TierRadar({ scanners, metrics, isFiltered, winnerIdx, label }) {
+// The panel's own fixed drawing size (see RadarPanel) plus its card padding
+// (1.5rem = 24px each side). A slot narrower than this would either clip the
+// panel or force it to shrink — every panel must stay the same visual size
+// to be comparable, so the slot is never let get smaller than this, even if
+// that means it no longer lines up exactly under a narrower table column.
+const MIN_PANEL_SLOT = 268;
+
+function TierRadar({ scanners, metrics, isFiltered, winnerIdx, label, colWidths }) {
   if (metrics.length < 2) return null;
 
-  // Same gating the table above uses: tier rates are only meaningful
-  // unfiltered, and only shown when at least one scanner's ground truth
-  // actually has vulns in that tier.
+  // Same gating the table above uses: commodity/business logic are
+  // per-vuln and get recomputed for a filtered subset upstream, so they
+  // stay on the chart under a filter; chained is server-only ground truth
+  // with no filtered subset to compute, so it drops out under a filter
+  // instead of showing a stale unfiltered rate.
   const axes = RADAR_AXES.filter(([key, , isTier]) => {
     if (!isTier) return true;
-    if (isFiltered) return false;
+    if (isFiltered && key === 'chained') return false;
     return metrics.some(m => (m.tiers?.[key]?.count || 0) > 0);
   });
   if (axes.length < 3) return null;
+
+  const countsFor = (m, key, isTier) => {
+    if (isTier) return m.tiers?.[key];
+    if (key === 'severity_accuracy') return { found: m.severity_correct, count: m.severity_checked };
+    return null;
+  };
+
+  // Best-effort alignment with the Metrics Comparison table's scanner
+  // columns above (see the ResizeObserver in ComparisonView): when the
+  // table's per-scanner column widths are known and there's room, lay panels
+  // out in a non-wrapping row at those exact widths, with a leading spacer
+  // matching the table's sticky label column — so panel N sits directly
+  // under scanner column N. Otherwise fall back to the plain responsive grid.
+  const aligned = !!colWidths;
 
   return (
     <div className="card mb-2">
@@ -735,19 +847,48 @@ function TierRadar({ scanners, metrics, isFiltered, winnerIdx, label }) {
         Coverage &amp; Quality Shape{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}
         <span className="text-muted text-sm font-mono" style={{ marginLeft: 8 }}>{label}</span>
       </h3>
-      <div className="card-grid">
-        {scanners.map((s, i) => (
-          <RadarPanel
-            key={s.scan.id}
-            name={s.scan.scanner_name || 'scan'}
-            version={s.scan.scanner_version}
-            isWinner={i === winnerIdx}
-            axes={axes}
-            values={axes.map(([key, , isTier]) => isTier ? (metrics[i].tiers?.[key]?.rate ?? 0) : (metrics[i][key] ?? 0))}
-            counts={axes.map(([key, , isTier]) => isTier ? metrics[i].tiers?.[key] : null)}
-          />
-        ))}
-      </div>
+      {aligned ? (
+        <div className="compare-scroll">
+          <div style={{ display: 'flex', gap: 0 }}>
+            <div style={{ flex: `0 0 ${colWidths.label}px` }} />
+            {scanners.map((s, i) => (
+              <div
+                key={s.scan.id}
+                style={{
+                  flex: `0 0 ${Math.max(colWidths.cols[i], MIN_PANEL_SLOT)}px`,
+                  minWidth: 0,
+                  padding: '0 0.4rem',
+                  display: 'flex',
+                  justifyContent: 'center',
+                }}
+              >
+                <RadarPanel
+                  name={s.scan.scanner_name || 'scan'}
+                  version={s.scan.scanner_version}
+                  isWinner={i === winnerIdx}
+                  axes={axes}
+                  values={axes.map(([key, , isTier]) => isTier ? (metrics[i].tiers?.[key]?.rate ?? 0) : (metrics[i][key] ?? 0))}
+                  counts={axes.map(([key, , isTier]) => countsFor(metrics[i], key, isTier))}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="card-grid">
+          {scanners.map((s, i) => (
+            <RadarPanel
+              key={s.scan.id}
+              name={s.scan.scanner_name || 'scan'}
+              version={s.scan.scanner_version}
+              isWinner={i === winnerIdx}
+              axes={axes}
+              values={axes.map(([key, , isTier]) => isTier ? (metrics[i].tiers?.[key]?.rate ?? 0) : (metrics[i][key] ?? 0))}
+              counts={axes.map(([key, , isTier]) => countsFor(metrics[i], key, isTier))}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -767,20 +908,32 @@ function RadarPanel({ name, version, isWinner, axes, values, counts }) {
     return [CX + R * frac * Math.cos(a), CY + R * frac * Math.sin(a)];
   };
 
-  const GRID = 'var(--border)', MUTED = 'var(--text-muted)', ACCENT = 'var(--accent)';
+  // GRID needs to read clearly against the card's own near-black surface —
+  // --border (used for ordinary card outlines) measures under 1.2:1 contrast
+  // against --bg-panel, essentially invisible as a chart gridline. --text-muted
+  // clears ~3.7:1, still visually recessive (this is the axis-label color too)
+  // but the spokes/rings stay legible on every panel, winner or not.
+  const GRID = 'var(--text-muted)', MUTED = 'var(--text-muted)', ACCENT = 'var(--accent)';
   const ringLevels = [0.25, 0.5, 0.75, 1];
   const ringPoints = frac => axes.map((_, i) => pointAt(i, frac).join(',')).join(' ');
   const clamped = values.map(v => Math.max(0, Math.min(1, v)));
   const dataPoints = clamped.map((v, i) => pointAt(i, v).join(',')).join(' ');
 
+  // Fixed physical size (not width:100%): every panel must draw at the same
+  // size to be visually comparable. The alignment feature above can make a
+  // panel's SLOT wider or narrower than another's to match the table column
+  // above it, but the panel itself never stretches or shrinks to fill that
+  // slot — it just centers within it (margin: auto).
+  const RENDER_SIZE = 220;
+
   return (
-    <div className="card" style={isWinner ? { background: 'rgba(249, 115, 22, 0.08)' } : undefined}>
+    <div className="card" style={isWinner ? { borderColor: 'var(--accent)', borderWidth: '1.5px' } : undefined}>
       <div className="text-center mb-1">
         {isWinner && <span title="Highest weighted detection rate" style={{ marginRight: 4 }}>🏆</span>}
         <span className="font-mono text-sm" style={{ color: 'var(--text)' }}>{name}</span>
         {version && <span className="text-muted text-xs"> v{version}</span>}
       </div>
-      <svg viewBox={`0 0 ${SIZE} ${SIZE}`} width="100%" style={{ display: 'block', maxHeight: 260 }}
+      <svg viewBox={`0 0 ${SIZE} ${SIZE}`} width={RENDER_SIZE} height={RENDER_SIZE} style={{ display: 'block', margin: '0 auto' }}
         role="img" aria-label={`${name}: ${axes.map(([, l], i) => `${l} ${Math.round(clamped[i] * 100)}%`).join(', ')}`}>
         {ringLevels.map(f => (
           <polygon key={f} points={ringPoints(f)} fill="none" stroke={GRID} strokeWidth="1" />

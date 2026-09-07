@@ -77,11 +77,13 @@ from app.routers.api import auth as api_auth, account as api_account, admin as a
 from app.routers.api import apps as api_apps, vulns as api_vulns, scans as api_scans  # noqa: E402
 from app.routers.api import teams as api_teams, dashboard as api_dashboard  # noqa: E402
 from app.routers.api import scanners as api_scanners  # noqa: E402
+from app.routers.api import chains as api_chains  # noqa: E402
 
 app.include_router(api_auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(api_account.router, prefix="/api/account", tags=["account"])
 app.include_router(api_apps.router, prefix="/api/apps", tags=["apps"])
 app.include_router(api_vulns.router, prefix="/api/apps", tags=["vulnerabilities"])
+app.include_router(api_chains.router, prefix="/api/apps", tags=["chains"])
 app.include_router(api_scans.router, prefix="/api/scans", tags=["scans"])
 app.include_router(api_scans.submit_router, prefix="/api/apps", tags=["scans"])
 app.include_router(api_scans.labels_router, prefix="/api/labels", tags=["labels"])
