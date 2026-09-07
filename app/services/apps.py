@@ -282,7 +282,15 @@ async def create_app(
     app_id = cursor.lastrowid
     await _save_tech_stack(db, app_id, tech_stack)
 
-    # Clone vulnerabilities from source app
+    # Clone vulnerabilities (and any chains over them) from source app. A
+    # clone is meant to be "the current reviewed state, on a new version" --
+    # it must carry forward impact_weight/difficulty_tier/weight_verified
+    # (the actual curation work) and chains (their own ground-truth entity,
+    # contributing their own weight), not just the raw vuln text. Revision
+    # bookkeeping (existed_since/known_since/invalidated_at) is specific to
+    # the SOURCE app's revision timeline and meaningless in the new app's,
+    # so those reset to a fresh revision 1 rather than being copied; an
+    # invalidated (retired) source vuln is skipped rather than cloned back in.
     if clone_from:
         vis_clause, vis_params = app_visibility_filter(user)
         cursor = await db.execute(
@@ -291,16 +299,20 @@ async def create_app(
         )
         if await cursor.fetchone():
             cursor = await db.execute(
-                "SELECT * FROM vulnerabilities WHERE app_id = ?", (clone_from,)
+                "SELECT * FROM vulnerabilities WHERE app_id = ? AND invalidated_at_revision IS NULL",
+                (clone_from,),
             )
             source_vulns = await cursor.fetchall()
+            vuln_id_map: dict[int, int] = {}
             for v in source_vulns:
-                await db.execute(
+                cursor = await db.execute(
                     """INSERT INTO vulnerabilities
                        (app_id, vuln_id, title, severity, vuln_type, http_method,
                         url, parameter, filename, line_number, description,
-                        code_location, poc, remediation, created_by)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        code_location, poc, remediation, created_by,
+                        impact_weight, difficulty_tier, weight_verified,
+                        existed_since_revision, known_since_revision)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)""",
                     (
                         app_id,
                         v["vuln_id"],
@@ -317,8 +329,37 @@ async def create_app(
                         v["poc"],
                         v["remediation"],
                         user["sub"],
+                        v["impact_weight"],
+                        v["difficulty_tier"],
+                        v["weight_verified"],
                     ),
                 )
+                vuln_id_map[v["id"]] = cursor.lastrowid
+
+            cursor = await db.execute(
+                "SELECT * FROM chains WHERE app_id = ? AND invalidated_at_revision IS NULL",
+                (clone_from,),
+            )
+            source_chains = await cursor.fetchall()
+            for c in source_chains:
+                cursor = await db.execute(
+                    """INSERT INTO chains (app_id, chain_id, title, impact_weight,
+                       description, existed_since_revision)
+                       VALUES (?, ?, ?, ?, ?, 1)""",
+                    (app_id, c["chain_id"], c["title"], c["impact_weight"], c["description"]),
+                )
+                new_chain_pk = cursor.lastrowid
+                cursor = await db.execute(
+                    "SELECT vuln_id, step_order FROM chain_members WHERE chain_pk = ? ORDER BY step_order",
+                    (c["id"],),
+                )
+                for m in await cursor.fetchall():
+                    new_vuln_id = vuln_id_map.get(m["vuln_id"])
+                    if new_vuln_id is not None:
+                        await db.execute(
+                            "INSERT INTO chain_members (chain_pk, vuln_id, step_order) VALUES (?, ?, ?)",
+                            (new_chain_pk, new_vuln_id, m["step_order"]),
+                        )
 
     await db.commit()
 
