@@ -1482,9 +1482,21 @@ python tools/import_scan.py --url https://vulnapps.example.com \
 | `--provider` | `anthropic` or `vertex` (auto-detected from `CLAUDE_CODE_USE_VERTEX=1`) |
 | `--vertex-region` | Vertex AI region (or `ANTHROPIC_VERTEX_LOCATION`) |
 | `--vertex-project` | GCP project ID (or `ANTHROPIC_VERTEX_PROJECT_ID`) |
+| `--extra-info-extract` | Extra operator instructions appended to the extraction prompt (used when the app has no known vulns yet to map against) |
+| `--extra-info-mapping` | Extra operator instructions appended to the mapping prompt (used once the app has known vulns to map against) |
 | `--dry-run` | Show mapping without submitting |
 
 **LLM provider:** Supports both Anthropic direct API and Google Vertex AI. Auto-detects from `CLAUDE_CODE_USE_VERTEX=1` env var.
+
+**Operator steering (`--extra-info-extract` / `--extra-info-mapping`):** free-text appended
+to the prompt as a distinct "Additional Instructions From The Operator" section, right before
+the scan report. Only one applies per call — `--extra-info-extract` when the app has no known
+vulns yet (extraction-only mode), `--extra-info-mapping` once it does (mapping mode) — since
+each run is already in exactly one of those two modes (`run_llm_mapping`/`run_llm_mapping_cli`
+switch on whether `vulns` is empty). The section is explicitly scoped as informing judgment
+calls, not overriding the mandatory JSON schema or rules above it. Both the streaming-API path
+and the `--use-cli` subprocess path build this section through the same shared
+`_build_user_message` helper, so the two never drift apart.
 
 ---
 

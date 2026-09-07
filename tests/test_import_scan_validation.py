@@ -17,7 +17,7 @@ _SPEC.loader.exec_module(import_scan)
 
 _JWT_NONE_ALG_VULN = {
     "id": 42, "vuln_id": "TP-011", "title": "JWT 'none' Algorithm Accepted",
-    "vuln_type": "Broken Authentication",
+    "vuln_type": "Broken Authentication", "severity": "high",
 }
 
 
@@ -90,6 +90,78 @@ def test_validate_llm_matches_no_warning_for_good_match():
 def test_validate_llm_matches_ignores_unmatched_findings():
     mapping = {"findings": [{"title": "Something", "matched_vuln_db_id": None}]}
     assert import_scan.validate_llm_matches(mapping, [_JWT_NONE_ALG_VULN]) == []
+
+
+# ── --extra-info-mapping / --extra-info-extract ─────────────────────────
+#
+# _build_user_message is shared by the streaming-API path and the CLI
+# subprocess path specifically so these two flags can't drift between them.
+
+def test_build_user_message_omits_extra_section_when_not_given():
+    """No behavior change for every existing caller that doesn't pass it."""
+    mapping_msg = import_scan._build_user_message("REPORT", [_JWT_NONE_ALG_VULN], None, None)
+    assert "Additional Instructions" not in mapping_msg
+
+    extract_msg = import_scan._build_user_message("REPORT", [], None, None)
+    assert "Additional Instructions" not in extract_msg
+    assert extract_msg == "## Scan Report\n\nREPORT"
+
+
+def test_build_user_message_includes_extra_info_in_mapping_mode():
+    msg = import_scan._build_user_message(
+        "REPORT", [_JWT_NONE_ALG_VULN], None, "Only trust findings with a concrete PoC."
+    )
+    assert "Additional Instructions From The Operator" in msg
+    assert "Only trust findings with a concrete PoC." in msg
+    # Comes after the known-vulns section, before the scan report.
+    assert msg.index("Known Vulnerabilities") < msg.index("Additional Instructions") < msg.index("Scan Report")
+
+
+def test_build_user_message_includes_extra_info_in_extract_mode():
+    msg = import_scan._build_user_message("REPORT", [], None, "Be conservative about severity.")
+    assert "Additional Instructions From The Operator" in msg
+    assert "Be conservative about severity." in msg
+    assert msg.index("Additional Instructions") < msg.index("Scan Report")
+
+
+def test_run_llm_mapping_picks_extra_info_by_mode():
+    """Mapping mode uses extra_info_mapping; extraction mode uses
+    extra_info_extract -- never the other one, even if both are set."""
+    captured = {}
+
+    class _FakeStream:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get_final_text(self): return '{"findings": []}'
+        def get_final_message(self):
+            class R:
+                usage = None
+            return R()
+
+    class _FakeMessages:
+        def stream(self, **kwargs):
+            captured["system"] = kwargs["system"]
+            captured["user_message"] = kwargs["messages"][0]["content"]
+            return _FakeStream()
+
+    class _FakeClient:
+        messages = _FakeMessages()
+
+    import_scan.run_llm_mapping(
+        "REPORT", [_JWT_NONE_ALG_VULN], "fake-model", _FakeClient(),
+        extra_info_mapping="MAPPING STEER", extra_info_extract="EXTRACT STEER",
+    )
+    assert captured["system"] == import_scan.SYSTEM_PROMPT_MAP
+    assert "MAPPING STEER" in captured["user_message"]
+    assert "EXTRACT STEER" not in captured["user_message"]
+
+    import_scan.run_llm_mapping(
+        "REPORT", [], "fake-model", _FakeClient(),
+        extra_info_mapping="MAPPING STEER", extra_info_extract="EXTRACT STEER",
+    )
+    assert captured["system"] == import_scan.SYSTEM_PROMPT_EXTRACT
+    assert "EXTRACT STEER" in captured["user_message"]
+    assert "MAPPING STEER" not in captured["user_message"]
 
 
 # ── Correction-loop behavior (submit_to_vulnapps) ───────────────────────

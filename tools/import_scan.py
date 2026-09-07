@@ -496,6 +496,63 @@ def format_chains_for_prompt(chains: list) -> str:
     return "\n---\n".join(lines)
 
 
+def _build_user_message(scan_content: str, vulns: list, chains: list | None,
+                          extra_info: str | None) -> str:
+    """Build the user-turn content shared by the streaming API path
+    (`run_llm_mapping`) and the CLI subprocess path (`run_llm_mapping_cli`),
+    so the two prompts never drift apart.
+
+    `vulns` empty means extraction-only mode (no known-vulns/chains
+    section). `extra_info` is the operator-provided steering text for
+    whichever mode is active — `--extra-info-mapping` when `vulns` is
+    non-empty, `--extra-info-extract` otherwise.
+    """
+    if vulns:
+        chains_section = (
+            f"""
+
+## Known Exploit Chains for this Application
+
+{format_chains_for_prompt(chains)}"""
+            if chains else ""
+        )
+        extra_section = (
+            f"""
+
+## Additional Instructions From The Operator
+
+(Notes about this specific scan — they inform judgment calls above, they do \
+not change the required JSON output format or override the mandatory rules \
+above.)
+
+{extra_info}"""
+            if extra_info else ""
+        )
+        return f"""## Known Vulnerabilities for this Application
+
+{format_vulns_for_prompt(vulns)}{chains_section}{extra_section}
+
+## Scan Report
+
+{scan_content}"""
+
+    extra_section = (
+        f"""## Additional Instructions From The Operator
+
+(Notes about this specific scan — they inform judgment calls above, they do \
+not change the required JSON output format or override the mandatory rules \
+above.)
+
+{extra_info}
+
+"""
+        if extra_info else ""
+    )
+    return f"""{extra_section}## Scan Report
+
+{scan_content}"""
+
+
 def create_anthropic_client(provider: str, region: str | None, project_id: str | None):
     """Create the appropriate Anthropic client based on provider.
 
@@ -513,34 +570,19 @@ def create_anthropic_client(provider: str, region: str | None, project_id: str |
 
 
 def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_msg: str | None = None,
-                     chains: list | None = None) -> dict:
+                     chains: list | None = None, extra_info_mapping: str | None = None,
+                     extra_info_extract: str | None = None) -> dict:
     """Send scan content (optionally with known vulns) to Claude.
 
     When `vulns` is empty the prompt switches to extraction-only mode — no
     mapping language, all findings flow through as promote-candidates.
+    `extra_info_mapping`/`extra_info_extract` are operator-provided steering
+    text (--extra-info-mapping / --extra-info-extract); only the one
+    matching the active mode is used.
     """
-    if vulns:
-        system = SYSTEM_PROMPT_MAP
-        chains_section = (
-            f"""
-
-## Known Exploit Chains for this Application
-
-{format_chains_for_prompt(chains)}"""
-            if chains else ""
-        )
-        user_message = f"""## Known Vulnerabilities for this Application
-
-{format_vulns_for_prompt(vulns)}{chains_section}
-
-## Scan Report
-
-{scan_content}"""
-    else:
-        system = SYSTEM_PROMPT_EXTRACT
-        user_message = f"""## Scan Report
-
-{scan_content}"""
+    system = SYSTEM_PROMPT_MAP if vulns else SYSTEM_PROMPT_EXTRACT
+    extra_info = extra_info_mapping if vulns else extra_info_extract
+    user_message = _build_user_message(scan_content, vulns, chains, extra_info)
 
     # Stream the response. A non-streaming create() holds one socket open with
     # no bytes flowing until the whole answer is ready; on a detail-rich report
@@ -571,11 +613,15 @@ def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_
 
 
 def run_llm_mapping_cli(scan_content: str, vulns: list, spinner_msg: str | None = None,
-                          chains: list | None = None) -> dict:
+                          chains: list | None = None, extra_info_mapping: str | None = None,
+                          extra_info_extract: str | None = None) -> dict:
     """Run extraction/mapping via the local `claude` CLI. Used when --use-cli
     is set, or as a fallback when no API key/Vertex config is available.
 
     When `vulns` is empty the prompt switches to extraction-only mode.
+    `extra_info_mapping`/`extra_info_extract` are operator-provided steering
+    text (--extra-info-mapping / --extra-info-extract); only the one
+    matching the active mode is used.
     """
     import subprocess
     import shutil
@@ -584,32 +630,11 @@ def run_llm_mapping_cli(scan_content: str, vulns: list, spinner_msg: str | None 
         print(f"  {colored('Error:', 'RED')} No LLM available. Set ANTHROPIC_API_KEY or install Claude Code CLI.", file=sys.stderr)
         sys.exit(1)
 
-    if vulns:
-        chains_section = (
-            f"""
+    system = SYSTEM_PROMPT_MAP if vulns else SYSTEM_PROMPT_EXTRACT
+    extra_info = extra_info_mapping if vulns else extra_info_extract
+    prompt = f"""{system}
 
-## Known Exploit Chains for this Application
-
-{format_chains_for_prompt(chains)}"""
-            if chains else ""
-        )
-        prompt = f"""{SYSTEM_PROMPT_MAP}
-
-## Known Vulnerabilities for this Application
-
-{format_vulns_for_prompt(vulns)}{chains_section}
-
-## Scan Report
-
-{scan_content}
-
-Respond with ONLY valid JSON (no markdown fencing)."""
-    else:
-        prompt = f"""{SYSTEM_PROMPT_EXTRACT}
-
-## Scan Report
-
-{scan_content}
+{_build_user_message(scan_content, vulns, chains, extra_info)}
 
 Respond with ONLY valid JSON (no markdown fencing)."""
 
@@ -1359,6 +1384,10 @@ def show_pretty_help():
     {c}--vertex-project{r} {d}<p>{r}       GCP project ID (default: $ANTHROPIC_VERTEX_PROJECT_ID)
     {c}--use-cli{r}                   Force local {y}claude{r} CLI for mapping {d}(--allowedTools{r}
                               {d}Read,Glob,Grep). No API key required.{r}
+    {c}--extra-info-extract{r} {d}<text>{r}  Extra instructions to steer the extraction prompt
+                              {d}(used when the app has no known vulns yet){r}
+    {c}--extra-info-mapping{r} {d}<text>{r}  Extra instructions to steer the mapping prompt
+                              {d}(used once the app has known vulns to map against){r}
 
   {b}Flow:{r}
     {c}--dry-run{r}                   Preview the LLM mapping without submitting
@@ -1480,6 +1509,16 @@ def main():
                         help="Vertex AI region (or set ANTHROPIC_VERTEX_LOCATION)")
     parser.add_argument("--vertex-project", default=os.getenv("ANTHROPIC_VERTEX_PROJECT_ID"),
                         help="Google Cloud project ID (or set ANTHROPIC_VERTEX_PROJECT_ID)")
+    parser.add_argument("--extra-info-extract", default=None,
+                        help="Extra operator instructions appended to the extraction prompt "
+                             "(used when the app has no known vulns yet to map against). "
+                             "Steers judgment calls only — cannot override the required JSON "
+                             "output format.")
+    parser.add_argument("--extra-info-mapping", default=None,
+                        help="Extra operator instructions appended to the mapping prompt "
+                             "(used once the app has known vulns to map findings against). "
+                             "Steers judgment calls only — cannot override the required JSON "
+                             "output format.")
     parser.add_argument("--dry-run", action="store_true", help="Show mapping without submitting")
     parser.add_argument("--workers", type=int, default=4,
                         help="Parallel LLM calls when chunking by file (default: 4). "
@@ -1739,9 +1778,11 @@ def main():
         scan_md = probely_findings_to_markdown(raw_findings, scan_ids)
         try:
             if use_cli:
-                llm_out = run_llm_mapping_cli(scan_md, vulns, spinner_msg="Mapping Probely findings with Claude CLI...", chains=chains)
+                llm_out = run_llm_mapping_cli(scan_md, vulns, spinner_msg="Mapping Probely findings with Claude CLI...", chains=chains,
+                                               extra_info_mapping=args.extra_info_mapping, extra_info_extract=args.extra_info_extract)
             else:
-                llm_out = run_llm_mapping(scan_md, vulns, args.model, llm_client, spinner_msg="Mapping Probely findings with Claude...", chains=chains)
+                llm_out = run_llm_mapping(scan_md, vulns, args.model, llm_client, spinner_msg="Mapping Probely findings with Claude...", chains=chains,
+                                           extra_info_mapping=args.extra_info_mapping, extra_info_extract=args.extra_info_extract)
         except (LLMCallError, json.JSONDecodeError) as e:
             print(f"  {colored('✗', 'RED')} LLM mapping failed: {e}", file=sys.stderr)
             sys.exit(1)
@@ -1854,8 +1895,10 @@ def main():
         """Single attempt — raises LLMCallError on any failure."""
         try:
             if use_cli:
-                return run_llm_mapping_cli(content, vulns, spinner_msg=spinner_msg, chains=chains)
-            return run_llm_mapping(content, vulns, args.model, llm_client, spinner_msg=spinner_msg, chains=chains)
+                return run_llm_mapping_cli(content, vulns, spinner_msg=spinner_msg, chains=chains,
+                                            extra_info_mapping=args.extra_info_mapping, extra_info_extract=args.extra_info_extract)
+            return run_llm_mapping(content, vulns, args.model, llm_client, spinner_msg=spinner_msg, chains=chains,
+                                    extra_info_mapping=args.extra_info_mapping, extra_info_extract=args.extra_info_extract)
         except LLMCallError:
             raise
         except json.JSONDecodeError as e:
