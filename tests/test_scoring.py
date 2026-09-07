@@ -346,7 +346,7 @@ def test_empty_corpus_does_not_divide_by_zero():
 # Severity accuracy
 # ---------------------------------------------------------------------------
 
-def test_severity_accuracy_only_counts_findings_that_reported_one():
+def test_severity_accuracy_denominator_is_every_tp():
     v1 = vuln(1, 9, severity="high")
     v2 = vuln(2, 9, severity="high")
     findings = [
@@ -359,12 +359,15 @@ def test_severity_accuracy_only_counts_findings_that_reported_one():
     assert m["severity_accuracy"] == 0.5
 
 
-def test_severity_accuracy_ignores_findings_with_no_reported_severity():
+def test_severity_accuracy_counts_missing_severity_against_the_scanner():
     v = vuln(1, 9, severity="high")
-    # A TP whose finding never reported a severity does not count against —
-    # or for — the scanner; the denominator is what was actually adjudicable.
+    # A TP whose finding never reported a severity DOES count against the
+    # scanner: giving no usable rating is a failure to rate, not a neutral
+    # non-event, so the denominator is always TP, not just the adjudicable
+    # subset that happened to report something.
     m = compute_metrics([finding(10, matched=1, severity=None)], [v])
-    assert m["severity_checked"] == 0
+    assert m["severity_checked"] == 1
+    assert m["severity_correct"] == 0
     assert m["severity_accuracy"] == 0.0
 
 

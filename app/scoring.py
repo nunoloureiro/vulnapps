@@ -205,14 +205,14 @@ def compute_metrics(
         injection") and would otherwise have scored full chain credit
         anyway.
     ``severity_accuracy``
-        Of the TP findings that reported their own severity, the fraction
-        whose reported severity exactly matches the matched vuln's ground-truth
+        Of all TP findings (``severity_checked`` == ``tp``), the fraction whose
+        reported severity exactly matches the matched vuln's ground-truth
         severity. Detecting a flaw is not the same as rating it correctly — a
         scanner that finds a critical SQLi and calls it "low" is a materially
         worse result than a silent miss, and this is the only axis that sees
-        that. Findings that reported no severity of their own do not count
-        against the scanner; ``severity_checked`` is the denominator actually
-        used, so a caller can tell "100% of 1" from "100% of 40".
+        that. A finding that reported no severity at all counts against the
+        scanner here too: giving no usable severity signal is still a failure
+        to rate, not a neutral non-event.
     ``tiers``
         The default reporting view: per-tier count/found/weighted totals.
         Chains are reported in the ``chained`` tier alongside vulns tagged
@@ -282,7 +282,7 @@ def compute_metrics(
             continue
         reported_by_vuln.setdefault(vid, set()).add(f_sev)
 
-    severity_checked = len(reported_by_vuln)
+    severity_checked = tp
     severity_correct = sum(
         1 for vid, sevs in reported_by_vuln.items() if vuln_severity.get(vid) in sevs
     )

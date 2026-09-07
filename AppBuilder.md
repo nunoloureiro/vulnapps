@@ -946,8 +946,8 @@ weighted_found  = Σ over in-scope vulns and chains of impact_weight × credit
 weighted_total  = Σ over in-scope vulns and chains of impact_weight
 weighted_rate   = weighted_found / weighted_total            -- THE HEADLINE METRIC
 
-severity_checked  = count of TP vulns whose matched finding reported its own severity
-severity_correct  = of those, count where the reported severity == the vuln's ground-truth severity
+severity_checked  = TP  -- every true positive is adjudicable, whether or not it reported a severity
+severity_correct  = of those, count where the finding reported a severity == the vuln's ground-truth severity
 severity_accuracy = severity_correct / severity_checked      -- 0 when severity_checked is 0
 ```
 
@@ -971,14 +971,19 @@ value until they do.
 
 **Duplicate indicator:** When multiple findings match the same vuln, a badge shows "N findings" next to the matched vuln link.
 
-**Severity accuracy** measures rating quality, not detection: of the TP findings that
-reported their own `severity`, the fraction whose reported severity exactly matches the
-matched vuln's ground-truth `severity`. A finding that reported no severity of its own
-does not count against (or for) the scanner — the denominator (`severity_checked`) is the
-population actually adjudicable, which is why the UI always shows `correct/checked`
-alongside the percentage rather than the percentage alone. Detecting a critical SQLi and
-calling it "low" is a materially different failure than a silent miss, and until this
-metric existed nothing on the comparison page could see that difference.
+**Severity accuracy** measures rating quality, not detection: of ALL TP findings, the
+fraction whose reported severity exactly matches the matched vuln's ground-truth
+`severity`. The denominator (`severity_checked`) is always `TP`, not just the findings
+that happened to report a severity — a finding that reported no severity at all counts
+against the scanner, the same as one that reported the wrong severity, since giving no
+usable rating is still a failure to rate rather than a neutral non-event. (Before
+2026-09-07, findings with no severity were excluded from the denominator entirely, which
+let a scanner that reports severity on almost none of its findings show a misleadingly
+high percentage — e.g. 8/9 = 88.9% when the scanner actually rated only 8 of its 35 true
+positives.) The UI always shows `correct/checked` alongside the percentage rather than the
+percentage alone. Detecting a critical SQLi and calling it "low" is a materially different
+failure than a silent miss, and until this metric existed nothing on the comparison page
+could see that difference.
 
 Displayed in a metrics-grid: Weighted Detection (orange, headline, with `found/total pts`
 beneath), TP (green), FP clusters (red), FN (red), Ignored (muted), Precision (orange, or a
@@ -1059,7 +1064,13 @@ Chained                     4       0              0%
 Weighted total         382 pts     16             25%
 ```
 
-Chains are reported in the `chained` row alongside vulns tagged `chained`.
+Chains are reported in the `chained` row alongside vulns tagged `chained`. **This row is not a
+4th bucket of the vuln count** — `commodity + business_logic` always equals `TP + FN` on its
+own; `chained` is additional weight layered on top (each chain's own members are already
+counted once under their own tier), which is why the tiers can sum to more than the vuln
+total. The Compare Scans page shows a one-line note under the tiers table saying exactly this,
+since seeing e.g. `27 + 14 + 4 = 45` next to `41` known vulns without that context reads as a
+bug.
 
 ### Exploit chains
 
@@ -1148,8 +1159,11 @@ members with per-member match status, and status `✓ Credited (direct match)` /
 `✓ Confirmed` (+ Revoke) / a Confirm button (once eligible) / "members not all matched" —
 this is also where a reviewer reads the finding text before manually confirming. The
 Compare Scans page has a read-only **Chains** table showing every chain × every compared
-scanner (`✓ confirmed` / `matched, unconfirmed` / `✗`), so the gap between "matched" and
-"credited" is visible across scanners at a glance. The app detail page also lists
+scanner (`✓ confirmed` / `✗`) — a chain either scored its weight or it didn't, so there is no
+third "matched, unconfirmed" glyph implying a scored in-between state. When every member
+matched independently but the chain itself was never credited, the `✗` cell's tooltip says so
+(and points to the scan detail page to review), but the visible glyph never implies a scored
+outcome that didn't happen. The app detail page also lists
 **Chains** (name, weight, linked members) alongside the Vulnerabilities table, so a chain
 is never missing from the one place ground truth is browsed.
 

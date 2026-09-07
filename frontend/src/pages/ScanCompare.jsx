@@ -199,15 +199,16 @@ function ComparisonView({ data, appId }) {
     const weightedFound = applicable.reduce(
       (a, row) => a + (row.vuln.impact_weight || 0) * (row.credits[scannerIdx] || 0), 0);
 
-    // Severity accuracy: of the TP rows (detected + in scope) whose finding
-    // reported a severity at all, how many matched the vuln's ground-truth
-    // severity. Mirrors app/scoring.py's compute_metrics exactly, just
-    // recomputed over the severity-filtered vuln subset.
+    // Severity accuracy: of ALL TP rows (detected + in scope), how many had a
+    // finding that reported the vuln's ground-truth severity. A finding that
+    // reported no severity at all still counts against the scanner here — it
+    // gave no usable rating, which is a failure to rate, not a neutral skip.
+    // Mirrors app/scoring.py's compute_metrics exactly, just recomputed over
+    // the severity-filtered vuln subset.
     const tpRows = applicable.filter(row => row.detections[scannerIdx]);
-    const checkedRows = tpRows.filter(row => row.severity_reported?.[scannerIdx]);
-    const severityChecked = checkedRows.length;
-    const severityCorrect = checkedRows.filter(
-      row => row.severity_reported[scannerIdx].toLowerCase() === (row.vuln.severity || '').toLowerCase()
+    const severityChecked = tpRows.length;
+    const severityCorrect = tpRows.filter(
+      row => row.severity_reported?.[scannerIdx]?.toLowerCase() === (row.vuln.severity || '').toLowerCase()
     ).length;
 
     // Per-tier rates, recomputed for the filtered vuln subset — 'commodity'
@@ -303,7 +304,7 @@ function ComparisonView({ data, appId }) {
     recall: 'TP / (TP + FN) — How many of the known vulnerabilities were found',
     f1: 'Harmonic mean of Precision and Recall — Overall scanner accuracy',
     weighted_rate: 'Severity-weighted detection rate: points found / points available on the 1/3/9/27 scale. The headline metric.',
-    severity_accuracy: 'Of the true positives that reported their own severity, the fraction rated at the same severity as ground truth. A miss is bad; a hit rated "low" when it is actually critical is a different kind of bad, and this is the axis that sees it.',
+    severity_accuracy: 'Of all true positives, the fraction rated at the same severity as ground truth. A finding that reported no severity at all counts against the scanner too — no rating is still a failure to rate. A miss is bad; a hit rated "low" when it is actually critical is a different kind of bad, and this is the axis that sees it.',
   };
 
   const MetricLabel = ({ k }) => {
@@ -474,6 +475,15 @@ function ComparisonView({ data, appId }) {
                   </tr>
                 )
               ))}
+              {!isFiltered && filteredMetrics.some(m => m.tiers?.chained?.count > 0) && (
+                <tr>
+                  <td colSpan={scanners.length + 1} className="text-muted text-xs" style={{ paddingLeft: '1.25rem' }}>
+                    Chained counts registered exploit chains, not a 4th bucket of the vulns above
+                    — each chain's own members are already counted once under Commodity/Business
+                    logic. See the Chains section below for the full list.
+                  </td>
+                </tr>
+              )}
               {scanners.some(s => s.scan.duration != null) && (
                 <tr>
                   <td className="detail-label sticky-col">Duration</td>
@@ -645,16 +655,31 @@ function ChainsMatrix({ chains, scanners, matrix, label }) {
                   </div>
                 </td>
                 {scanners.map(s => {
+                  // A chain either scored its weight or it didn't — there is no
+                  // partial/in-between state to show here. "Every member matched
+                  // independently" is NOT evidence of a demonstrated chain (see
+                  // app/scoring.py) — it can be, and in production has been,
+                  // pure coincidence between two unrelated findings. That case
+                  // renders identically to any other miss (✗); the title
+                  // attribute carries the diagnostic detail for anyone who
+                  // wants to dig in, but the visible glyph never implies a
+                  // scored outcome that didn't happen. Reviewing/confirming a
+                  // real candidate happens on the scan's own detail page.
                   const allMatched = chain.members.every(vid => s.matched_vuln_ids.includes(vid));
                   const credited = s.metrics.credit_by_chain?.[String(chain.id)] === 1;
                   return (
                     <td key={s.scan.id} className="text-center">
                       {credited ? (
                         <span className="text-success" title="Confirmed — demonstrated end to end">✓ confirmed</span>
-                      ) : allMatched ? (
-                        <span className="text-warning" title="Every member matched, but not yet confirmed to be demonstrated as a chain">matched, unconfirmed</span>
                       ) : (
-                        <span className="text-muted">✗</span>
+                        <span
+                          className="text-muted"
+                          title={allMatched
+                            ? 'Every member matched independently, but nothing demonstrated the chain itself — not credited. Review on the scan detail page.'
+                            : undefined}
+                        >
+                          ✗
+                        </span>
                       )}
                     </td>
                   );
