@@ -457,7 +457,20 @@ function ComparisonView({ data, appId }) {
                 filteredMetrics.some(m => m.tiers?.[tier]?.count > 0) && (
                   <tr key={tier}>
                     <td className="detail-label sticky-col" style={{ paddingLeft: '1.25rem' }}>
-                      <span className="text-muted text-sm">{tierLabel}</span>
+                      <span className="text-muted text-sm">
+                        {tierLabel}
+                        {tier === 'chained' && (
+                          <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>
+                            ⓘ
+                            <span className="tooltip-text">
+                              Counts registered exploit chains, not a 4th bucket of the vulns
+                              above — each chain's own members are already counted once under
+                              Commodity/Business logic. See the Chains section below for the
+                              full list.
+                            </span>
+                          </span>
+                        )}
+                      </span>
                     </td>
                     {filteredMetrics.map((m, i) => {
                       const t = m.tiers?.[tier];
@@ -475,15 +488,6 @@ function ComparisonView({ data, appId }) {
                   </tr>
                 )
               ))}
-              {!isFiltered && filteredMetrics.some(m => m.tiers?.chained?.count > 0) && (
-                <tr>
-                  <td colSpan={scanners.length + 1} className="text-muted text-xs" style={{ paddingLeft: '1.25rem' }}>
-                    Chained counts registered exploit chains, not a 4th bucket of the vulns above
-                    — each chain's own members are already counted once under Commodity/Business
-                    logic. See the Chains section below for the full list.
-                  </td>
-                </tr>
-              )}
               {scanners.some(s => s.scan.duration != null) && (
                 <tr>
                   <td className="detail-label sticky-col">Duration</td>

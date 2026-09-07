@@ -1068,9 +1068,9 @@ Chains are reported in the `chained` row alongside vulns tagged `chained`. **Thi
 4th bucket of the vuln count** — `commodity + business_logic` always equals `TP + FN` on its
 own; `chained` is additional weight layered on top (each chain's own members are already
 counted once under their own tier), which is why the tiers can sum to more than the vuln
-total. The Compare Scans page shows a one-line note under the tiers table saying exactly this,
-since seeing e.g. `27 + 14 + 4 = 45` next to `41` known vulns without that context reads as a
-bug.
+total. The Compare Scans page surfaces this via a ⓘ hover tooltip on the "Chained" row label
+(same `tooltip-wrap` pattern as the other metric labels), since seeing e.g. `27 + 14 + 4 = 45`
+next to `41` known vulns without that context reads as a bug.
 
 ### Exploit chains
 
