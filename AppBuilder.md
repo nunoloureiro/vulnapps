@@ -188,6 +188,7 @@ vulnapps/
 │   ├── 036_audit_log.sql                # audit_log table (scan/vuln history log)
 │   ├── 037_audit_log_chains.sql         # widen audit_log.entity_type to allow 'chain'
 │   ├── 038_scan_chain_credits.sql       # explicit human-adjudicated chain credit (see below)
+│   ├── 039_finding_matched_chain.sql    # scan_findings.matched_chain_id (direct chain match)
 │   ├── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
 │   ├── 013_api_keys.sql                 # API keys table with scopes
 │   ├── 014_scan_labels.sql              # Labels + scan_labels junction table
@@ -687,7 +688,7 @@ All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT 
 | PUT | `/api/scans/{id}` | Scan write / vuln-mapper | Update scan metadata: `{scanner_name, scan_date, authenticated, notes}` |
 | DELETE | `/api/scans/{id}` | Scan write | Delete scan |
 | POST | `/api/apps/{id}/scans` | User+ / vuln-mapper | Submit scan. Body: `{scanner_name, scanner_version, scan_date, authenticated, is_public, notes, cost, tokens, duration, findings, labels}`. The server stamps `corpus_revision` with the app's latest revision. Each finding may include `{vuln_type, http_method, url, parameter, filename, title, severity, description, poc, remediation, code_location, fp_group}` |
-| POST | `/api/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Map finding to vuln: `{vuln_id: int\|null}` |
+| POST | `/api/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Map finding to vuln (`{vuln_id: int\|null}`) or directly to a chain (`{chain_id: int\|null}`, mutually exclusive) — see **Exploit chains** |
 | POST | `/api/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive. Optional body `{fp_group}` clusters findings describing the same non-issue so precision counts them once |
 | POST | `/api/scans/{id}/findings/{fid}/ignore` | Scan write / vuln-mapper | Set/clear the "Ignored" state. Body `{ignored: bool}` (default `true`). Ignoring clears any match/FP; clearing returns to Pending |
 | POST | `/api/scans/{id}/findings/{fid}/promote` | App write / vuln-mapper | Promote a pending finding into a new vuln on the scan's app. Body: `{vuln_id, title, severity, vuln_type, http_method, url, parameter, filename, description, poc, remediation, code_location, impact_weight, difficulty_tier}` — missing fields fall back to the finding's stored values; `vuln_id` auto-generates as the next `DISC-NNN` slug if blank. **`existed_since` is REQUIRED** (`all_along` \| `this_revision`) — **400** without it. Always opens a `new_prior_vuln` revision. The finding is linked to the new vuln on success |
@@ -1113,32 +1114,55 @@ All three require app write access + `full` API scope, and log to `audit_log`
 (`entity_type='chain'`, actions `chain_created`/`chain_updated`/`chain_deleted`) exactly like
 vuln CRUD.
 
-**Chain credit requires explicit human confirmation — matching every member is necessary
-but never sufficient.** `compute_metrics()`'s original rule (migration 028) inferred credit
-purely from "every member matched." On real scan data this credited chains that were never
-actually demonstrated: two independent findings each matched a different member with zero
-connection between them (confirmed by reading the finding text — one matched finding's own
-description explicitly said *"independent of SQL injection"* about the very chain it was
-credited for). Migration 038 adds `scan_chain_credits(scan_id, chain_pk, credited_by,
-credited_at, notes)`; `compute_metrics()` takes a `confirmed_chain_ids` set and credits a
-chain only when every member is matched **and** its id is in that set. Nothing is ever
-auto-populated into this table — a reviewer must read the scan's actual finding text and
-decide it narrates the pivot, not just that both bugs happen to appear in the report.
+**Chain credit requires explicit evidence that the chain itself was identified — matching
+every member is necessary but never sufficient.** `compute_metrics()`'s original rule
+(migration 028) inferred credit purely from "every member matched." On real scan data this
+credited chains that were never actually demonstrated: two independent findings each
+matched a different member with zero connection between them (confirmed by reading the
+finding text — one matched finding's own description explicitly said *"independent of SQL
+injection"* about the very chain it was credited for). A chain now earns credit one of two
+ways:
+
+1. **Direct match (automatic).** A finding is matched straight to the chain itself via
+   `scan_findings.matched_chain_id` (migration 039), mutually exclusive with
+   `matched_vuln_id`. This is for the case where the scanner's own report contains ONE
+   finding that itself narrates combining >=2 members into the bigger exploit — first-class
+   evidence, same trust level as any vuln match, no separate review required. Available via
+   `POST /api/scans/{id}/findings/{finding_id}/match` (body `{chain_id}` instead of
+   `{vuln_id}`), manually through the "Matched Vuln" dropdown's Chains optgroup on the scan
+   detail page, or automatically from `tools/import_scan.py`'s LLM mapping (see below).
+2. **Explicit human confirmation (manual fallback).** Migration 038's
+   `scan_chain_credits(scan_id, chain_pk, credited_by, credited_at, notes)` — for when no
+   single finding was tagged directly. Nothing is ever auto-populated into this table; a
+   reviewer must read the scan's actual finding text and decide it narrates the pivot.
 
 | Method | Route | Notes |
 |---|---|---|
-| POST | `/api/scans/{id}/chains/{chain_pk}/confirm` | Confirm. Body (optional): `{notes}`. **400** if every member isn't matched by this scan yet |
-| DELETE | `/api/scans/{id}/chains/{chain_pk}/confirm` | Revoke — reverts to 0 credit |
+| POST | `/api/scans/{id}/chains/{chain_pk}/confirm` | Manual confirm. Body (optional): `{notes}`. **400** if every member isn't matched by this scan yet |
+| DELETE | `/api/scans/{id}/chains/{chain_pk}/confirm` | Revoke a manual confirmation — reverts to 0 credit (does not affect a direct match; unmatch the finding for that) |
 
 Both require scan write access + `vuln-mapper` scope, log to `audit_log`
 (actions `chain_credit_confirmed`/`chain_credit_revoked`), same access rule as
-match/mark-fp. UI: a **Chains** section on the scan detail page lists each in-scope
-chain, its members with per-member match status, and (for scans where every member is
-matched) a Confirm/Revoke control — this is where a reviewer actually reads the finding
-text before deciding. The Compare Scans page has a read-only **Chains** table showing
-every chain × every compared scanner (`✓ confirmed` / `matched, unconfirmed` / `✗`), so
-the gap between "matched" and "credited" is visible across scanners at a glance without
-opening each scan.
+match/mark-fp. UI: the scan detail page's **Chains** section lists each in-scope chain, its
+members with per-member match status, and status `✓ Credited (direct match)` /
+`✓ Confirmed` (+ Revoke) / a Confirm button (once eligible) / "members not all matched" —
+this is also where a reviewer reads the finding text before manually confirming. The
+Compare Scans page has a read-only **Chains** table showing every chain × every compared
+scanner (`✓ confirmed` / `matched, unconfirmed` / `✗`), so the gap between "matched" and
+"credited" is visible across scanners at a glance. The app detail page also lists
+**Chains** (name, weight, linked members) alongside the Vulnerabilities table, so a chain
+is never missing from the one place ground truth is browsed.
+
+**LLM-assisted import** (`tools/import_scan.py`) is taught about registered chains: the
+mapping prompt includes a "Known Exploit Chains" section (`format_chains_for_prompt`) and
+an explicit rule to set `matched_chain_db_id` ONLY when a single finding's own text narrates
+the pivot end to end — never merely because the report separately covers each member. The
+rule quotes the real false-credit incident (SSRF finding + hardcoded-secret finding, no
+cross-reference) as the negative example. `validate_llm_matches` hallucination-guards
+`matched_chain_db_id` the same way it does `matched_vuln_db_id`, and rejects a finding that
+set both (keeps the chain match, clears the vuln match). `print_mapping_table` shows a
+separate "CHAIN MATCHED — review these carefully" section so a rare, high-stakes match is
+never buried among ordinary ones before the operator submits.
 
 ### Ground-truth revisions
 

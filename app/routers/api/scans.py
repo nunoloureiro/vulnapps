@@ -125,16 +125,22 @@ async def delete_scan(request: Request, scan_id: int):
 
 @router.post("/{scan_id}/findings/{finding_id}/match")
 async def match_finding(request: Request, scan_id: int, finding_id: int):
+    """Match a finding to a vuln (``vuln_id``) or directly to a chain
+    (``chain_id``, mutually exclusive) — see
+    app/services/scans.py::match_finding for what a chain match means."""
     user = await require_user(request)
     require_scope(user, "vuln-mapper")
     body = await request.json()
     vuln_id = body.get("vuln_id")
+    chain_id = body.get("chain_id")
 
     db = await get_connection()
     try:
-        result = await scans_service.match_finding(db, user, scan_id, finding_id, vuln_id)
+        result = await scans_service.match_finding(db, user, scan_id, finding_id, vuln_id, chain_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        msg = str(e)
+        status = 400 if "not both" in msg or "must be an integer" in msg else 404
+        raise HTTPException(status_code=status, detail=msg)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     finally:

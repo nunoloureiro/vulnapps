@@ -586,20 +586,31 @@ async def update_scan(db, user, scan_id: int, updates: dict) -> dict:
     return dict(await cursor.fetchone())
 
 
-async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id) -> dict:
-    """Manually match a finding to a vuln (or clear the match).
+async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id, chain_id=None) -> dict:
+    """Manually match a finding to a vuln, OR to a chain, or clear the match.
 
-    The supplied vuln must belong to the same app as the scan — otherwise the
-    finding row would reference a vulnerability the caller may not be allowed
-    to read, leaking cross-tenant data (vuln-0004).
+    *vuln_id* and *chain_id* are mutually exclusive — a finding matches one
+    thing. Matching to a *chain_id* directly is first-class evidence the
+    chain was demonstrated (see app/scoring.py::compute_metrics): this is
+    for the case where the scanner's own report contains one finding that
+    itself narrates combining >=2 of the chain's members, as opposed to two
+    separate findings that each independently match one member with no
+    connection between them.
 
-    Returns {ok, matched_vuln_id, is_false_positive}.
+    The supplied vuln/chain must belong to the same app as the scan —
+    otherwise the finding row would reference ground truth the caller may
+    not be allowed to read, leaking cross-tenant data (vuln-0004).
+
+    Returns {ok, matched_vuln_id, matched_chain_id, is_false_positive}.
     """
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
+    if vuln_id is not None and chain_id is not None:
+        raise ValueError("A finding can match a vuln or a chain, not both")
+
     cursor = await db.execute(
-        "SELECT id, title, vuln_type, matched_vuln_id FROM scan_findings WHERE id = ? AND scan_id = ?",
+        "SELECT id, title, vuln_type, matched_vuln_id, matched_chain_id FROM scan_findings WHERE id = ? AND scan_id = ?",
         (finding_id, scan_id),
     )
     finding = await cursor.fetchone()
@@ -607,8 +618,11 @@ async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id) -> dic
         raise ValueError("Finding not found")
     finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
     old_vuln_id = finding["matched_vuln_id"]
+    old_chain_id = finding["matched_chain_id"]
 
-    new_vuln_label = None
+    new_label = None
+    matched_vuln_id = None
+    matched_chain_id = None
     if vuln_id is not None:
         try:
             matched_vuln_id = int(vuln_id)
@@ -620,21 +634,31 @@ async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id) -> dic
         row = await cursor.fetchone()
         if not row or row["app_id"] != scan["app_id"]:
             raise ValueError("Vulnerability not found")
-        new_vuln_label = row["vuln_id"]
-        is_false_positive = 0
-    else:
-        matched_vuln_id = None
-        is_false_positive = 0
+        new_label = row["vuln_id"]
+    elif chain_id is not None:
+        try:
+            matched_chain_id = int(chain_id)
+        except (TypeError, ValueError):
+            raise ValueError("chain_id must be an integer")
+        cursor = await db.execute(
+            "SELECT app_id, chain_id FROM chains WHERE id = ?", (matched_chain_id,)
+        )
+        row = await cursor.fetchone()
+        if not row or row["app_id"] != scan["app_id"]:
+            raise ValueError("Chain not found")
+        new_label = row["chain_id"]
+    is_false_positive = 0
 
     # Matching (or clearing) a finding also lifts any "ignored" flag — the
     # states are mutually exclusive.
     await db.execute(
-        "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = ?, is_ignored = 0, fp_group = NULL WHERE id = ? AND scan_id = ?",
-        (matched_vuln_id, is_false_positive, finding_id, scan_id),
+        "UPDATE scan_findings SET matched_vuln_id = ?, matched_chain_id = ?, is_false_positive = ?, "
+        "is_ignored = 0, fp_group = NULL WHERE id = ? AND scan_id = ?",
+        (matched_vuln_id, matched_chain_id, is_false_positive, finding_id, scan_id),
     )
 
-    if matched_vuln_id != old_vuln_id:
-        if matched_vuln_id is None:
+    if matched_vuln_id != old_vuln_id or matched_chain_id != old_chain_id:
+        if matched_vuln_id is None and matched_chain_id is None:
             old_label = None
             if old_vuln_id is not None:
                 cursor = await db.execute(
@@ -642,25 +666,37 @@ async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id) -> dic
                 )
                 old_row = await cursor.fetchone()
                 old_label = old_row["vuln_id"] if old_row else None
+            elif old_chain_id is not None:
+                cursor = await db.execute(
+                    "SELECT chain_id FROM chains WHERE id = ?", (old_chain_id,)
+                )
+                old_row = await cursor.fetchone()
+                old_label = old_row["chain_id"] if old_row else None
             message = f"{user['name']} removed the mapping of \"{finding_label}\""
             if old_label:
                 message += f" (was {old_label})"
             action = "finding_unmatched"
-        elif old_vuln_id is None:
-            message = f"{user['name']} matched \"{finding_label}\" to {new_vuln_label}"
+        elif old_vuln_id is None and old_chain_id is None:
+            message = f"{user['name']} matched \"{finding_label}\" to {new_label}"
             action = "finding_matched"
         else:
-            message = f"{user['name']} changed the mapping of \"{finding_label}\" to {new_vuln_label}"
+            message = f"{user['name']} changed the mapping of \"{finding_label}\" to {new_label}"
             action = "finding_matched"
         await audit_service.record_audit_event(
             db, entity_type="scan_finding", action=action, actor=user, message=message,
             entity_id=finding_id, scan_id=scan_id,
-            details={"old_vuln_id": old_vuln_id, "new_vuln_id": matched_vuln_id},
+            details={
+                "old_vuln_id": old_vuln_id, "new_vuln_id": matched_vuln_id,
+                "old_chain_id": old_chain_id, "new_chain_id": matched_chain_id,
+            },
         )
 
     await db.commit()
 
-    return {"ok": True, "matched_vuln_id": matched_vuln_id, "is_false_positive": is_false_positive}
+    return {
+        "ok": True, "matched_vuln_id": matched_vuln_id, "matched_chain_id": matched_chain_id,
+        "is_false_positive": is_false_positive,
+    }
 
 
 async def mark_finding_fp(db, user, scan_id: int, finding_id: int, fp_group=None) -> None:

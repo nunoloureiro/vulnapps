@@ -27,10 +27,11 @@ def vuln(vid, weight, tier="commodity", **kw):
     return row
 
 
-def finding(fid, matched=None, fp=0, ignored=0, fp_group=None, severity=None):
+def finding(fid, matched=None, fp=0, ignored=0, fp_group=None, severity=None, matched_chain=None):
     return {
         "id": fid,
         "matched_vuln_id": matched,
+        "matched_chain_id": matched_chain,
         "is_false_positive": fp,
         "is_ignored": ignored,
         "fp_group": fp_group,
@@ -284,6 +285,23 @@ def test_chain_credit_requires_explicit_confirmation_even_when_all_members_match
     assert both_matched_unconfirmed["credit_by_chain"][7] == 0.0
     assert both_matched_unconfirmed["weighted_found"] == 18.0   # 9 + 9, no chain bonus
     assert both_matched_unconfirmed["weighted_total"] == 45.0   # chain still costs points unearned
+
+
+def test_chain_credit_from_a_direct_finding_match_needs_no_separate_confirmation():
+    """A finding matched DIRECTLY to the chain (matched_chain_id) is
+    first-class evidence on its own — the scanner's own report contained one
+    finding that itself identified the chain — so it credits immediately,
+    with no confirmed_chain_ids entry and regardless of whether the
+    individual members also show up as their own separate findings."""
+    vulns = [vuln(1, 9), vuln(2, 9)]
+    chain = {"id": 7, "impact_weight": 27, "members": [1, 2],
+             "existed_since_revision": 1, "invalidated_at_revision": None}
+
+    # Neither member matched individually, but one finding names the chain directly.
+    m = compute_metrics([finding(10, matched_chain=7)], vulns, [chain])
+    assert m["credit_by_chain"][7] == 1.0
+    assert m["weighted_found"] == 27.0
+    assert m["weighted_total"] == 45.0
 
 
 # ---------------------------------------------------------------------------

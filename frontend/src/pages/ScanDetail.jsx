@@ -42,25 +42,28 @@ export default function ScanDetail() {
 
       <ScanMeta scan={scan} app={app} labels={labels || []} canEdit={can_edit} canViewCost={can_view_cost} scanId={id} onUpdate={load} />
       <Metrics metrics={metrics} app={app} revision={revision} scan={scan} />
-      <Findings findings={findings} knownVulns={known_vulns || []} canEdit={can_edit} scanId={id} appId={app.id}
-                onUpdate={load} />
+      <Findings findings={findings} knownVulns={known_vulns || []} chains={chains || []} canEdit={can_edit}
+                scanId={id} appId={app.id} onUpdate={load} />
       {missed_vulns && missed_vulns.length > 0 && <MissedVulns vulns={missed_vulns} appId={app.id} />}
       {chains && chains.length > 0 && (
-        <Chains chains={chains} knownVulns={known_vulns || []} metrics={metrics} canEdit={can_edit}
-                scanId={id} onUpdate={load} />
+        <Chains chains={chains} knownVulns={known_vulns || []} findings={findings} metrics={metrics}
+                canEdit={can_edit} scanId={id} onUpdate={load} />
       )}
       <HistoryLog scanId={id} canView={can_edit} />
     </>
   );
 }
 
-// A chain is credited only when a reviewer explicitly confirms it — matching
-// every member is necessary but was found, on real scan data, to not be
-// sufficient (a scan's own finding text can independently match both members
-// while explicitly denying any connection between them). This section is
-// where that confirmation happens, one chain at a time, after actually
-// reading the finding text below for every member.
-function Chains({ chains, knownVulns, metrics, canEdit, scanId, onUpdate }) {
+// A chain earns credit one of two ways: (1) automatic — some finding above
+// is matched DIRECTLY to the chain (see the "Chains" optgroup in the
+// Matched Vuln dropdown), because the scanner's own report contained one
+// finding that itself narrated the pivot; or (2) manual — a reviewer reads
+// every member's finding text below and explicitly confirms it, for the
+// case where no single finding was tagged automatically. Neither matching
+// every member alone was found to be sufficient on real scan data (a scan's
+// own findings can independently match both members while explicitly
+// denying any connection between them).
+function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpdate }) {
   const [busy, setBusy] = useState(null);
   const vulnById = useMemo(() => {
     const m = new Map();
@@ -69,6 +72,9 @@ function Chains({ chains, knownVulns, metrics, canEdit, scanId, onUpdate }) {
   }, [knownVulns]);
   const matchedIds = new Set(metrics.matched_vuln_ids || []);
   const creditByChain = metrics.credit_by_chain || {};
+  const directMatchChainIds = new Set(
+    findings.filter(f => f.matched_chain_id != null).map(f => f.matched_chain_id)
+  );
 
   const toggle = async (chain, credited) => {
     setBusy(chain.id);
@@ -85,8 +91,9 @@ function Chains({ chains, knownVulns, metrics, canEdit, scanId, onUpdate }) {
     <div className="card mb-2">
       <h3 className="card-title mb-2">Chains</h3>
       <p className="text-muted text-sm mb-2">
-        A chain earns its weight only once a reviewer confirms this scan's own findings
-        demonstrate it end to end — matching every member below is necessary but not enough on its own.
+        A chain earns its weight when a finding above is matched to it directly (the scanner's
+        own report named the chain), or otherwise once a reviewer confirms this scan's findings
+        demonstrate it end to end — matching every member below on its own is necessary but never enough.
       </p>
       <div className="table-wrap">
         <table>
@@ -95,6 +102,7 @@ function Chains({ chains, knownVulns, metrics, canEdit, scanId, onUpdate }) {
             {chains.map(chain => {
               const eligible = chain.members.length > 0 && chain.members.every(vid => matchedIds.has(vid));
               const credited = creditByChain[String(chain.id)] === 1 || creditByChain[chain.id] === 1;
+              const directMatch = directMatchChainIds.has(chain.id);
               return (
                 <tr key={chain.id}>
                   <td>
@@ -113,7 +121,9 @@ function Chains({ chains, knownVulns, metrics, canEdit, scanId, onUpdate }) {
                     })}
                   </td>
                   <td>
-                    {credited ? (
+                    {directMatch ? (
+                      <span className="text-success" title="A finding above is matched directly to this chain">✓ Credited (direct match)</span>
+                    ) : credited ? (
                       <>
                         <span className="text-success">✓ Confirmed</span>
                         {canEdit && (
@@ -507,7 +517,7 @@ function FpGroup({ scanId, finding, canEdit, onUpdate }) {
   );
 }
 
-function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
+function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpdate }) {
   const [promoting, setPromoting] = useState(null);
   const [promoteError, setPromoteError] = useState('');
   const [expanded, setExpanded] = useState(() => new Set());
@@ -527,8 +537,16 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
     });
   };
 
-  const matchFinding = async (findingId, vulnId) => {
-    await api.post(`/scans/${scanId}/findings/${findingId}/match`, { vuln_id: vulnId });
+  // The dropdown's value encodes which kind of thing is selected: "v:123"
+  // for a vuln id, "c:456" for a chain id (matching a finding directly to a
+  // chain — see app/scoring.py::compute_metrics — is first-class evidence
+  // the chain was demonstrated, same trust level as a vuln match), or ""
+  // to clear the match.
+  const matchFinding = async (findingId, encodedValue) => {
+    let vuln_id = null, chain_id = null;
+    if (encodedValue.startsWith('v:')) vuln_id = parseInt(encodedValue.slice(2));
+    else if (encodedValue.startsWith('c:')) chain_id = parseInt(encodedValue.slice(2));
+    await api.post(`/scans/${scanId}/findings/${findingId}/match`, { vuln_id, chain_id });
     onUpdate();
   };
 
@@ -610,6 +628,7 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                   const location = f.url || f.filename || '-';
                   const locationDisplay = f.http_method ? `${f.http_method} ${location}` : location;
                   const matchedVuln = f.matched_vuln_id ? knownVulns.find(v => v.id === f.matched_vuln_id) : null;
+                  const matchedChain = f.matched_chain_id ? chains.find(c => c.id === f.matched_chain_id) : null;
                   const severityMismatch = !!(f.severity && matchedVuln?.severity &&
                     f.severity.toLowerCase() !== matchedVuln.severity.toLowerCase());
                   const hasDetails = !!(f.title || f.severity || f.description || f.poc || f.remediation || f.code_location);
@@ -644,7 +663,7 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                       )}
                     </td>
                     <td data-label="Status">
-                      {f.matched_vuln_id ? <Badge severity="low">TP</Badge> :
+                      {f.matched_vuln_id || f.matched_chain_id ? <Badge severity="low">TP</Badge> :
                        f.is_false_positive ? <Badge severity="critical">FP</Badge> :
                        f.is_ignored ? <Badge severity="ignored">Ignored</Badge> :
                        <Badge severity="pending">Pending</Badge>}
@@ -653,9 +672,15 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                       {canEdit ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                           <select className="form-select" style={{ width: 'auto', padding: '2px 4px', fontSize: '0.8rem', flex: 1 }}
-                            value={f.matched_vuln_id || ''} onChange={e => matchFinding(f.id, e.target.value ? parseInt(e.target.value) : null)}>
+                            value={f.matched_vuln_id ? `v:${f.matched_vuln_id}` : f.matched_chain_id ? `c:${f.matched_chain_id}` : ''}
+                            onChange={e => matchFinding(f.id, e.target.value)}>
                             <option value="">-- Unmapped --</option>
-                            {knownVulns.map(v => <option key={v.id} value={v.id}>{v.vuln_id} - {v.title}</option>)}
+                            {knownVulns.map(v => <option key={v.id} value={`v:${v.id}`}>{v.vuln_id} - {v.title}</option>)}
+                            {chains.length > 0 && (
+                              <optgroup label="Chains (this finding narrates the whole chain)">
+                                {chains.map(c => <option key={c.id} value={`c:${c.id}`}>⛓ {c.chain_id} - {c.title}</option>)}
+                              </optgroup>
+                            )}
                           </select>
                           {matchedVuln && (
                             <Link className="fa-link" to={`/apps/${appId}/vulns/${matchedVuln.id}`} title="View vulnerability">
@@ -665,6 +690,7 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                         </div>
                       ) : (
                         matchedVuln ? <Link to={`/apps/${appId}/vulns/${matchedVuln.id}`}>{matchedVuln.vuln_id} - {matchedVuln.title}</Link> :
+                        matchedChain ? <span title={matchedChain.title}>⛓ {matchedChain.chain_id}</span> :
                         f.is_false_positive ? <span className="text-muted">FP</span> :
                         f.is_ignored ? <span className="text-muted">Ignored</span> : <span className="text-muted">Unmapped</span>
                       )}
@@ -689,10 +715,10 @@ function Findings({ findings, knownVulns, canEdit, scanId, appId, onUpdate }) {
                         {canEdit && !f.is_false_positive && (
                           <button className="fa-btn fa-fp" onClick={() => markFP(f.id)} title="Mark as False Positive"><IconFP />FP</button>
                         )}
-                        {canEdit && !f.matched_vuln_id && !f.is_false_positive && !f.is_ignored && (
+                        {canEdit && !f.matched_vuln_id && !f.matched_chain_id && !f.is_false_positive && !f.is_ignored && (
                           <button className="fa-btn fa-ignore" onClick={() => setIgnored(f.id, true)} title="Ignore — real-ish but irrelevant here (excluded from metrics)"><IconIgnore />Ignore</button>
                         )}
-                        {canEdit && !f.matched_vuln_id && (
+                        {canEdit && !f.matched_vuln_id && !f.matched_chain_id && (
                           <button className="fa-btn fa-promote"
                             onClick={() => openPromote(f)}
                             title={f.is_false_positive ? 'Promote FP to a real vulnerability' : 'Promote to known vulnerability'}>

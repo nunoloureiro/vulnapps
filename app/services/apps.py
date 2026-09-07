@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 from app.dependencies import get_team_role
 from app.visibility import app_visibility_filter
 from app.services.vulns import MAX_VULNS_PER_APP
+from app.services import chains as chains_service
 
 
 _ALLOWED_URL_SCHEMES = ("http", "https")
@@ -208,6 +209,7 @@ async def get_app(db, user, app_id: int) -> dict:
     scan_count = (await cursor.fetchone())["count"]
 
     tech_stack = await _get_tech_stack(db, app_id)
+    chains = await chains_service.list_chains(db, user, app_id)
 
     # Permissions
     can_edit = False
@@ -233,6 +235,7 @@ async def get_app(db, user, app_id: int) -> dict:
         "vulns": vulns,
         "vuln_count": vuln_count,
         "vulns_truncated": vulns_truncated,
+        "chains": chains,
         "tech_stack": tech_stack,
         "scan_count": scan_count,
         "severity_counts": severity_counts,

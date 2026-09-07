@@ -142,7 +142,7 @@ export default function AppDetail() {
 
   if (!data) return null;
 
-  const { app, vulns = [], tech_stack = [], scan_count = 0, severity_counts = {}, can_edit, can_submit_scan } = data;
+  const { app, vulns = [], chains = [], tech_stack = [], scan_count = 0, severity_counts = {}, can_edit, can_submit_scan } = data;
   // vuln_count is the true total from the server; vulns may be capped for very large apps.
   const vulnCount = data.vuln_count ?? vulns.length;
 
@@ -416,6 +416,46 @@ export default function AppDetail() {
           )}
         </div>
       )}
+
+      {chains.length > 0 && (
+        <>
+          <div className="page-header">
+            <h2 className="page-title">Chains <span className="text-muted text-sm">({chains.length})</span></h2>
+          </div>
+          <div className="card">
+            <p className="text-muted text-sm mb-2">
+              A chain is separate ground truth that links two or more of the vulnerabilities
+              above into one bigger exploit — it earns its own weight only when a scan
+              demonstrates the whole thing, not just each member individually. See a scan's own
+              detail page to review and credit one.
+            </p>
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Chain</th><th>Weight</th><th>Members</th></tr></thead>
+                <tbody>
+                  {chains.map(chain => (
+                    <tr key={chain.id}>
+                      <td>
+                        <strong>{chain.chain_id}</strong>
+                        <div className="text-muted text-sm">{chain.title}</div>
+                      </td>
+                      <td className="font-mono text-sm">{chain.impact_weight}p</td>
+                      <td>
+                        {chain.members.map(m => (
+                          <div key={m.vuln_id}>
+                            <Link to={'/apps/' + id + '/vulns/' + m.vuln_id}>{m.vuln_code} — {m.vuln_title}</Link>
+                          </div>
+                        ))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
       <HistoryLog appId={id} canView={can_edit} />
     </div>
   );

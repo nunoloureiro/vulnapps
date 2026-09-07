@@ -173,8 +173,8 @@ def compute_metrics(
     *findings* are that scan's ``scan_findings`` rows; *vulns_in_scope* and
     *chains_in_scope* are the ground truth for the revision being scored at.
     *confirmed_chain_ids* are chain primary keys a reviewer has explicitly
-    confirmed THIS scan demonstrates — see the credit rule below; matching
-    every member is necessary but never sufficient on its own.
+    confirmed THIS scan demonstrates — a manual fallback for the credit rule
+    below, for when no single finding was matched to the chain directly.
 
     Returns a dict of:
 
@@ -191,14 +191,19 @@ def compute_metrics(
         completes; ``adjudication_complete`` says whether they have.
     ``weighted_rate``
         The headline metric: ``weighted_found / weighted_total``. A matched
-        vuln scores its full weight; a chain scores its full weight only when
-        every member is matched AND a reviewer has explicitly confirmed
-        (``confirmed_chain_ids``) that this scan demonstrates it. Matching
-        every member is necessary but not sufficient — confirmed on real
-        scan data where two findings independently matched a chain's two
-        members while explicitly denying any connection between them
-        ("independent of SQL injection") and would otherwise have scored
-        full chain credit anyway.
+        vuln scores its full weight. A chain scores its full weight when
+        EITHER: (a) some finding is matched directly to the chain
+        (``matched_chain_id``) — the scanner's own report contained one
+        finding that itself named/narrated combining the members, which is
+        first-class evidence on its own, same as any vuln match; or (b)
+        every member is independently matched AND a reviewer has explicitly
+        confirmed (``confirmed_chain_ids``) this scan demonstrates it.
+        Matching every member alone (neither (a) nor (b)) is never
+        sufficient — confirmed on real scan data where two findings
+        independently matched a chain's two members while explicitly
+        denying any connection between them ("independent of SQL
+        injection") and would otherwise have scored full chain credit
+        anyway.
     ``severity_accuracy``
         Of the TP findings that reported their own severity, the fraction
         whose reported severity exactly matches the matched vuln's ground-truth
@@ -307,13 +312,25 @@ def compute_metrics(
         for v in vulns
     }
 
+    # A finding matched DIRECTLY to a chain (matched_chain_id) is automatic,
+    # first-class evidence — the scanner's own report contained one finding
+    # that itself named/narrated the chain, exactly the "clearly identified
+    # as a separate finding that references the others" case. This does not
+    # require every member to also show up as its own separate finding.
+    chain_direct_matches = {
+        field(f, "matched_chain_id")
+        for f in findings
+        if field(f, "matched_chain_id") is not None
+    }
+
     credit_by_chain = {}
     for c in chains:
         pk = field(c, "id")
         members = _chain_members(c)
         all_members_matched = bool(members) and all(vid in in_scope_matched for vid in members)
         credit_by_chain[pk] = (
-            1.0 if all_members_matched and pk in confirmed_chain_ids else 0.0
+            1.0 if (pk in chain_direct_matches or (all_members_matched and pk in confirmed_chain_ids))
+            else 0.0
         )
 
     # --- weighted totals and the tier matrix ------------------------------

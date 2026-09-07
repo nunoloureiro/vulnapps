@@ -147,7 +147,8 @@ You are a vulnerability mapping assistant for a security testing platform.
 
 You will be given:
 1. A list of KNOWN VULNERABILITIES for an application (with their database IDs)
-2. A security scan report in markdown format
+2. A list of KNOWN EXPLOIT CHAINS for the application, if any (each with its member vulnerabilities)
+3. A security scan report in markdown format
 
 Your job is to:
 1. Extract each distinct finding from the scan report
@@ -180,6 +181,26 @@ category — if you cannot name a shared mechanism, matched_vuln_db_id must \
 be null.
 - If a finding does not match any known vulnerability, set matched_vuln_db_id to null.
 - Use the database `id` field (integer) for matched_vuln_db_id, NOT the `vuln_id` string.
+- CHAINS are different from vulnerabilities and matched differently. A known chain \
+combines >=2 known vulnerabilities into one bigger exploit (e.g. "steal a secret via \
+SSRF, then forge an admin token with it"). Set matched_chain_db_id (NOT \
+matched_vuln_db_id) ONLY when a SINGLE finding in the report itself explicitly \
+narrates walking the chain end to end — naming or clearly describing the mechanism of \
+each member step and how one leads to the next, in that one finding's own text. \
+- Do NOT set matched_chain_db_id just because the report separately contains findings \
+for each of the chain's individual members — two independent findings that each \
+describe only their own bug, with no cross-reference connecting them, are NOT chain \
+evidence, even if together they happen to cover every member. This has caused real \
+false credit before: a report had one finding titled "SSRF via Wine Import URL" and a \
+separate finding titled "Hardcoded JWT Secret", with neither finding mentioning the \
+other — that is two unrelated findings, not a demonstrated chain, regardless of \
+whether both underlying vulnerabilities are real. Map each to its own \
+matched_vuln_db_id in that case and leave matched_chain_db_id null on both.
+- A finding with a non-null matched_chain_db_id must have matched_vuln_db_id null, and \
+vice versa — a finding matches one or the other, never both.
+- When you do set matched_chain_db_id, explain in `reasoning` exactly which member \
+steps the finding's own text connects and how (quote or closely paraphrase the \
+connecting language), not just that the finding happens to be severe or related.
 - Extract the scanner name and scan date from the report if available. \
 `scan_date` is when the scan STARTED: use `YYYY-MM-DD`, or \
 `YYYY-MM-DD HH:MM` (24-hour) when the report states a start time.
@@ -250,9 +271,10 @@ Respond with ONLY valid JSON (no markdown fencing) in this exact format:
             "parameter": "string - affected parameter or empty string",
             "filename": "string - affected source file or empty string",
             "matched_vuln_db_id": 123 or null,
+            "matched_chain_db_id": 456 or null,
             "is_false_positive": false,
             "fp_group": "string - shared slug for false positives describing the same non-issue, else empty",
-            "reasoning": "string - brief explanation of why this maps (or doesn't) to the known vuln",
+            "reasoning": "string - brief explanation of why this maps (or doesn't) to the known vuln or chain",
             "severity": "critical|high|medium|low|info — MANDATORY, transcribed from the report, for mapped and unmapped findings alike",
             "description": "string — what the issue is, why it matters (always when the report has it)",
             "poc": "string — proof-of-concept / reproduction steps (always when the report has it)",
@@ -379,6 +401,11 @@ class VulnappsClient:
         resp.raise_for_status()
         return resp.json()["vulnerabilities"]
 
+    def get_chains(self, app_id: int) -> list:
+        resp = self.client.get(f"/api/apps/{app_id}/chains")
+        resp.raise_for_status()
+        return resp.json()["chains"]
+
     def submit_scan(self, app_id: int, scan_data: dict) -> dict:
         resp = self.client.post(f"/api/apps/{app_id}/scans", json=scan_data)
         resp.raise_for_status()
@@ -389,10 +416,11 @@ class VulnappsClient:
         resp.raise_for_status()
         return resp.json()
 
-    def match_finding(self, scan_id: int, finding_id: int, vuln_id: int | None) -> dict:
+    def match_finding(self, scan_id: int, finding_id: int, vuln_id: int | None,
+                       chain_id: int | None = None) -> dict:
         resp = self.client.post(
             f"/api/scans/{scan_id}/findings/{finding_id}/match",
-            json={"vuln_id": vuln_id},
+            json={"vuln_id": vuln_id, "chain_id": chain_id},
         )
         resp.raise_for_status()
         return resp.json()
@@ -452,6 +480,22 @@ def format_vulns_for_prompt(vulns: list) -> str:
     return "\n---\n".join(lines)
 
 
+def format_chains_for_prompt(chains: list) -> str:
+    """Format registered exploit chains for the LLM prompt — see the
+    matched_chain_db_id rule in SYSTEM_PROMPT_MAP for how these are used."""
+    lines = []
+    for c in chains:
+        members = ", ".join(f"{m['vuln_code']} ({m['vuln_title']})" for m in c.get("members", []))
+        parts = [
+            f"  Chain DB ID: {c['id']}", f"  Chain ID: {c['chain_id']}", f"  Title: {c['title']}",
+            f"  Members: {members}",
+        ]
+        if c.get("description"):
+            parts.append(f"  Description: {c['description'][:400]}")
+        lines.append("\n".join(parts))
+    return "\n---\n".join(lines)
+
+
 def create_anthropic_client(provider: str, region: str | None, project_id: str | None):
     """Create the appropriate Anthropic client based on provider.
 
@@ -468,7 +512,8 @@ def create_anthropic_client(provider: str, region: str | None, project_id: str |
     return anthropic.Anthropic()
 
 
-def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_msg: str | None = None) -> dict:
+def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_msg: str | None = None,
+                     chains: list | None = None) -> dict:
     """Send scan content (optionally with known vulns) to Claude.
 
     When `vulns` is empty the prompt switches to extraction-only mode — no
@@ -476,9 +521,17 @@ def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_
     """
     if vulns:
         system = SYSTEM_PROMPT_MAP
+        chains_section = (
+            f"""
+
+## Known Exploit Chains for this Application
+
+{format_chains_for_prompt(chains)}"""
+            if chains else ""
+        )
         user_message = f"""## Known Vulnerabilities for this Application
 
-{format_vulns_for_prompt(vulns)}
+{format_vulns_for_prompt(vulns)}{chains_section}
 
 ## Scan Report
 
@@ -517,7 +570,8 @@ def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_
     return result
 
 
-def run_llm_mapping_cli(scan_content: str, vulns: list, spinner_msg: str | None = None) -> dict:
+def run_llm_mapping_cli(scan_content: str, vulns: list, spinner_msg: str | None = None,
+                          chains: list | None = None) -> dict:
     """Run extraction/mapping via the local `claude` CLI. Used when --use-cli
     is set, or as a fallback when no API key/Vertex config is available.
 
@@ -531,11 +585,19 @@ def run_llm_mapping_cli(scan_content: str, vulns: list, spinner_msg: str | None 
         sys.exit(1)
 
     if vulns:
+        chains_section = (
+            f"""
+
+## Known Exploit Chains for this Application
+
+{format_chains_for_prompt(chains)}"""
+            if chains else ""
+        )
         prompt = f"""{SYSTEM_PROMPT_MAP}
 
 ## Known Vulnerabilities for this Application
 
-{format_vulns_for_prompt(vulns)}
+{format_vulns_for_prompt(vulns)}{chains_section}
 
 ## Scan Report
 
@@ -613,9 +675,10 @@ def print_header(text: str, width: int = 60):
     print(line)
 
 
-def print_mapping_table(mapping: dict, vulns: list):
+def print_mapping_table(mapping: dict, vulns: list, chains: list | None = None):
     """Print a readable summary of the LLM mapping."""
     vuln_lookup = {v["id"]: v for v in vulns}
+    chain_lookup = {c["id"]: c for c in (chains or [])}
 
     scanner = mapping.get("scanner_name", "unknown")
     date = mapping.get("scan_date", "unknown")
@@ -625,9 +688,22 @@ def print_mapping_table(mapping: dict, vulns: list):
     print(f"  {C.DIM}Date:{C.RESET}     {date}")
     print(f"  {C.DIM}Findings:{C.RESET} {colored(str(len(findings)), 'BOLD')}")
 
+    chain_matched = [f for f in findings if f.get("matched_chain_db_id")]
     matched = [f for f in findings if f.get("matched_vuln_db_id")]
-    unmatched = [f for f in findings if not f.get("matched_vuln_db_id") and not f.get("is_false_positive")]
+    unmatched = [f for f in findings
+                 if not f.get("matched_vuln_db_id") and not f.get("matched_chain_db_id")
+                 and not f.get("is_false_positive")]
     fps = [f for f in findings if f.get("is_false_positive")]
+
+    if chain_matched:
+        print(f"\n  {colored('CHAIN MATCHED', 'CYAN')} {C.DIM}({len(chain_matched)}) — review these carefully{C.RESET}")
+        for f in chain_matched:
+            chain = chain_lookup.get(f["matched_chain_db_id"], {})
+            chain_title = chain.get("title", f"DB#{f['matched_chain_db_id']}")
+            chain_id = chain.get("chain_id", "?")
+            print(f"    {colored('⛓', 'CYAN')} {C.BOLD}{f.get('title', f['vuln_type'])}{C.RESET}")
+            print(f"      {colored('→', 'GRAY')} {chain_title} {C.DIM}({chain_id}){C.RESET}")
+            print(f"      {C.DIM}{f.get('reasoning', '')}{C.RESET}")
 
     if matched:
         print(f"\n  {colored('MATCHED', 'GREEN')} {C.DIM}({len(matched)}){C.RESET}")
@@ -656,6 +732,8 @@ def print_mapping_table(mapping: dict, vulns: list):
 
     # Summary bar
     parts = []
+    if chain_matched:
+        parts.append(colored(f"{len(chain_matched)} chain", "CYAN"))
     if matched:
         parts.append(colored(f"{len(matched)} matched", "GREEN"))
     if unmatched:
@@ -703,10 +781,10 @@ def _titles_share_a_keyword(a: str, b: str) -> bool:
     return bool(wa & wb)
 
 
-def validate_llm_matches(mapping: dict, vulns: list) -> list[str]:
+def validate_llm_matches(mapping: dict, vulns: list, chains: list | None = None) -> list[str]:
     """Sanity-check the LLM's proposed matches in place; return warnings.
 
-    Two checks, both defensive rather than blocking (the operator sees the
+    Checks, all defensive rather than blocking (the operator sees the
     warning and can still let the match through — this never silently drops
     a match on its own):
     - Hallucination guard: matched_vuln_db_id must be a real id from the
@@ -716,11 +794,35 @@ def validate_llm_matches(mapping: dict, vulns: list) -> list[str]:
       should share at least one meaningful keyword. Zero overlap doesn't
       prove the match is wrong, but it's exactly the pattern behind every
       real mismatch found so far, so it's worth a human's attention.
+    - Same hallucination guard for matched_chain_db_id against `chains`.
+    - Mutual exclusivity: a finding must not have both matched_vuln_db_id and
+      matched_chain_db_id set.
     """
     vuln_lookup = {v["id"]: v for v in vulns}
+    chain_lookup = {c["id"]: c for c in (chains or [])}
     warnings = []
     for f in mapping.get("findings", []):
         matched = f.get("matched_vuln_db_id")
+        matched_chain = f.get("matched_chain_db_id")
+
+        if matched is not None and matched_chain is not None:
+            warnings.append(
+                f"'{f.get('title', f.get('vuln_type', '?'))}' was matched to both a "
+                f"vuln and a chain — clearing the vuln match and keeping the chain."
+            )
+            f["matched_vuln_db_id"] = None
+            matched = None
+
+        if matched_chain is not None:
+            chain = chain_lookup.get(matched_chain)
+            if chain is None:
+                warnings.append(
+                    f"'{f.get('title', f.get('vuln_type', '?'))}' was matched to chain "
+                    f"DB id {matched_chain}, which isn't in the known-chains list shown "
+                    f"to the model — dropping the match (possible hallucination)."
+                )
+                f["matched_chain_db_id"] = None
+
         if matched is None:
             continue
         vuln = vuln_lookup.get(matched)
@@ -822,10 +924,12 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
             # heuristic match forever, since only a *different* non-null
             # match ever triggered a correction call.
             matched = lf.get("matched_vuln_db_id")
+            matched_chain = lf.get("matched_chain_db_id")
             current = sf.get("matched_vuln_id")
-            if matched != current:
-                client.match_finding(scan_id, sf["id"], matched)
-                if matched is None:
+            current_chain = sf.get("matched_chain_id")
+            if matched != current or matched_chain != current_chain:
+                client.match_finding(scan_id, sf["id"], matched, matched_chain)
+                if matched is None and matched_chain is None:
                     unmatches += 1
                 else:
                     corrections += 1
@@ -1567,9 +1671,12 @@ def main():
         print(f"  {colored('✗', 'RED')} Failed to access app {args.app_id}: {e.response.status_code}", file=sys.stderr)
         sys.exit(1)
 
-    # Get known vulnerabilities
+    # Get known vulnerabilities and any registered exploit chains
     vulns = client.get_vulns(args.app_id)
     print(f"  {colored('✓', 'GREEN')} Known vulns: {colored(str(len(vulns)), 'BOLD')}")
+    chains = client.get_chains(args.app_id) if vulns else []
+    if chains:
+        print(f"  {colored('✓', 'GREEN')} Known chains: {colored(str(len(chains)), 'BOLD')}")
 
     # Now that we know whether we're in extract-only mode, finalize the model
     # choice. Haiku is roughly 3× faster than Sonnet and adequate for the
@@ -1632,9 +1739,9 @@ def main():
         scan_md = probely_findings_to_markdown(raw_findings, scan_ids)
         try:
             if use_cli:
-                llm_out = run_llm_mapping_cli(scan_md, vulns, spinner_msg="Mapping Probely findings with Claude CLI...")
+                llm_out = run_llm_mapping_cli(scan_md, vulns, spinner_msg="Mapping Probely findings with Claude CLI...", chains=chains)
             else:
-                llm_out = run_llm_mapping(scan_md, vulns, args.model, llm_client, spinner_msg="Mapping Probely findings with Claude...")
+                llm_out = run_llm_mapping(scan_md, vulns, args.model, llm_client, spinner_msg="Mapping Probely findings with Claude...", chains=chains)
         except (LLMCallError, json.JSONDecodeError) as e:
             print(f"  {colored('✗', 'RED')} LLM mapping failed: {e}", file=sys.stderr)
             sys.exit(1)
@@ -1652,10 +1759,10 @@ def main():
         cost = args.cost if args.cost is not None else _as_float(llm_out.get("cost"))
         tokens = args.tokens or _as_int(llm_out.get("tokens")) or llm_out.get("_llm_tokens")
 
-        match_warnings = validate_llm_matches(mapping, vulns)
+        match_warnings = validate_llm_matches(mapping, vulns, chains)
 
         print_header(f"Probely Import — {len(merged['findings'])} findings")
-        print_mapping_table(mapping, vulns)
+        print_mapping_table(mapping, vulns, chains)
         if match_warnings:
             print(f"\n  {colored('⚠ MATCH WARNINGS', 'YELLOW')} {C.DIM}({len(match_warnings)}){C.RESET}")
             for w in match_warnings:
@@ -1747,8 +1854,8 @@ def main():
         """Single attempt — raises LLMCallError on any failure."""
         try:
             if use_cli:
-                return run_llm_mapping_cli(content, vulns, spinner_msg=spinner_msg)
-            return run_llm_mapping(content, vulns, args.model, llm_client, spinner_msg=spinner_msg)
+                return run_llm_mapping_cli(content, vulns, spinner_msg=spinner_msg, chains=chains)
+            return run_llm_mapping(content, vulns, args.model, llm_client, spinner_msg=spinner_msg, chains=chains)
         except LLMCallError:
             raise
         except json.JSONDecodeError as e:
@@ -1887,9 +1994,9 @@ def main():
     if args.scan_start:
         mapping["scan_date"] = args.scan_start
 
-    match_warnings = validate_llm_matches(mapping, vulns)
+    match_warnings = validate_llm_matches(mapping, vulns, chains)
 
-    print_mapping_table(mapping, vulns)
+    print_mapping_table(mapping, vulns, chains)
     if match_warnings:
         print(f"\n  {colored('⚠ MATCH WARNINGS', 'YELLOW')} {C.DIM}({len(match_warnings)}){C.RESET}")
         for w in match_warnings:
