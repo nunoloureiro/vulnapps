@@ -246,26 +246,44 @@ def test_chain_adds_its_own_weight_to_the_total():
 
 
 def test_chain_credit_requires_all_members_matched():
-    """Finding every member independently is NOT evidence of chaining — a
-    chain earns nothing until every member is matched, then earns its full
-    weight (no partial credit; there is no chain-level milestone tracking).
-    """
+    """Matching only some members earns nothing, matched-but-unconfirmed
+    (no partial credit; there is no chain-level milestone tracking)."""
     vulns = [vuln(1, 9), vuln(2, 9)]
     chain = {"id": 7, "impact_weight": 27, "members": [1, 2],
              "existed_since_revision": 1, "invalidated_at_revision": None}
 
-    one_step = compute_metrics([finding(10, matched=1)], vulns, [chain])
+    one_step = compute_metrics([finding(10, matched=1)], vulns, [chain], confirmed_chain_ids=[7])
     assert one_step["credit_by_chain"][7] == 0.0
     assert one_step["weighted_found"] == 9.0        # member 1 only
 
     both = compute_metrics(
-        [finding(10, matched=1), finding(11, matched=2)], vulns, [chain]
+        [finding(10, matched=1), finding(11, matched=2)], vulns, [chain], confirmed_chain_ids=[7]
     )
     assert both["credit_by_chain"][7] == 1.0
     assert both["weighted_found"] == 45.0           # 9 + 9 + 27
     assert both["weighted_total"] == 45.0
     # Asymmetric with vulns on purpose: for a vuln the match IS the evidence.
     assert both["credit_by_vuln"][1] == 1.0
+
+
+def test_chain_credit_requires_explicit_confirmation_even_when_all_members_matched():
+    """Matching every member is necessary but NOT sufficient — confirmed on
+    real scan data where two findings independently matched a chain's two
+    members while one finding's own text explicitly denied any connection
+    between them, and it still scored full chain credit under the old rule
+    (credit inferred from matching alone). A reviewer must explicitly confirm
+    (confirmed_chain_ids) before a chain earns anything, no matter how many
+    of its members line up."""
+    vulns = [vuln(1, 9), vuln(2, 9)]
+    chain = {"id": 7, "impact_weight": 27, "members": [1, 2],
+             "existed_since_revision": 1, "invalidated_at_revision": None}
+
+    both_matched_unconfirmed = compute_metrics(
+        [finding(10, matched=1), finding(11, matched=2)], vulns, [chain]
+    )
+    assert both_matched_unconfirmed["credit_by_chain"][7] == 0.0
+    assert both_matched_unconfirmed["weighted_found"] == 18.0   # 9 + 9, no chain bonus
+    assert both_matched_unconfirmed["weighted_total"] == 45.0   # chain still costs points unearned
 
 
 # ---------------------------------------------------------------------------

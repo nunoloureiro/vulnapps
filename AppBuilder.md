@@ -187,6 +187,7 @@ vulnapps/
 │   ├── 035_finding_reasoning.sql        # scan_findings.reasoning (LLM mapping rationale)
 │   ├── 036_audit_log.sql                # audit_log table (scan/vuln history log)
 │   ├── 037_audit_log_chains.sql         # widen audit_log.entity_type to allow 'chain'
+│   ├── 038_scan_chain_credits.sql       # explicit human-adjudicated chain credit (see below)
 │   ├── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
 │   ├── 013_api_keys.sql                 # API keys table with scopes
 │   ├── 014_scan_labels.sql              # Labels + scan_labels junction table
@@ -1111,6 +1112,33 @@ for `chains`/`chain_members`:
 All three require app write access + `full` API scope, and log to `audit_log`
 (`entity_type='chain'`, actions `chain_created`/`chain_updated`/`chain_deleted`) exactly like
 vuln CRUD.
+
+**Chain credit requires explicit human confirmation — matching every member is necessary
+but never sufficient.** `compute_metrics()`'s original rule (migration 028) inferred credit
+purely from "every member matched." On real scan data this credited chains that were never
+actually demonstrated: two independent findings each matched a different member with zero
+connection between them (confirmed by reading the finding text — one matched finding's own
+description explicitly said *"independent of SQL injection"* about the very chain it was
+credited for). Migration 038 adds `scan_chain_credits(scan_id, chain_pk, credited_by,
+credited_at, notes)`; `compute_metrics()` takes a `confirmed_chain_ids` set and credits a
+chain only when every member is matched **and** its id is in that set. Nothing is ever
+auto-populated into this table — a reviewer must read the scan's actual finding text and
+decide it narrates the pivot, not just that both bugs happen to appear in the report.
+
+| Method | Route | Notes |
+|---|---|---|
+| POST | `/api/scans/{id}/chains/{chain_pk}/confirm` | Confirm. Body (optional): `{notes}`. **400** if every member isn't matched by this scan yet |
+| DELETE | `/api/scans/{id}/chains/{chain_pk}/confirm` | Revoke — reverts to 0 credit |
+
+Both require scan write access + `vuln-mapper` scope, log to `audit_log`
+(actions `chain_credit_confirmed`/`chain_credit_revoked`), same access rule as
+match/mark-fp. UI: a **Chains** section on the scan detail page lists each in-scope
+chain, its members with per-member match status, and (for scans where every member is
+matched) a Confirm/Revoke control — this is where a reviewer actually reads the finding
+text before deciding. The Compare Scans page has a read-only **Chains** table showing
+every chain × every compared scanner (`✓ confirmed` / `matched, unconfirmed` / `✗`), so
+the gap between "matched" and "credited" is visible across scanners at a glance without
+opening each scan.
 
 ### Ground-truth revisions
 

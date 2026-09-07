@@ -30,7 +30,7 @@ export default function ScanDetail() {
   if (error) return <div className="alert alert-error">{error}</div>;
   if (!data) return null;
 
-  const { scan, app, metrics, findings, missed_vulns, known_vulns, labels, can_edit,
+  const { scan, app, metrics, findings, missed_vulns, known_vulns, chains, labels, can_edit,
           can_view_cost, revision } = data;
 
   return (
@@ -45,8 +45,102 @@ export default function ScanDetail() {
       <Findings findings={findings} knownVulns={known_vulns || []} canEdit={can_edit} scanId={id} appId={app.id}
                 onUpdate={load} />
       {missed_vulns && missed_vulns.length > 0 && <MissedVulns vulns={missed_vulns} appId={app.id} />}
+      {chains && chains.length > 0 && (
+        <Chains chains={chains} knownVulns={known_vulns || []} metrics={metrics} canEdit={can_edit}
+                scanId={id} onUpdate={load} />
+      )}
       <HistoryLog scanId={id} canView={can_edit} />
     </>
+  );
+}
+
+// A chain is credited only when a reviewer explicitly confirms it — matching
+// every member is necessary but was found, on real scan data, to not be
+// sufficient (a scan's own finding text can independently match both members
+// while explicitly denying any connection between them). This section is
+// where that confirmation happens, one chain at a time, after actually
+// reading the finding text below for every member.
+function Chains({ chains, knownVulns, metrics, canEdit, scanId, onUpdate }) {
+  const [busy, setBusy] = useState(null);
+  const vulnById = useMemo(() => {
+    const m = new Map();
+    for (const v of knownVulns) m.set(v.id, v);
+    return m;
+  }, [knownVulns]);
+  const matchedIds = new Set(metrics.matched_vuln_ids || []);
+  const creditByChain = metrics.credit_by_chain || {};
+
+  const toggle = async (chain, credited) => {
+    setBusy(chain.id);
+    try {
+      if (credited) await api.del(`/scans/${scanId}/chains/${chain.id}/confirm`);
+      else await api.post(`/scans/${scanId}/chains/${chain.id}/confirm`, {});
+      onUpdate();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="card mb-2">
+      <h3 className="card-title mb-2">Chains</h3>
+      <p className="text-muted text-sm mb-2">
+        A chain earns its weight only once a reviewer confirms this scan's own findings
+        demonstrate it end to end — matching every member below is necessary but not enough on its own.
+      </p>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Chain</th><th>Members</th><th style={{ width: 160 }}>Status</th></tr></thead>
+          <tbody>
+            {chains.map(chain => {
+              const eligible = chain.members.length > 0 && chain.members.every(vid => matchedIds.has(vid));
+              const credited = creditByChain[String(chain.id)] === 1 || creditByChain[chain.id] === 1;
+              return (
+                <tr key={chain.id}>
+                  <td>
+                    <strong>{chain.chain_id}</strong>
+                    <div className="text-muted text-sm">{chain.title}</div>
+                  </td>
+                  <td>
+                    {chain.members.map(vid => {
+                      const v = vulnById.get(vid);
+                      const hit = matchedIds.has(vid);
+                      return (
+                        <div key={vid} className={hit ? 'text-success text-sm' : 'text-muted text-sm'}>
+                          {hit ? '✓' : '✗'} {v ? `${v.vuln_id} — ${v.title}` : `#${vid}`}
+                        </div>
+                      );
+                    })}
+                  </td>
+                  <td>
+                    {credited ? (
+                      <>
+                        <span className="text-success">✓ Confirmed</span>
+                        {canEdit && (
+                          <div>
+                            <button className="btn btn-outline btn-sm" disabled={busy === chain.id}
+                                    onClick={() => toggle(chain, true)}>Revoke</button>
+                          </div>
+                        )}
+                      </>
+                    ) : eligible ? (
+                      canEdit ? (
+                        <button className="btn btn-primary btn-sm" disabled={busy === chain.id}
+                                onClick={() => toggle(chain, false)}>
+                          Confirm demonstrated
+                        </button>
+                      ) : <span className="text-warning text-sm">Awaiting review</span>
+                    ) : (
+                      <span className="text-muted text-sm">Members not all matched</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

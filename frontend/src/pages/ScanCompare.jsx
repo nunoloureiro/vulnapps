@@ -134,8 +134,38 @@ function ReportingGuards({ guards, label, appId }) {
   );
 }
 
+// Module-scope so both ComparisonView's own table headers and ChainsMatrix
+// (a sibling component further down) can share the exact same header cell.
+function ScannerHeader({ s, isWinner }) {
+  return (
+    <>
+      {isWinner && (
+        <div title="Highest weighted detection rate" style={{ fontSize: '1rem', lineHeight: 1, marginBottom: '0.15rem' }}>🏆</div>
+      )}
+      <Link to={`/scans/${s.scan.id}`}>{s.scan.scanner_name}</Link>
+      {s.scan.scanner_version && <span className="text-muted text-xs"> v{s.scan.scanner_version}</span>}
+      <br />
+      <span className="text-muted text-xs">{s.short_date}</span>
+      {s.labels && s.labels.length > 0 && (
+        <div
+          className="scan-labels-cell"
+          style={{
+            justifyContent: 'center',
+            marginTop: '0.25rem',
+            maxWidth: 240,
+            marginLeft: 'auto',
+            marginRight: 'auto',
+          }}
+        >
+          {s.labels.map(l => <LabelBadge key={l.id} label={l} />)}
+        </div>
+      )}
+    </>
+  );
+}
+
 function ComparisonView({ data, appId }) {
-  const { scanners, matrix, fp_matrix, guards, label } = data;
+  const { scanners, matrix, fp_matrix, guards, label, chains } = data;
   const ALL_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
   const [sevFilter, setSevFilter] = useState(new Set(ALL_SEVERITIES));
 
@@ -261,32 +291,6 @@ function ComparisonView({ data, appId }) {
     }
     return best > 0 && !tie ? bestIdx : -1;
   })();
-
-  const ScannerHeader = ({ s, isWinner }) => (
-    <>
-      {isWinner && (
-        <div title="Highest weighted detection rate" style={{ fontSize: '1rem', lineHeight: 1, marginBottom: '0.15rem' }}>🏆</div>
-      )}
-      <Link to={`/scans/${s.scan.id}`}>{s.scan.scanner_name}</Link>
-      {s.scan.scanner_version && <span className="text-muted text-xs"> v{s.scan.scanner_version}</span>}
-      <br />
-      <span className="text-muted text-xs">{s.short_date}</span>
-      {s.labels && s.labels.length > 0 && (
-        <div
-          className="scan-labels-cell"
-          style={{
-            justifyContent: 'center',
-            marginTop: '0.25rem',
-            maxWidth: 240,
-            marginLeft: 'auto',
-            marginRight: 'auto',
-          }}
-        >
-          {s.labels.map(l => <LabelBadge key={l.id} label={l} />)}
-        </div>
-      )}
-    </>
-  );
 
   const pctColor = v => v >= 0.7 ? 'text-success' : v >= 0.4 ? 'text-warning' : 'text-error';
 
@@ -560,6 +564,8 @@ function ComparisonView({ data, appId }) {
         </div>
       </div>
 
+      {!isFiltered && <ChainsMatrix chains={chains} scanners={scanners} matrix={matrix} label={label} />}
+
       {fp_matrix && fp_matrix.length > 0 && (
         <div className="card">
           <h3 className="card-title mb-2">False Positives</h3>
@@ -598,6 +604,67 @@ function ComparisonView({ data, appId }) {
         <Link to={`/apps/${appId}/compare`} className="btn btn-outline">Change Selection</Link>
       </div>
     </>
+  );
+}
+
+// Read-only, cross-scanner view of chain credit — each chain earns its
+// weight only once a reviewer explicitly confirms (on the scan's own detail
+// page) that its findings demonstrate the chain end to end. Matching every
+// member is shown separately from that confirmation on purpose: a scan
+// whose findings independently match both members but never connect them is
+// exactly the case this distinction exists to catch, and this table is
+// where you can see the gap between the two states across every scanner at
+// once, without having to open each scan and re-derive it.
+function ChainsMatrix({ chains, scanners, matrix, label }) {
+  if (!chains || chains.length === 0) return null;
+
+  const vulnById = new Map(matrix.map(row => [row.vuln.id, row.vuln]));
+
+  return (
+    <div className="card mb-2">
+      <h3 className="card-title mb-2">
+        Chains
+        <span className="text-muted text-sm font-mono" style={{ marginLeft: 8 }}>{label}</span>
+      </h3>
+      <div className="compare-scroll">
+        <table className="matrix-table">
+          <thead>
+            <tr>
+              <th className="sticky-col" style={{ left: 0, minWidth: 220 }}>Chain</th>
+              {scanners.map(s => <th key={s.scan.id} className="text-center matrix-header"><ScannerHeader s={s} /></th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {chains.map(chain => (
+              <tr key={chain.id}>
+                <td className="sticky-col" style={{ left: 0 }}>
+                  <strong>{chain.chain_id}</strong>
+                  <div className="text-muted text-xs">{chain.title}</div>
+                  <div className="text-muted text-xs">
+                    {chain.members.map(vid => vulnById.get(vid)?.vuln_id || `#${vid}`).join(' + ')}
+                  </div>
+                </td>
+                {scanners.map(s => {
+                  const allMatched = chain.members.every(vid => s.matched_vuln_ids.includes(vid));
+                  const credited = s.metrics.credit_by_chain?.[String(chain.id)] === 1;
+                  return (
+                    <td key={s.scan.id} className="text-center">
+                      {credited ? (
+                        <span className="text-success" title="Confirmed — demonstrated end to end">✓ confirmed</span>
+                      ) : allMatched ? (
+                        <span className="text-warning" title="Every member matched, but not yet confirmed to be demonstrated as a chain">matched, unconfirmed</span>
+                      ) : (
+                        <span className="text-muted">✗</span>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

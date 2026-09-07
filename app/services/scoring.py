@@ -176,6 +176,20 @@ async def fetch_findings(db, scan_id: int) -> list:
 # Live scoring
 # ---------------------------------------------------------------------------
 
+async def fetch_confirmed_chain_ids(db, scan_id: int) -> set[int]:
+    """Chain primary keys a reviewer has explicitly confirmed *scan_id* demonstrates.
+
+    See migration 038: matching every member of a chain is necessary but not
+    sufficient for credit — this table is the only thing that can make it
+    sufficient, and it is populated by a human who read the actual finding
+    text, never inferred from matching alone.
+    """
+    cursor = await db.execute(
+        "SELECT chain_pk FROM scan_chain_credits WHERE scan_id = ?", (scan_id,)
+    )
+    return {row["chain_pk"] for row in await cursor.fetchall()}
+
+
 async def score(db, scan, revision: int) -> dict:
     """Compute metrics for *scan* at *revision*.
 
@@ -190,8 +204,9 @@ async def score(db, scan, revision: int) -> dict:
     vulns = await fetch_vulns_in_scope(db, app_id, revision, corpus_revision)
     chains = await fetch_chains_in_scope(db, app_id, revision, corpus_revision)
     findings = await fetch_findings(db, scan["id"])
+    confirmed_chain_ids = await fetch_confirmed_chain_ids(db, scan["id"])
 
-    metrics = compute_metrics(findings, vulns, chains)
+    metrics = compute_metrics(findings, vulns, chains, confirmed_chain_ids)
 
     return {
         "metrics": metrics,

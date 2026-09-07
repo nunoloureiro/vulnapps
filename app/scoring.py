@@ -166,11 +166,15 @@ def compute_metrics(
     findings,
     vulns_in_scope,
     chains_in_scope=(),
+    confirmed_chain_ids=(),
 ) -> dict:
     """Compute every metric for one scan. Pure — no DB, no live app state.
 
     *findings* are that scan's ``scan_findings`` rows; *vulns_in_scope* and
     *chains_in_scope* are the ground truth for the revision being scored at.
+    *confirmed_chain_ids* are chain primary keys a reviewer has explicitly
+    confirmed THIS scan demonstrates — see the credit rule below; matching
+    every member is necessary but never sufficient on its own.
 
     Returns a dict of:
 
@@ -188,7 +192,13 @@ def compute_metrics(
     ``weighted_rate``
         The headline metric: ``weighted_found / weighted_total``. A matched
         vuln scores its full weight; a chain scores its full weight only when
-        every member is matched.
+        every member is matched AND a reviewer has explicitly confirmed
+        (``confirmed_chain_ids``) that this scan demonstrates it. Matching
+        every member is necessary but not sufficient — confirmed on real
+        scan data where two findings independently matched a chain's two
+        members while explicitly denying any connection between them
+        ("independent of SQL injection") and would otherwise have scored
+        full chain credit anyway.
     ``severity_accuracy``
         Of the TP findings that reported their own severity, the fraction
         whose reported severity exactly matches the matched vuln's ground-truth
@@ -206,6 +216,7 @@ def compute_metrics(
     findings = list(findings)
     vulns = list(vulns_in_scope)
     chains = list(chains_in_scope)
+    confirmed_chain_ids = set(confirmed_chain_ids)
 
     scope_ids = {field(v, "id") for v in vulns}
 
@@ -300,8 +311,9 @@ def compute_metrics(
     for c in chains:
         pk = field(c, "id")
         members = _chain_members(c)
+        all_members_matched = bool(members) and all(vid in in_scope_matched for vid in members)
         credit_by_chain[pk] = (
-            1.0 if members and all(vid in in_scope_matched for vid in members) else 0.0
+            1.0 if all_members_matched and pk in confirmed_chain_ids else 0.0
         )
 
     # --- weighted totals and the tier matrix ------------------------------

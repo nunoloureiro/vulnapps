@@ -328,11 +328,19 @@ async def test_chain_participates_in_the_scope_rule(db):
     assert early["metrics"]["weighted_total"] == 18.0
 
     later_scan_id = await submit(db, app_id, findings)
+    # Matching every member is necessary but not sufficient — a reviewer must
+    # also explicitly confirm this scan demonstrates the chain (migration 038).
+    await db.execute(
+        "INSERT INTO scan_chain_credits (scan_id, chain_pk, credited_by) VALUES (?, ?, 1)",
+        (later_scan_id, chain_pk),
+    )
+    await db.commit()
     later_scan = await _scan(db, later_scan_id)
     scored = await scoring_service.score(db, later_scan, 2)
     assert scored["metrics"]["weighted_total"] == 45.0     # 9 + 9 + 27
-    # Both members matched → the chain earns its full weight (no partial
-    # credit; there is no chain-level milestone tracking).
+    # Both members matched AND explicitly confirmed → the chain earns its
+    # full weight (no partial credit; there is no chain-level milestone
+    # tracking).
     assert scored["metrics"]["weighted_found"] == 45.0
     assert scored["metrics"]["tiers"]["chained"]["count"] == 1
     assert scored["metrics"]["tiers"]["chained"]["found"] == 1

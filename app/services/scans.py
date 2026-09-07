@@ -694,6 +694,92 @@ async def mark_finding_fp(db, user, scan_id: int, finding_id: int, fp_group=None
     await db.commit()
 
 
+async def confirm_chain_credit(db, user, scan_id: int, chain_pk: int, notes=None) -> dict:
+    """Explicitly confirm that *scan_id* demonstrates *chain_pk* end to end.
+
+    Matching every member of a chain is necessary but never sufficient on its
+    own (see migration 038) — this is the only thing that grants credit, and
+    it exists precisely because inferring credit from matching alone was
+    shown to credit chains whose own finding text explicitly denied any
+    connection between the members. Call this only after reading the scan's
+    actual finding text for every member and confirming it narrates the
+    pivot, not just that both bugs happen to appear in the report.
+
+    Raises ``ValueError`` if scan/chain not found, or the chain's members
+    aren't all matched by this scan (confirming an impossible chain is
+    never meaningful). Raises ``PermissionError`` if access is denied.
+    """
+    scan, app = await _get_scan_and_app(db, scan_id)
+    await _check_scan_write(db, user, scan, app)
+
+    cursor = await db.execute(
+        "SELECT * FROM chains WHERE id = ? AND app_id = ?", (chain_pk, scan["app_id"])
+    )
+    chain = await cursor.fetchone()
+    if not chain:
+        raise ValueError("Chain not found")
+
+    cursor = await db.execute(
+        "SELECT vuln_id FROM chain_members WHERE chain_pk = ?", (chain_pk,)
+    )
+    member_ids = [row["vuln_id"] for row in await cursor.fetchall()]
+    cursor = await db.execute(
+        "SELECT DISTINCT matched_vuln_id FROM scan_findings WHERE scan_id = ? AND matched_vuln_id IS NOT NULL",
+        (scan_id,),
+    )
+    matched_ids = {row["matched_vuln_id"] for row in await cursor.fetchall()}
+    if not member_ids or not all(vid in matched_ids for vid in member_ids):
+        raise ValueError(
+            "Not every member of this chain is matched by this scan — nothing to confirm"
+        )
+
+    await db.execute(
+        """INSERT INTO scan_chain_credits (scan_id, chain_pk, credited_by, notes)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(scan_id, chain_pk) DO UPDATE SET
+             credited_by = excluded.credited_by, notes = excluded.notes,
+             credited_at = datetime('now')""",
+        (scan_id, chain_pk, user["sub"], notes),
+    )
+    await audit_service.record_audit_event(
+        db, entity_type="scan_finding", action="chain_credit_confirmed", actor=user,
+        message=f"{user['name']} confirmed {chain['chain_id']} (\"{chain['title']}\") "
+                f"is demonstrated by this scan",
+        scan_id=scan_id, details={"chain_pk": chain_pk},
+    )
+    await db.commit()
+    return {"ok": True, "chain_pk": chain_pk, "credited": True}
+
+
+async def revoke_chain_credit(db, user, scan_id: int, chain_pk: int) -> dict:
+    """Undo a prior :func:`confirm_chain_credit` — the chain reverts to 0 credit.
+
+    Raises ``ValueError`` if scan not found. Silently succeeds if the chain
+    was never confirmed. Raises ``PermissionError`` if access is denied.
+    """
+    scan, app = await _get_scan_and_app(db, scan_id)
+    await _check_scan_write(db, user, scan, app)
+
+    cursor = await db.execute(
+        "SELECT chain_id, title FROM chains WHERE id = ?", (chain_pk,)
+    )
+    chain = await cursor.fetchone()
+
+    await db.execute(
+        "DELETE FROM scan_chain_credits WHERE scan_id = ? AND chain_pk = ?",
+        (scan_id, chain_pk),
+    )
+    if chain:
+        await audit_service.record_audit_event(
+            db, entity_type="scan_finding", action="chain_credit_revoked", actor=user,
+            message=f"{user['name']} revoked {chain['chain_id']} (\"{chain['title']}\") "
+                    f"credit for this scan",
+            scan_id=scan_id, details={"chain_pk": chain_pk},
+        )
+    await db.commit()
+    return {"ok": True, "chain_pk": chain_pk, "credited": False}
+
+
 async def set_finding_ignored(db, user, scan_id: int, finding_id: int, ignored: bool) -> None:
     """Set/clear a finding's "ignored" state. Ignoring clears any match/FP so the
     states stay mutually exclusive; clearing returns the finding to Pending."""

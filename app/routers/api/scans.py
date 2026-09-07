@@ -175,6 +175,54 @@ async def mark_finding_fp(request: Request, scan_id: int, finding_id: int):
     return {"ok": True, "fp_group": fp_group}
 
 
+@router.post("/{scan_id}/chains/{chain_pk}/confirm")
+async def confirm_chain_credit(request: Request, scan_id: int, chain_pk: int):
+    """Explicitly confirm this scan demonstrates *chain_pk* end to end.
+
+    Matching every member is necessary but not sufficient for chain credit —
+    see app/services/scans.py::confirm_chain_credit. Optional body
+    ``{"notes": "..."}`` records why the reviewer is confident.
+    """
+    user = await require_user(request)
+    require_scope(user, "vuln-mapper")
+    raw = await request.body()
+    notes = None
+    if raw:
+        import json
+        try:
+            notes = (json.loads(raw) or {}).get("notes")
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    db = await get_connection()
+    try:
+        result = await scans_service.confirm_chain_credit(db, user, scan_id, chain_pk, notes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+    return result
+
+
+@router.delete("/{scan_id}/chains/{chain_pk}/confirm")
+async def revoke_chain_credit(request: Request, scan_id: int, chain_pk: int):
+    user = await require_user(request)
+    require_scope(user, "vuln-mapper")
+
+    db = await get_connection()
+    try:
+        result = await scans_service.revoke_chain_credit(db, user, scan_id, chain_pk)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+    return result
+
+
 @router.post("/{scan_id}/findings/{finding_id}/ignore")
 async def set_finding_ignored(request: Request, scan_id: int, finding_id: int):
     user = await require_user(request)
