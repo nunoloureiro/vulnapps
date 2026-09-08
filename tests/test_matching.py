@@ -174,3 +174,38 @@ def test_no_matching_vuln_type_never_matches():
         "http_method": "POST", "parameter": "password", "filename": None,
     }
     assert match_finding(finding, _WILDCARD_VULNS) == (None, 0)
+
+
+def _as_sqlite_row(d: dict):
+    """Build a real ``sqlite3.Row`` from *d* -- unlike a dict, it has no
+    ``.get()``, only bracket access. Every production caller of
+    ``match_finding`` passes ``known_vulns`` fetched straight from
+    ``aiosqlite`` (same interface as ``sqlite3.Row``), so a test fixture
+    that only ever uses plain dicts can't catch a `.get()` call slipping
+    into the wildcard-vuln branch -- which is exactly what happened."""
+    import sqlite3
+    keys = list(d.keys())
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    con.execute(f"CREATE TABLE t ({', '.join(keys)})")
+    con.execute(f"INSERT INTO t VALUES ({', '.join(['?'] * len(keys))})", [d[k] for k in keys])
+    row = con.execute("SELECT * FROM t").fetchone()
+    con.close()
+    return row
+
+
+def test_wildcard_match_works_with_a_real_db_row_not_just_a_dict():
+    """Regression test for a real incident: known_vulns in production is a
+    list of aiosqlite.Row objects (from `SELECT * FROM vulnerabilities`),
+    which support `row["key"]` but not `row.get("key")`. The wildcard-vuln
+    branch called `.get("title")` on the vuln, which crashed with
+    `AttributeError: 'sqlite3.Row' object has no attribute 'get'` on every
+    scan submission where a finding's vuln_type matched any wildcard-scoped
+    (url="/*") known vuln -- i.e. most real scans against TaintedPort."""
+    jwt_none_alg_finding = {
+        "title": "JWT 'none' Algorithm Accepted",
+        "vuln_type": "Broken Authentication", "url": "/api/orders/1",
+        "http_method": "GET", "parameter": "", "filename": None,
+    }
+    row_vulns = [_as_sqlite_row(v) for v in _WILDCARD_VULNS]
+    assert match_finding(jwt_none_alg_finding, row_vulns) == (42, 0)

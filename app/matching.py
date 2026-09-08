@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
+from app.scoring import field
+
 # ---------------------------------------------------------------------------
 # Vuln type aliases — map common scanner names to canonical forms.
 # ---------------------------------------------------------------------------
@@ -341,7 +343,7 @@ def match_finding(finding: dict, known_vulns: list) -> tuple:
         # match shares at least one (e.g. "jwt", "signature", "headers").
         # Require that instead of a location score for these vulns.
         if (v["url"] or "").strip() == "/*":
-            shared = _title_keyword_overlap(finding.get("title"), v.get("title"))
+            shared = _title_keyword_overlap(finding.get("title"), field(v, "title"))
             if not shared:
                 continue
             # Base score confirms relevance (one shared word is enough to
