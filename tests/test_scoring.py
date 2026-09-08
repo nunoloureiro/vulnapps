@@ -304,6 +304,23 @@ def test_chain_credit_from_a_direct_finding_match_needs_no_separate_confirmation
     assert m["weighted_total"] == 45.0
 
 
+def test_finding_matched_directly_to_a_chain_is_not_pending():
+    """Real incident (scan 273): precision showed a 92.6-100% range with '2
+    pending', but the findings list showed zero pending rows. `pending` only
+    checked `matched_vuln_id is None`, so a finding matched DIRECTLY to a
+    chain (matched_vuln_id null, matched_chain_id set -- fully resolved, first
+    -class evidence per test_chain_credit_from_a_direct_finding_match_needs_no_separate_confirmation
+    above) was miscounted as still awaiting adjudication."""
+    vulns = [vuln(1, 9), vuln(2, 9)]
+    chain = {"id": 7, "impact_weight": 27, "members": [1, 2],
+             "existed_since_revision": 1, "invalidated_at_revision": None}
+
+    m = compute_metrics([finding(10, matched_chain=7)], vulns, [chain])
+    assert m["pending"] == 0
+    assert m["adjudication_complete"] is True
+    assert m["precision_upper"] == m["precision_lower"] == 0.0  # tp=0 (chains aren't vuln TPs), no FPs
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------

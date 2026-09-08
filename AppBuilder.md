@@ -933,7 +933,12 @@ below for the full normative definition; the summary:
 TP        = count of UNIQUE matched vulns IN SCOPE (multiple findings on one vuln = 1 TP)
 FP        = count of findings where is_false_positive = 1        (raw, kept for continuity)
 FP groups = distinct fp_group among FPs + 1 per ungrouped FP     (used by precision)
-Pending   = findings with matched_vuln_id IS NULL AND is_false_positive = 0 AND is_ignored = 0
+Pending   = findings with matched_vuln_id IS NULL AND matched_chain_id IS NULL
+            AND is_false_positive = 0 AND is_ignored = 0
+            -- a finding matched DIRECTLY to a chain is fully resolved, not
+            -- awaiting adjudication (real incident, scan 273: precision showed
+            -- a range with "N pending" while the findings list had zero
+            -- pending rows, because this check only looked at matched_vuln_id)
 Ignored   = findings where is_ignored = 1  (neutral — excluded from precision/recall/F1)
 FN        = in-scope vulns NOT matched by any finding in this scan
 

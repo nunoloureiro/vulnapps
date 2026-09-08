@@ -255,6 +255,7 @@ def compute_metrics(
     pending = sum(
         1 for f in findings
         if field(f, "matched_vuln_id") is None
+        and field(f, "matched_chain_id") is None
         and int(field(f, "is_false_positive", 0) or 0) == 0
         and int(field(f, "is_ignored", 0) or 0) == 0
     )
