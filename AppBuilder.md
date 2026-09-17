@@ -1629,7 +1629,7 @@ Same pattern as TaintedPort: build locally for linux/amd64, push to Docker Hub, 
 - **Host nginx** proxies domain to `127.0.0.1:8001` (`docker/nginx-host-vulnapps.conf`)
 - **Data persists** via named volume `vulnapps-data`
 
-**`aws/setup-ec2.sh`** — Installs Docker (if needed), pulls image from Docker Hub, creates data volume, runs container on `127.0.0.1:8001` with auto-generated SECRET_KEY.
+**`aws/setup-ec2.sh`** — Installs Docker (if needed), pulls the `VULNAPPS_IMAGE` image from Docker Hub, creates the data volume, and runs the container on `127.0.0.1:8001`. Accepts an optional Docker env-file for CI and manual updates; without it, uses the shell's SECRET_KEY or generates one. Snapshots an existing database before replacement and checks API startup.
 
 **`docker/nginx-host-vulnapps.conf`** — Host nginx virtual host config. Server name set to `vulnapps.net`.
 
@@ -1650,3 +1650,19 @@ sudo docker run -d --name vulnapps --restart unless-stopped \
     -e SECRET_KEY="YOUR_SECRET_KEY" -e DATABASE_PATH=/data/vulnapps.db \
     vulnapps:latest
 ```
+
+## Automated deployment
+
+GitHub Actions must test and build pull requests and deploy successful `main`
+pushes in `nunoloureiro/vulnapps`, with a manual trigger for `main`. Run the
+self-contained pytest suite (exclude the production-database-dependent
+`test_api_endpoints.py`), build the existing Dockerfile for linux/amd64, and
+check API and frontend startup before publishing. Supply Docker Hub and SSH
+credentials and verified host keys through repository secrets. Store application
+settings in individual `SECRET_KEY`, `TOKEN_EXPIRY_HOURS`, and `MAX_STATE_SIZE`
+secrets, and assemble the Docker env-file in CI as documented in README.md.
+Serialize runs and deploy the published
+image by digest through the existing `aws/setup-ec2.sh`, preserving `vulnapps-data` and the
+existing loopback port `8001`. Take a SQLite database snapshot before container
+replacement, fail the run on startup failure, and update `latest` only after
+successful deployment. Do not automatically reverse database migrations.

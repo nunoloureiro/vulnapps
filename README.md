@@ -112,6 +112,79 @@ REST API at `/api/v1` with JWT or API key authentication (Bearer token).
 
 ## Building & Deploying
 
+### Automatic deployment
+
+The [GitHub Actions workflow](.github/workflows/deploy.yml) tests and builds pull
+requests. Pushes to `main` in `nunoloureiro/vulnapps` also publish to Docker Hub
+and deploy to the existing EC2 host. **Actions → Test and deploy → Run workflow**
+on `main` deploys manually. Other branches and forks cannot publish or deploy.
+
+In `nunoloureiro/vulnapps`, open **Settings → Secrets and variables → Actions**.
+Choose **New repository secret** for each required value below. Enter each value
+directly, without shell `export` or enclosing quotes:
+
+- `DOCKERHUB_USERNAME`: Docker Hub account with push access to `nunoloureiro/vulnapps`.
+- `DOCKERHUB_TOKEN`: its Docker Hub access token.
+- `DEPLOY_HOST`: EC2 hostname or IPv4 address, without a URL scheme.
+- `DEPLOY_USER`: SSH user, typically `ubuntu` or `ec2-user`.
+- `DEPLOY_SSH_KEY`: private SSH key for that user, without a passphrase.
+- `DEPLOY_KNOWN_HOSTS`: the host's verified OpenSSH `known_hosts` entry. Verify the
+  fingerprint through a trusted channel before storing it. For a nondefault SSH
+  port, use an entry for `[hostname]:port`.
+- `SECRET_KEY`: the existing production application signing key.
+
+Optional repository secrets can be changed individually:
+
+- `DEPLOY_PORT`: SSH port; defaults to `22`.
+- `TOKEN_EXPIRY_HOURS`: positive integer; defaults to `24` hours.
+- `MAX_STATE_SIZE`: positive integer; defaults to `104857600` bytes (100 MiB).
+
+The workflow assembles the application env-file automatically. There is no
+`VULNAPPS_ENV_FILE` secret to maintain. After changing a secret, run **Actions →
+Test and deploy → Run workflow** on `main` to apply it; changing a secret alone
+does not redeploy the app. Enable GitHub Actions for the repository if disabled.
+
+Keep the existing signing key when adopting CI/CD. If the current host uses
+`~/.env.vulnapps` with `VULN_SECRET`, put that same value in the `SECRET_KEY`
+repository secret. `DATABASE_PATH` and `STATE_DIR` are fixed by the deployment
+script to `/data/vulnapps.db` and `/data/scan-state` so data stays on the volume.
+
+The host must already have Docker running, passwordless `sudo docker` for the
+SSH user, and SSH access from the GitHub runner. The existing nginx/TLS setup
+continues to forward to `127.0.0.1:8001`. Host provisioning and DNS/TLS configuration
+remain one-time setup using `aws/setup-ec2.sh` and `DeployInstructions.txt`.
+The Docker Hub image must be public, or the host's root Docker client must
+already be signed in with pull access.
+
+CI runs the self-contained pytest suite, builds the image (including the React
+frontend), and checks its API and homepage on an empty database. It excludes
+`tests/test_api_endpoints.py`, which requires a local production database and
+specific existing records. No production database is copied into CI.
+
+Deployments reuse [`aws/setup-ec2.sh`](aws/setup-ec2.sh) and are serialized. The script pulls the exact image
+digest before stopping the old container, snapshots the database using SQLite's
+backup API, then recreates `vulnapps` with the existing `vulnapps-data` volume and
+checks API startup. There is a short interruption during replacement. The
+`latest` tag is updated only after successful deployment. Secrets travel over
+SSH in a private temporary directory and are removed after the run; Docker
+retains the application environment as part of its container configuration.
+
+The same script can run directly: `VULNAPPS_IMAGE=image bash aws/setup-ec2.sh
+/path/to/app.env`. Omitting the env-file retains the original setup behavior:
+use the shell's `SECRET_KEY`, or generate a key when it is unset. Always supply
+the existing key or env-file when updating a deployment.
+
+If pulling or snapshotting fails, the existing service remains running. If
+replacement or startup fails, the workflow fails and requires operator recovery;
+it does not automatically roll back database migrations. Inspect `sudo docker
+logs vulnapps` on the host. Snapshots are stored in the data volume under
+`/data/deploy-backups/`; retain or remove them according to your backup policy.
+Before reverting an image, stop the failed container and restore the selected
+snapshot with no database writers active (including removing stale `-wal` and
+`-shm` files), then start the previous image using the existing deployment
+instructions. A snapshot predates the restart, so restoration can discard writes
+made after it. Deployment snapshots supplement your off-host backups.
+
 ### Build and push Docker image
 
 ```bash

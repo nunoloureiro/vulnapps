@@ -1,0 +1,120 @@
+name: Test and deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vulnapps-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE: nunoloureiro/vulnapps:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Run self-contained tests
+        env:
+          PYTHON_DOTENV_DISABLED: '1'
+          DATABASE_PATH: ${{ runner.temp }}/test.db
+          STATE_DIR: ${{ runner.temp }}/scan-state
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pytest -q --ignore=tests/test_api_endpoints.py
+          bash -n aws/setup-ec2.sh
+      - name: Build image and check startup
+        run: |
+          docker build --platform linux/amd64 -t "$IMAGE" .
+          trap 'docker rm -fv vulnapps-ci >/dev/null 2>&1 || true' EXIT
+          docker run -d --name vulnapps-ci -e SECRET_KEY=ci-only "$IMAGE"
+          for attempt in {1..30}; do
+            if docker exec vulnapps-ci python -c \
+              'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/api", timeout=2); urllib.request.urlopen("http://127.0.0.1:8000/", timeout=2)' \
+              >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs vulnapps-ci
+          exit 1
+      - name: Validate deployment secrets
+        if: github.repository == 'nunoloureiro/vulnapps' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          for name in DOCKERHUB_USERNAME DOCKERHUB_TOKEN DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS SECRET_KEY; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing repository secret: $name"
+              exit 1
+            fi
+          done
+      - name: Sign in to Docker Hub
+        if: github.repository == 'nunoloureiro/vulnapps' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Publish and deploy
+        if: github.repository == 'nunoloureiro/vulnapps' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          TOKEN_EXPIRY_HOURS: ${{ secrets.TOKEN_EXPIRY_HOURS }}
+          MAX_STATE_SIZE: ${{ secrets.MAX_STATE_SIZE }}
+        run: |
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$DEPLOY_USER" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]
+          port=${DEPLOY_PORT:-22}
+          [[ "$port" =~ ^[0-9]+$ ]]
+          [[ -n "$SECRET_KEY" && "$SECRET_KEY" != *$'\n'* && "$SECRET_KEY" != *$'\r'* ]]
+          TOKEN_EXPIRY_HOURS=${TOKEN_EXPIRY_HOURS:-24}
+          MAX_STATE_SIZE=${MAX_STATE_SIZE:-104857600}
+          [[ "$TOKEN_EXPIRY_HOURS" =~ ^[1-9][0-9]*$ ]]
+          [[ "$MAX_STATE_SIZE" =~ ^[1-9][0-9]*$ ]]
+          umask 077
+          local_dir=$(mktemp -d)
+          remote_dir="/tmp/vulnapps-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$local_dir/key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$local_dir/known_hosts"
+          printf 'SECRET_KEY=%s\nTOKEN_EXPIRY_HOURS=%s\nMAX_STATE_SIZE=%s\n' \
+            "$SECRET_KEY" "$TOKEN_EXPIRY_HOURS" "$MAX_STATE_SIZE" > "$local_dir/app.env"
+          ssh_options=(-i "$local_dir/key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$local_dir/known_hosts" -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
+          destination="$DEPLOY_USER@$DEPLOY_HOST"
+          cleanup() {
+            ssh "${ssh_options[@]}" -p "$port" "$destination" "rm -rf -- '$remote_dir'" || true
+            rm -rf -- "$local_dir"
+          }
+          trap cleanup EXIT
+          ssh "${ssh_options[@]}" -p "$port" "$destination" "set -e; umask 077; mkdir '$remote_dir'; sudo -n docker info >/dev/null"
+          scp "${ssh_options[@]}" -P "$port" aws/setup-ec2.sh "$local_dir/app.env" "$destination:$remote_dir/"
+          docker push "$IMAGE"
+          digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
+          [[ "$digest" =~ ^nunoloureiro/vulnapps@sha256:[a-f0-9]{64}$ ]]
+          ssh "${ssh_options[@]}" -p "$port" "$destination" "VULNAPPS_IMAGE='$digest' bash '$remote_dir/setup-ec2.sh' '$remote_dir/app.env'"
+          docker tag "$IMAGE" nunoloureiro/vulnapps:latest
+          docker push nunoloureiro/vulnapps:latest
