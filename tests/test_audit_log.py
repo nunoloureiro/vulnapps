@@ -307,6 +307,48 @@ async def test_update_vuln_no_changes_produces_no_row(db):
     assert await audit_service.list_audit_events(db, app_id=app_id) == []
 
 
+async def test_update_vuln_partial_payload_preserves_other_fields(db):
+    """Real incident (2026-09-17): a caller sent only {"difficulty_tier": ...}
+    via the full-update PUT. The old code took every omitted field from
+    vuln_data.get(...) directly, nulling out vuln_id/title/severity (NOT
+    NULL columns) and crashing with an unhandled 500 instead of leaving
+    them alone."""
+    app_id = await make_app(db)
+    cursor = await db.execute(
+        """INSERT INTO vulnerabilities
+           (app_id, vuln_id, title, severity, vuln_type, http_method, url,
+            parameter, description, created_by, impact_weight, difficulty_tier,
+            existed_since_revision, known_since_revision)
+           VALUES (?, 'TP-053', 'Signed-Token Forgery', 'high', 'Weak Cryptography',
+                   'GET', '/orders/track', 'd, sig', 'length extension', 1, 9, 'commodity', 1, 1)""",
+        (app_id,),
+    )
+    await db.commit()
+    vuln_id = cursor.lastrowid
+
+    row = await vulns_service.update_vuln(db, ADMIN, app_id, vuln_id, {"difficulty_tier": "business_logic"})
+
+    assert row["vuln_id"] == "TP-053"
+    assert row["title"] == "Signed-Token Forgery"
+    assert row["severity"] == "high"
+    assert row["http_method"] == "GET"
+    assert row["url"] == "/orders/track"
+    assert row["parameter"] == "d, sig"
+    assert row["description"] == "length extension"
+    assert row["difficulty_tier"] == "business_logic"
+
+
+async def test_update_vuln_rejects_clearing_a_required_field(db):
+    app_id = await make_app(db)
+    vuln_id = await add_vuln(db, app_id, "TP-001", severity="high", title="Real Title")
+
+    with pytest.raises(ValueError, match="cannot be cleared"):
+        await vulns_service.update_vuln(db, ADMIN, app_id, vuln_id, {"title": ""})
+
+    cursor = await db.execute("SELECT title FROM vulnerabilities WHERE id = ?", (vuln_id,))
+    assert (await cursor.fetchone())["title"] == "Real Title"
+
+
 async def test_delete_vuln_row_persists_after_deletion(db):
     app_id = await make_app(db)
     vuln_id = await add_vuln(db, app_id, "TP-001", title="Gone Soon")

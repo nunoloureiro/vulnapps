@@ -108,7 +108,8 @@ async def update_vuln(request: Request, app_id: int, vuln_id: int):
         vuln = await vulns_service.update_vuln(db, user, app_id, vuln_id, body)
     except ValueError as e:
         msg = str(e)
-        raise HTTPException(status_code=400 if "must be one of" in msg else 404, detail=msg)
+        status = 400 if ("must be one of" in msg or "required and cannot be cleared" in msg) else 404
+        raise HTTPException(status_code=status, detail=msg)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     finally:

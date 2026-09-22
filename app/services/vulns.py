@@ -349,9 +349,20 @@ async def create_vuln(db, user, app_id: int, vuln_data: dict) -> dict:
 
 
 async def update_vuln(db, user, app_id: int, vuln_id: int, vuln_data: dict) -> dict:
-    """Full update of a vulnerability. Returns the updated row as a dict.
+    """Update a vulnerability. Returns the updated row as a dict.
 
-    Raises ``ValueError`` if app or vuln not found.
+    A field absent from *vuln_data* keeps its existing value — the inline
+    table editor sends only the columns it knows about and must not reset
+    every other field to blank. This mirrors ``_scoring_fields``'s existing
+    contract for impact_weight/difficulty_tier, extended to every column: a
+    real incident (2026-09-17) sent only ``{"difficulty_tier": ...}`` and it
+    nulled out vuln_id/title/severity, hitting the table's NOT NULL
+    constraints as an unhandled 500 instead of leaving them alone.
+    ``vuln_id``/``title``/``severity`` cannot be explicitly cleared either —
+    that now raises a clean ``ValueError`` instead of the same crash.
+
+    Raises ``ValueError`` if app/vuln not found, or a required field would
+    be cleared.
     Raises ``PermissionError`` if access denied.
     """
     app = await _get_visible_app(db, user, app_id)
@@ -365,7 +376,12 @@ async def update_vuln(db, user, app_id: int, vuln_id: int, vuln_data: dict) -> d
     if not existing:
         raise ValueError("Vulnerability not found")
 
-    line_number = vuln_data.get("line_number")
+    def keep(field):
+        """*field* keeps its existing value unless the caller's payload
+        explicitly names it — see the docstring above."""
+        return vuln_data[field] if field in vuln_data else existing[field]
+
+    line_number = keep("line_number")
     if line_number:
         try:
             line_number = int(line_number)
@@ -373,6 +389,28 @@ async def update_vuln(db, user, app_id: int, vuln_id: int, vuln_data: dict) -> d
             line_number = None
 
     impact_weight, difficulty_tier, tier_reviewed = _scoring_fields(vuln_data, existing)
+
+    final = {
+        "vuln_id": _cap(keep("vuln_id"), "vuln_id"),
+        "title": _cap(keep("title"), "title"),
+        "severity": keep("severity"),
+        "vuln_type": _cap(keep("vuln_type"), "vuln_type"),
+        "http_method": _cap(keep("http_method"), "http_method"),
+        "url": _cap(keep("url"), "url"),
+        "parameter": _cap(keep("parameter"), "parameter"),
+        "filename": _cap(keep("filename"), "filename"),
+        "line_number": line_number,
+        "description": _cap(keep("description"), "description"),
+        "code_location": _cap(keep("code_location"), "code_location"),
+        "poc": _cap(keep("poc"), "poc"),
+        "remediation": _cap(keep("remediation"), "remediation"),
+        "impact_weight": impact_weight,
+        "difficulty_tier": difficulty_tier,
+    }
+    for required in ("vuln_id", "title", "severity"):
+        value = final[required]
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise ValueError(f"{required} is required and cannot be cleared")
 
     # Weights are immutable within a revision: changing one changes every
     # weighted number ever computed for this app, so it opens a revision
@@ -396,60 +434,30 @@ async def update_vuln(db, user, app_id: int, vuln_id: int, vuln_data: dict) -> d
            weight_verified=MAX(weight_verified, ?)
            WHERE id=?""",
         (
-            _cap(vuln_data.get("vuln_id"), "vuln_id"),
-            _cap(vuln_data.get("title"), "title"),
-            vuln_data.get("severity"),
-            _cap(vuln_data.get("vuln_type"), "vuln_type"),
-            _cap(vuln_data.get("http_method"), "http_method"),
-            _cap(vuln_data.get("url"), "url"),
-            _cap(vuln_data.get("parameter"), "parameter"),
-            _cap(vuln_data.get("filename"), "filename"),
-            line_number,
-            _cap(vuln_data.get("description"), "description"),
-            _cap(vuln_data.get("code_location"), "code_location"),
-            _cap(vuln_data.get("poc"), "poc"),
-            _cap(vuln_data.get("remediation"), "remediation"),
-            impact_weight,
-            difficulty_tier,
-            1 if tier_reviewed else 0,
-            vuln_id,
+            final["vuln_id"], final["title"], final["severity"], final["vuln_type"],
+            final["http_method"], final["url"], final["parameter"], final["filename"],
+            final["line_number"], final["description"], final["code_location"],
+            final["poc"], final["remediation"], final["impact_weight"],
+            final["difficulty_tier"], 1 if tier_reviewed else 0, vuln_id,
         ),
     )
 
-    new_values = {
-        "vuln_id": _cap(vuln_data.get("vuln_id"), "vuln_id"),
-        "title": _cap(vuln_data.get("title"), "title"),
-        "severity": vuln_data.get("severity"),
-        "vuln_type": _cap(vuln_data.get("vuln_type"), "vuln_type"),
-        "http_method": _cap(vuln_data.get("http_method"), "http_method"),
-        "url": _cap(vuln_data.get("url"), "url"),
-        "parameter": _cap(vuln_data.get("parameter"), "parameter"),
-        "filename": _cap(vuln_data.get("filename"), "filename"),
-        "line_number": line_number,
-        "description": _cap(vuln_data.get("description"), "description"),
-        "code_location": _cap(vuln_data.get("code_location"), "code_location"),
-        "poc": _cap(vuln_data.get("poc"), "poc"),
-        "remediation": _cap(vuln_data.get("remediation"), "remediation"),
-        "impact_weight": impact_weight,
-        "difficulty_tier": difficulty_tier,
-    }
     # Short, scalar fields are worth showing old -> new in the log; long
     # free-text fields just note that they changed, to keep the message
     # skimmable rather than dumping a paragraph diff.
     changes = []
     for field in ("vuln_id", "title", "severity", "vuln_type", "impact_weight", "difficulty_tier"):
-        if existing[field] != new_values[field]:
-            changes.append(f"{field} {existing[field]} → {new_values[field]}")
+        if existing[field] != final[field]:
+            changes.append(f"{field} {existing[field]} → {final[field]}")
     for field in ("http_method", "url", "parameter", "filename", "line_number",
                   "description", "code_location", "poc", "remediation"):
-        if existing[field] != new_values[field]:
+        if existing[field] != final[field]:
             changes.append(field)
 
     if changes:
-        vuln_id_slug = new_values["vuln_id"] or existing["vuln_id"]
         await audit_service.record_audit_event(
             db, entity_type="vulnerability", action="vuln_updated", actor=user,
-            message=f"{user['name']} updated {vuln_id_slug}: {', '.join(changes)}",
+            message=f"{user['name']} updated {final['vuln_id']}: {', '.join(changes)}",
             entity_id=vuln_id, app_id=app_id,
         )
 
