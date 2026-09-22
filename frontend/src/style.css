@@ -752,7 +752,19 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
     font-size: 2.5rem;
     font-weight: 800;
     letter-spacing: -0.03em;
+    margin: 0;
+}
+.hero-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 0.5rem;
     margin-bottom: 1rem;
+}
+.hero-version {
+    font-size: 1rem;
+    font-weight: 400;
+    color: var(--text-muted);
 }
 .hero p {
     color: var(--text-secondary);

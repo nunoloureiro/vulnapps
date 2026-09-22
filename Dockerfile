@@ -20,6 +20,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app/ app/
 COPY migrations/ migrations/
+COPY VERSION .
+
+# Commit count to main, computed on the build host (by build.sh) and passed
+# in here since .git is excluded from the build context (see .dockerignore)
+# and so isn't available to compute this from at runtime. See app/version.py.
+ARG COMMIT_COUNT=0
+RUN echo "$COMMIT_COUNT" > COMMIT_COUNT
 
 # Copy built frontend from Stage 1
 COPY --from=frontend /frontend/dist frontend/dist

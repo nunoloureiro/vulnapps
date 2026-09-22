@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 from app.database import get_connection, run_migrations
 from app.dependencies import get_current_user
+from app.version import get_app_version
 
 BASE_DIR = Path(__file__).parent
 PROJECT_DIR = BASE_DIR.parent
@@ -116,6 +117,11 @@ async def api_root(request: Request):
             "account": "/api/account",
         },
     }
+
+
+@app.get("/api/version")
+async def version():
+    return {"version": get_app_version()}
 
 
 # ── SPA serving ──

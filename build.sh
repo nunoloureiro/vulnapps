@@ -76,7 +76,8 @@ echo ""
 echo -e "  ${BLUE}${BOLD}[2/3]${NC} ${BOLD}Building Docker image...${NC}"
 echo -e "  ${DIM}─────────────────────────────────────────${NC}"
 
-docker build --platform linux/amd64 --no-cache -t "$IMAGE" .
+COMMIT_COUNT="$(git -C "$SCRIPT_DIR" rev-list --count main)"
+docker build --platform linux/amd64 --no-cache --build-arg COMMIT_COUNT="$COMMIT_COUNT" -t "$IMAGE" .
 
 echo ""
 echo -e "  ${GREEN}✓ Image built: ${BOLD}$IMAGE${NC}"

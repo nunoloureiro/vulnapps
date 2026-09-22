@@ -608,3 +608,13 @@ async def test_27_app_history_endpoint(transport, auth_headers, user_headers):
         assert len(entries) == 1
         assert "TP-001" in entries[0]["message"]
     print(f"  PASS: app history endpoint gated correctly, records vuln_created (app {app_id})")
+
+
+@pytest.mark.asyncio
+async def test_28_version_endpoint(transport):
+    """GET /api/version should return v<major>.<minor> with no auth required."""
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        r = await client.get("/api/version")
+    assert r.status_code == 200, r.text
+    assert r.json()["version"].startswith("v")
+    print(f"  PASS: GET /api/version -> {r.status_code}, {r.json()['version']}")
