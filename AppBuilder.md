@@ -1619,10 +1619,16 @@ advances automatically on every merge without anyone having to remember to touch
 `app/version.py`'s `get_app_version()` reads `VERSION` for the major number. For minor, the
 deployed Docker image has no `.git` to compute a commit count from at runtime (`.git/` is
 excluded from the build context by `.dockerignore`, and the Dockerfile never does a broad
-`COPY . .` that would pull it in anyway) — so `build.sh` computes `git rev-list --count main`
-on the build host (where `.git` *is* available) and passes it to `docker build` as
-`--build-arg COMMIT_COUNT=...`, which the Dockerfile bakes into a `COMMIT_COUNT` file inside
-the image. `get_app_version()` reads that baked file when present; local dev (running uvicorn
+`COPY . .` that would pull it in anyway) — so whichever build path builds the image computes
+`git rev-list --count HEAD` (or `main`, the same commit for a push-to-main build) on the build
+host (where `.git` *is* available) and passes it to `docker build` as `--build-arg
+COMMIT_COUNT=...`, which the Dockerfile bakes into a `COMMIT_COUNT` file inside the image.
+There are two such build paths, both must pass this build-arg or minor silently reads back as
+`0`: `build.sh` (manual local build/push) and `.github/workflows/deploy.yml`'s "Build image and
+check startup" step (the actual auto-deploy-on-push-to-main path — see **Automated
+deployment** below), which also needs `fetch-depth: 0` on its checkout since a shallow clone
+would make the commit count always come back as 1. `get_app_version()` reads that baked file
+when present; local dev (running uvicorn
 directly from a git checkout, no baked file) falls back to asking git directly. Either way
 resolves to `"0"` if neither source is available, rather than crashing.
 
@@ -1740,9 +1746,10 @@ Same pattern as TaintedPort: build locally for linux/amd64, push to Docker Hub, 
 
 #### Local Build & Push
 ```bash
-docker build --platform linux/amd64 -t nunoloureiro/vulnapps:latest .
+docker build --platform linux/amd64 --build-arg COMMIT_COUNT="$(git rev-list --count main)" -t nunoloureiro/vulnapps:latest .
 docker push nunoloureiro/vulnapps:latest
 ```
+(`./build.sh` does this already — see **App Version** above for why the build-arg matters.)
 
 #### EC2 Update
 ```bash
@@ -1757,9 +1764,13 @@ sudo docker run -d --name vulnapps --restart unless-stopped \
 ## Automated deployment
 
 GitHub Actions must test and build pull requests and deploy successful `main`
-pushes in `nunoloureiro/vulnapps`, with a manual trigger for `main`. Run the
+pushes in `nunoloureiro/vulnapps`, with a manual trigger for `main`. Checkout uses
+`fetch-depth: 0` (full history, not the default shallow clone) so the commit count
+below is real. Run the
 self-contained pytest suite (exclude the production-database-dependent
-`test_api_endpoints.py`), build the existing Dockerfile for linux/amd64, and
+`test_api_endpoints.py`), build the existing Dockerfile for linux/amd64 — passing
+`--build-arg COMMIT_COUNT="$(git rev-list --count HEAD)"` so the deployed app reports
+the right version (see **App Version** above) — and
 check API and frontend startup before publishing. Supply Docker Hub and SSH
 credentials through repository secrets. Use SSH `accept-new` with a temporary
 known-hosts file per deployment; no saved host-key secret is required. Store application
