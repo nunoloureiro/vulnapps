@@ -1,5 +1,11 @@
 # GitHub Actions deployment
 
+- [x] Remove the known-hosts secret requirement and accept the first SSH host key per run.
+- [x] Update deployment documentation and validate workflow syntax.
+
+Host-key change review: YAML parsing, all four workflow shell steps (`bash -n`),
+and `git diff --check` passed. No live deployment was run.
+
 - [x] Inspect upstream deployment scripts and clean-checkout test requirements.
 - [x] Configure existing tests and a container startup check for pull requests and main.
 - [x] Configure publishing to Docker Hub and deploying the exact image over SSH on main.

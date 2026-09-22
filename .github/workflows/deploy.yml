@@ -60,10 +60,9 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
         run: |
-          for name in DOCKERHUB_USERNAME DOCKERHUB_TOKEN DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS SECRET_KEY; do
+          for name in DOCKERHUB_USERNAME DOCKERHUB_TOKEN DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY SECRET_KEY; do
             if [[ -z "${!name}" ]]; then
               echo "::error::Missing repository secret: $name"
               exit 1
@@ -82,7 +81,6 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           TOKEN_EXPIRY_HOURS: ${{ secrets.TOKEN_EXPIRY_HOURS }}
           MAX_STATE_SIZE: ${{ secrets.MAX_STATE_SIZE }}
@@ -100,10 +98,9 @@ jobs:
           local_dir=$(mktemp -d)
           remote_dir="/tmp/vulnapps-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           printf '%s\n' "$DEPLOY_SSH_KEY" > "$local_dir/key"
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$local_dir/known_hosts"
           printf 'SECRET_KEY=%s\nTOKEN_EXPIRY_HOURS=%s\nMAX_STATE_SIZE=%s\n' \
             "$SECRET_KEY" "$TOKEN_EXPIRY_HOURS" "$MAX_STATE_SIZE" > "$local_dir/app.env"
-          ssh_options=(-i "$local_dir/key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$local_dir/known_hosts" -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
+          ssh_options=(-i "$local_dir/key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$local_dir/known_hosts" -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
           destination="$DEPLOY_USER@$DEPLOY_HOST"
           cleanup() {
             ssh "${ssh_options[@]}" -p "$port" "$destination" "rm -rf -- '$remote_dir'" || true

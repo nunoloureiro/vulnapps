@@ -1658,7 +1658,8 @@ pushes in `nunoloureiro/vulnapps`, with a manual trigger for `main`. Run the
 self-contained pytest suite (exclude the production-database-dependent
 `test_api_endpoints.py`), build the existing Dockerfile for linux/amd64, and
 check API and frontend startup before publishing. Supply Docker Hub and SSH
-credentials and verified host keys through repository secrets. Store application
+credentials through repository secrets. Use SSH `accept-new` with a temporary
+known-hosts file per deployment; no saved host-key secret is required. Store application
 settings in individual `SECRET_KEY`, `TOKEN_EXPIRY_HOURS`, and `MAX_STATE_SIZE`
 secrets, and assemble the Docker env-file in CI as documented in README.md.
 Serialize runs and deploy the published

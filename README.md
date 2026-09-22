@@ -128,10 +128,11 @@ directly, without shell `export` or enclosing quotes:
 - `DEPLOY_HOST`: EC2 hostname or IPv4 address, without a URL scheme.
 - `DEPLOY_USER`: SSH user, typically `ubuntu` or `ec2-user`.
 - `DEPLOY_SSH_KEY`: private SSH key for that user, without a passphrase.
-- `DEPLOY_KNOWN_HOSTS`: the host's verified OpenSSH `known_hosts` entry. Verify the
-  fingerprint through a trusted channel before storing it. For a nondefault SSH
-  port, use an entry for `[hostname]:port`.
 - `SECRET_KEY`: the existing production application signing key.
+
+SSH accepts the first host key seen in each deployment and rejects changes during
+that run. The temporary known-hosts file is discarded afterward, so host identity
+is not verified against a key saved between deployments.
 
 Optional repository secrets can be changed individually:
 
