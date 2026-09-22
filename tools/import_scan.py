@@ -187,6 +187,22 @@ SSRF, then forge an admin token with it"). Set matched_chain_db_id (NOT \
 matched_vuln_db_id) ONLY when a SINGLE finding in the report itself explicitly \
 narrates walking the chain end to end — naming or clearly describing the mechanism of \
 each member step and how one leads to the next, in that one finding's own text. \
+- "Narrates walking the chain end to end" means every member step is DEMONSTRATED \
+with real evidence in that finding — an actual request/response, a concrete value \
+obtained and used — not merely explained as a possible or theoretical consequence. \
+This is the single most common way chain credit gets wrongly awarded; reject all \
+three of these real patterns: (1) the finding demonstrates step 1 and then only \
+STATES what a further step would allow ("with this secret an attacker could forge \
+admin tokens") without a PoC step that actually performs it — that is one demonstrated \
+vuln plus a claim, not a demonstrated chain; (2) the finding explicitly says a further \
+step was "not performed", "withheld", or similar (often deliberately, for rules-of- \
+engagement/safety reasons) — that is the report telling you the chain was NOT \
+completed here, not evidence that it was; (3) the finding explicitly says the \
+combined/chained outcome is "scored separately" or "reported separately" — that is the \
+report telling you NOT to award chain credit on THIS finding, because a different \
+finding elsewhere in the same report does the full demonstration. In all three cases, \
+map only the vuln that WAS actually demonstrated (matched_vuln_db_id) and leave \
+matched_chain_db_id null. \
 - Do NOT set matched_chain_db_id just because the report separately contains findings \
 for each of the chain's individual members — two independent findings that each \
 describe only their own bug, with no cross-reference connecting them, are NOT chain \
@@ -497,7 +513,7 @@ def format_chains_for_prompt(chains: list) -> str:
 
 
 def _build_user_message(scan_content: str, vulns: list, chains: list | None,
-                          extra_info: str | None) -> str:
+                          extra_info: str | None, is_chain_source: bool | None = None) -> str:
     """Build the user-turn content shared by the streaming API path
     (`run_llm_mapping`) and the CLI subprocess path (`run_llm_mapping_cli`),
     so the two prompts never drift apart.
@@ -505,7 +521,9 @@ def _build_user_message(scan_content: str, vulns: list, chains: list | None,
     `vulns` empty means extraction-only mode (no known-vulns/chains
     section). `extra_info` is the operator-provided steering text for
     whichever mode is active — `--extra-info-mapping` when `vulns` is
-    non-empty, `--extra-info-extract` otherwise.
+    non-empty, `--extra-info-extract` otherwise. `is_chain_source` (mapping
+    mode only) says which of the scan's own report directories this file
+    came from — see the source-type section below.
     """
     if vulns:
         chains_section = (
@@ -515,6 +533,50 @@ def _build_user_message(scan_content: str, vulns: list, chains: list | None,
 
 {format_chains_for_prompt(chains)}"""
             if chains else ""
+        )
+        # Real incident (2026-09-21). The PRIMARY rule (above, in this
+        # system prompt) is content-based and applies no matter how a scan
+        # organizes its files: chain credit requires the finding to
+        # DEMONSTRATE every member step, not merely explain, defer, or
+        # disclaim one. That rule alone was not enough -- the model still
+        # over-credited standalone findings as chains, and under-credited a
+        # genuine chain finding it split into one sub-finding per mechanism,
+        # each individually vuln-matched. `is_chain_source` is a SECONDARY,
+        # report-specific signal, not a replacement for the content rule: a
+        # scan that separates dedicated chain write-ups from standalone
+        # findings into different directories (this one does; not every
+        # scan will) is telling you, structurally, which of the two a given
+        # file was AUTHORED to be -- useful context for the content
+        # judgement above, and cheap enough to also enforce mechanically as
+        # a backstop after this call returns (see _enforce_source_kind):
+        # since it can only ever downgrade a wrong credit to "unmatched",
+        # never manufacture a wrong one, enforcing it costs nothing even in
+        # the case this signal turns out misleading for some other scan.
+        source_kind_section = (
+            f"""
+
+## Source File Type (secondary signal — the content rule above still governs)
+
+{"This file is from the scan's dedicated exploit-chain findings, not its "
+  "standalone vulnerabilities directory, so it was authored as a chain "
+  "write-up. If its own narrative genuinely demonstrates every member step "
+  "(per the content rule above), extract it as ONE finding describing the "
+  "whole chain and map it via matched_chain_db_id to a registered chain -- "
+  "do not split one connected chain narrative into several findings, one "
+  "per mechanism, each matched to an individual vuln; that discards the "
+  "chain credit the file was written to earn. matched_vuln_db_id must stay "
+  "null on findings from this file. If no registered chain fits, or the "
+  "narrative does not actually demonstrate every step, leave both null "
+  "rather than falling back to an individual vuln match."
+  if is_chain_source else
+  "This file is from the scan's standalone vulnerability findings, not its "
+  "dedicated exploit-chain directory, so it was authored as a single-vuln "
+  "write-up. Map each finding you extract from it via matched_vuln_db_id "
+  "only; matched_chain_db_id must stay null here regardless of what the "
+  "finding's text says about further consequences (see the content rule "
+  "above for the exact phrasings that mean \\\"do not credit a chain "
+  "here\\\")."}"""
+            if is_chain_source is not None else ""
         )
         extra_section = (
             f"""
@@ -530,7 +592,7 @@ above.)
         )
         return f"""## Known Vulnerabilities for this Application
 
-{format_vulns_for_prompt(vulns)}{chains_section}{extra_section}
+{format_vulns_for_prompt(vulns)}{chains_section}{source_kind_section}{extra_section}
 
 ## Scan Report
 
@@ -551,6 +613,28 @@ above.)
     return f"""{extra_section}## Scan Report
 
 {scan_content}"""
+
+
+def _enforce_source_kind(result: dict, is_chain_source: bool | None) -> None:
+    """Mechanical backstop for the source-file-type rule in
+    `_build_user_message` — never rely on the model alone to keep this
+    straight (it didn't, on a real scan). `is_chain_source` None means the
+    distinction doesn't apply (extraction-only mode, or no directory
+    context to derive it from) and nothing is touched.
+
+    A finding from the standalone-vulnerabilities directory can never end
+    up chain-credited; a finding from the dedicated chain directory can
+    never end up credited as an individual vuln. Whichever field this file
+    isn't allowed to set is force-cleared to null, regardless of what the
+    model returned — the worst outcome this can produce is an unmatched
+    (pending) finding, never a wrongly-credited one.
+    """
+    if is_chain_source is None:
+        return
+    clear = "matched_vuln_db_id" if is_chain_source else "matched_chain_db_id"
+    for f in result.get("findings", []) or []:
+        if isinstance(f, dict):
+            f[clear] = None
 
 
 def _extract_json_text(text: str) -> str:
@@ -595,18 +679,20 @@ def create_anthropic_client(provider: str, region: str | None, project_id: str |
 
 def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_msg: str | None = None,
                      chains: list | None = None, extra_info_mapping: str | None = None,
-                     extra_info_extract: str | None = None) -> dict:
+                     extra_info_extract: str | None = None, is_chain_source: bool | None = None) -> dict:
     """Send scan content (optionally with known vulns) to Claude.
 
     When `vulns` is empty the prompt switches to extraction-only mode — no
     mapping language, all findings flow through as promote-candidates.
     `extra_info_mapping`/`extra_info_extract` are operator-provided steering
     text (--extra-info-mapping / --extra-info-extract); only the one
-    matching the active mode is used.
+    matching the active mode is used. `is_chain_source` says which of the
+    scan's own report directories this file came from (mapping mode only) —
+    see `_build_user_message` and `_enforce_source_kind`.
     """
     system = SYSTEM_PROMPT_MAP if vulns else SYSTEM_PROMPT_EXTRACT
     extra_info = extra_info_mapping if vulns else extra_info_extract
-    user_message = _build_user_message(scan_content, vulns, chains, extra_info)
+    user_message = _build_user_message(scan_content, vulns, chains, extra_info, is_chain_source)
 
     # Stream the response. A non-streaming create() holds one socket open with
     # no bytes flowing until the whole answer is ready; on a detail-rich report
@@ -632,14 +718,16 @@ def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_
 
 def run_llm_mapping_cli(scan_content: str, vulns: list, spinner_msg: str | None = None,
                           chains: list | None = None, extra_info_mapping: str | None = None,
-                          extra_info_extract: str | None = None) -> dict:
+                          extra_info_extract: str | None = None, is_chain_source: bool | None = None) -> dict:
     """Run extraction/mapping via the local `claude` CLI. Used when --use-cli
     is set, or as a fallback when no API key/Vertex config is available.
 
     When `vulns` is empty the prompt switches to extraction-only mode.
     `extra_info_mapping`/`extra_info_extract` are operator-provided steering
     text (--extra-info-mapping / --extra-info-extract); only the one
-    matching the active mode is used.
+    matching the active mode is used. `is_chain_source` says which of the
+    scan's own report directories this file came from (mapping mode only) —
+    see `_build_user_message` and `_enforce_source_kind`.
     """
     import subprocess
     import shutil
@@ -652,7 +740,7 @@ def run_llm_mapping_cli(scan_content: str, vulns: list, spinner_msg: str | None 
     extra_info = extra_info_mapping if vulns else extra_info_extract
     prompt = f"""{system}
 
-{_build_user_message(scan_content, vulns, chains, extra_info)}
+{_build_user_message(scan_content, vulns, chains, extra_info, is_chain_source)}
 
 Respond with ONLY valid JSON (no markdown fencing)."""
 
@@ -1209,33 +1297,42 @@ def _human_size(n: int) -> str:
     return f"{n:.1f} GiB"
 
 
-def _discover_findings_dir(root: Path) -> Path:
-    """Pick the directory we should read .md files from.
+def _discover_findings_dirs(root: Path) -> list[Path]:
+    """Pick the directory/directories we should read .md files from.
 
     Rules (the user often passes the project/run root, not the findings dir):
-      1. If `root` itself has any *.md → use root.
-      2. Else walk immediate children: first child that contains *.md wins.
+      1. If any immediate children contain *.md, use ALL of them together.
+         A standardized report layout splits findings across sibling
+         directories (e.g. `vulnerabilities/` + `vulnerability_chains/`) —
+         picking only the first such child, or preferring a big combined
+         report file that may also sit at `root`, silently drops real
+         findings/chains from the mapping input. A real incident: `root`
+         also had a single ~1.3MB combined `penetration_test_report.md`,
+         which used to win outright (rule order was reversed) and fed one
+         giant file through a single non-chunked LLM call instead of the
+         per-finding files, producing a response too large to reliably
+         come back as valid JSON.
+      2. Else if `root` itself has any *.md → use root alone.
       3. Else: first child whose name (or contained filename) matches *report* wins.
       4. Else: fall back to root and let the "no .md files" error fire.
 
     Hidden/private/system children (names starting with '.' or '_') are skipped.
     """
-    if any(root.glob("*.md")):
-        return root
     children = sorted(c for c in root.iterdir()
                       if c.is_dir() and not c.name.startswith((".", "_")))
-    # Pass 1: a child containing .md files.
-    for child in children:
-        if any(child.glob("*.md")):
-            return child
-    # Pass 2: a child with *report* anywhere in its tree.
+    md_children = [child for child in children if any(child.glob("*.md"))]
+    if md_children:
+        return md_children
+    if any(root.glob("*.md")):
+        return [root]
+    # Pass: a child with *report* anywhere in its tree.
     for child in children:
         if "report" in child.name.lower():
-            return child
+            return [child]
         for entry in child.iterdir():
             if entry.is_file() and "report" in entry.name.lower():
-                return child
-    return root
+                return [child]
+    return [root]
 
 
 def _zip_directory(src: Path, dest: Path) -> int:
@@ -1257,6 +1354,37 @@ def _zip_directory(src: Path, dest: Path) -> int:
     return dest.stat().st_size
 
 
+def _upload_scan_state(client: "VulnappsClient", scan_id: int, state_root: Path) -> bool:
+    """Zip state_root and upload it as scan state for scan_id. Returns True
+    on success. Prints its own success/failure message; callers decide
+    whether a failure here should abort (standalone retry) or just warn
+    (state upload is best-effort during a normal import)."""
+    import tempfile
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="scan-state-", suffix=".zip", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        with Spinner(f"Zipping {state_root.name}/ ..."):
+            size = _zip_directory(state_root, tmp_path)
+        zip_name = f"{state_root.name}.zip"
+        with Spinner(f"Uploading scan state ({_human_size(size)})..."):
+            client.upload_scan_state(scan_id, tmp_path, zip_name)
+        print(f"  {colored('✓', 'GREEN')} Scan state uploaded: {colored(zip_name, 'BOLD')} {C.DIM}({_human_size(size)}){C.RESET}")
+        return True
+    except httpx.HTTPStatusError as e:
+        print(f"  {colored('⚠', 'YELLOW')} Scan state upload failed: {e.response.status_code} {e.response.text[:200]}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"  {colored('⚠', 'YELLOW')} Scan state upload failed: {e}", file=sys.stderr)
+        return False
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+
+
 def _as_float(v) -> float | None:
     """Coerce an LLM-supplied value to float, tolerating '$4.56' / '4,560'. None on failure."""
     if v is None:
@@ -1273,6 +1401,143 @@ def _as_int(v) -> int | None:
     """Coerce an LLM-supplied value to int, tolerating '1,234,567' / '1234.0'. None on failure."""
     f = _as_float(v)
     return int(f) if f is not None else None
+
+
+def _scan_date_from_iso(iso_str: str | None) -> str | None:
+    """'2026-09-17T23:14:20.425412Z' -> 'YYYY-MM-DD HH:MM'. None on anything
+    too short/malformed to slice cleanly -- deliberately not a strict ISO
+    parse, since the only thing we need is the leading date+hour+minute,
+    which is fixed-width in every timestamp this stream actually emits."""
+    if not iso_str or len(iso_str) < 16:
+        return None
+    return iso_str[:16].replace("T", " ")
+
+
+def _find_stats_files(root: Path) -> list[Path]:
+    """Find metrics-stream files anywhere under root, identified by content
+    (a JSONL file whose first record is a dict with an "event" key) rather
+    than by a fixed filename or location.
+
+    "stats.jsonl" is just the name the one tool we've seen this from uses --
+    that's a convention, not a contract every scanner has to follow, and the
+    file isn't guaranteed to sit at the top level of the directory passed to
+    --dir either. Skips hidden/underscore directories, matching
+    _discover_findings_dirs's convention.
+    """
+    matches = []
+    for path in sorted(root.rglob("*.jsonl")):
+        if any(part.startswith(".") or part.startswith("_") for part in path.relative_to(root).parts):
+            continue
+        try:
+            with path.open(errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        break
+                    if isinstance(rec, dict) and "event" in rec:
+                        matches.append(path)
+                    break
+        except OSError:
+            continue
+    return matches
+
+
+def _read_scan_stats(state_root: Path) -> dict | None:
+    """Read cost/tokens/duration/model/start-time from any metrics-stream
+    file(s) found under the scan's report directory (see
+    _find_stats_files), if the operator put one there.
+
+    Real incident (2026-09-21): this data is real and authoritative (an
+    append-only per-agent metrics stream from the tool that ran the scan),
+    but it isn't part of the report's own JSON/markdown at all -- the
+    importer previously had no way to see it, so cost/tokens stayed empty
+    on the submitted scan unless the operator passed --cost/--tokens by
+    hand every time.
+
+    Returns None if no such file is found, or none has a usable
+    ``run_snapshot`` record. Otherwise a dict: ``cost_usd`` (float),
+    ``tokens_used`` (int), ``duration_seconds`` (float), ``started_at``
+    (raw ISO8601 string), ``model_names`` (the set of every agent's
+    ``model_name`` in that snapshot), ``is_final`` (whether a snapshot
+    explicitly marked ``"final": true`` was found, vs. falling back to the
+    last snapshot seen -- e.g. because the run was interrupted before
+    writing one), and ``source_files`` (paths, relative to state_root, that
+    contributed -- so the operator can tell what was actually read when the
+    filename isn't the expected "stats.jsonl").
+    """
+    candidates = _find_stats_files(state_root)
+    if not candidates:
+        return None
+
+    last_snapshot = None
+    final_snapshot = None
+    for path in candidates:
+        for line in path.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("event") != "run_snapshot" or "totals" not in rec:
+                continue
+            last_snapshot = rec
+            if rec.get("final"):
+                final_snapshot = rec
+
+    snapshot = final_snapshot or last_snapshot
+    if snapshot is None:
+        return None
+
+    totals = snapshot.get("totals") or {}
+    model_names = {
+        a.get("model_name")
+        for a in (snapshot.get("agents") or {}).values()
+        if a.get("model_name")
+    }
+    return {
+        "cost_usd": _as_float(totals.get("cost_usd")),
+        "tokens_used": _as_int(totals.get("tokens_used")),
+        "duration_seconds": _as_float(snapshot.get("duration_seconds")),
+        "started_at": snapshot.get("started_at"),
+        "model_names": model_names,
+        "is_final": final_snapshot is not None,
+        "source_files": [str(p.relative_to(state_root)) for p in candidates],
+    }
+
+
+def _stats_fields_to_confirm(args, stats: dict) -> list[tuple[str, str, str]]:
+    """Which of cost/tokens/duration/scan_date to ask the operator about
+    individually, and what to show for each.
+
+    Real incident (2026-09-21): the confirmation used to be one bundled
+    yes/no for all four fields together. An operator who had already passed
+    --duration explicitly (because the scanning tool only recorded wall
+    time until they manually exited, not real scan time) still wanted the
+    file's cost/tokens accepted, but declining the bundled question
+    discarded all of it. A field is skipped here -- never asked about --
+    when the operator already settled it via the matching CLI flag, or when
+    the metrics file has nothing for that field.
+
+    Returns a list of (field, label, value_desc) tuples in a fixed order.
+    """
+    candidates = (
+        ("cost", args.cost is not None, "cost",
+         f"${stats['cost_usd']:,.2f}" if stats.get("cost_usd") is not None else None),
+        ("tokens", args.tokens is not None, "tokens",
+         f"{stats['tokens_used']:,}" if stats.get("tokens_used") is not None else None),
+        ("duration", args.duration is not None, "duration",
+         format_duration(stats["duration_seconds"]) if stats.get("duration_seconds") is not None else None),
+        ("scan_date", args.scan_start is not None, "start date",
+         _scan_date_from_iso(stats.get("started_at"))),
+    )
+    return [(field, label, value_desc) for field, cli_is_set, label, value_desc in candidates
+            if not cli_is_set and value_desc is not None]
 
 
 def _matcher_identity(args) -> tuple:
@@ -1402,9 +1667,13 @@ def show_pretty_help():
     {c}--dry-run{r}                   Preview the LLM mapping without submitting
     {c}--confirm{r}                   Ask for confirmation before submitting
     {c}--workers{r} {d}<n>{r}              Parallel LLM calls when chunking by file
-                              {d}(default: 4; set to 1 if rate-limited){r}
+                              {d}(default: 8; set to 1 if rate-limited){r}
     {c}--resume{r}                    Resume a partial chunked import from
                               {d}<dir>/.scanimport-checkpoint.json{r}
+    {c}--skip-state{r}                Don't zip/upload {d}--dir{r} as scan state
+    {c}--upload-state-for{r} {d}<scan_id>{r}  Skip mapping entirely -- just (re-)upload
+                              {d}--dir{r} as scan state for an already-submitted scan
+                              {d}(e.g. retry after a proxy 413, once the limit is fixed){r}
 
   {b}Environment:{r}
     {d}VULNAPPS_URL{r}                  Vulnapps instance URL
@@ -1529,12 +1798,17 @@ def main():
                              "Steers judgment calls only — cannot override the required JSON "
                              "output format.")
     parser.add_argument("--dry-run", action="store_true", help="Show mapping without submitting")
-    parser.add_argument("--workers", type=int, default=4,
-                        help="Parallel LLM calls when chunking by file (default: 4). "
+    parser.add_argument("--workers", type=int, default=8,
+                        help="Parallel LLM calls when chunking by file (default: 8). "
                              "Set to 1 for sequential (e.g. when rate-limited).")
     parser.add_argument("--skip-state", action="store_true",
                         help="Don't zip and upload the source directory as scan state. "
                              "By default the entire --dir is zipped and attached to the scan.")
+    parser.add_argument("--upload-state-for", type=int, default=None, metavar="SCAN_ID",
+                        help="Skip mapping/import entirely -- just zip --dir and (re-)upload "
+                             "it as scan state for an already-submitted scan. For retrying a "
+                             "failed state upload (e.g. after a proxy 413) without re-running "
+                             "the LLM mapping pass.")
     parser.add_argument("--resume", action="store_true",
                         help="Resume a partial chunked import. Looks for "
                              "<dir>/.scanimport-checkpoint.json, written after every "
@@ -1549,6 +1823,18 @@ def main():
     if not args.api_key:
         print(f"  {colored('Error:', 'RED')} --api-key or VULNAPPS_API_KEY environment variable required", file=sys.stderr)
         sys.exit(1)
+
+    if args.upload_state_for is not None:
+        if not args.dir:
+            print(f"  {colored('Error:', 'RED')} --upload-state-for requires --dir", file=sys.stderr)
+            sys.exit(1)
+        state_root = Path(args.dir).resolve()
+        if not state_root.is_dir():
+            print(f"  {colored('Error:', 'RED')} {state_root} is not a directory", file=sys.stderr)
+            sys.exit(1)
+        client = VulnappsClient(args.url, args.api_key)
+        ok = _upload_scan_state(client, args.upload_state_for, state_root)
+        sys.exit(0 if ok else 1)
 
     if not args.dir and not args.file and not args.probely:
         print(f"  {colored('Error:', 'RED')} One of --dir, --file, or --probely is required", file=sys.stderr)
@@ -1853,10 +2139,10 @@ def main():
     # ── Markdown import flow (existing) ──
 
     # state_root = the directory the user passed (we'll zip the whole thing
-    # for scan state). findings_dir = the directory we actually pull .md
-    # files from — may be a subfolder discovered below.
+    # for scan state). findings_dirs = the directory/directories we actually
+    # pull .md files from — may be subfolder(s) discovered below.
     state_root: Path | None = None
-    findings_dir: Path | None = None
+    findings_dirs: list[Path] = []
 
     if args.file:
         md_files = [Path(args.file)]
@@ -1865,11 +2151,11 @@ def main():
         if not state_root.is_dir():
             print(f"  {colored('Error:', 'RED')} {args.dir} is not a directory", file=sys.stderr)
             sys.exit(1)
-        findings_dir = _discover_findings_dir(state_root)
-        if findings_dir != state_root:
-            rel = findings_dir.relative_to(state_root)
-            print(f"  {colored('→', 'CYAN')} Findings dir: {colored(str(rel) + '/', 'BOLD')} {C.DIM}(under {state_root.name}/){C.RESET}")
-        md_files = sorted(findings_dir.glob("*.md"))
+        findings_dirs = _discover_findings_dirs(state_root)
+        if findings_dirs != [state_root]:
+            rels = ", ".join(f"{d.relative_to(state_root)}/" for d in findings_dirs)
+            print(f"  {colored('→', 'CYAN')} Findings dir(s): {colored(rels, 'BOLD')} {C.DIM}(under {state_root.name}/){C.RESET}")
+        md_files = sorted(f for d in findings_dirs for f in d.glob("*.md"))
 
     if not md_files:
         print(f"  {colored('Error:', 'RED')} No .md files found.", file=sys.stderr)
@@ -1877,12 +2163,17 @@ def main():
 
     print(f"  {colored('✓', 'GREEN')} Scan files:  {colored(str(len(md_files)), 'BOLD')}")
 
-    # Read all files into (name, content) tuples; drop empties.
-    file_parts: list[tuple[str, str]] = []
+    # Read all files into (name, content, is_chain_source) tuples; drop
+    # empties. is_chain_source comes from the containing directory's own
+    # name (e.g. `vulnerability_chains/` vs `vulnerabilities/`) — a scan's
+    # own report layout already commits each file to one or the other, and
+    # that commitment is enforced later regardless of what the LLM returns
+    # (see _enforce_source_kind).
+    file_parts: list[tuple[str, str, bool]] = []
     for md_file in md_files:
         content = md_file.read_text()
         if content.strip():
-            file_parts.append((md_file.name, content))
+            file_parts.append((md_file.name, content, "chain" in md_file.parent.name.lower()))
 
     if not file_parts:
         print(f"  {colored('✗', 'RED')} All scan files are empty", file=sys.stderr)
@@ -1900,14 +2191,17 @@ def main():
     else:
         print_header(f"Processing {len(file_parts)} file(s)")
 
-    def _call_llm_once(content: str, spinner_msg: str | None = None) -> dict:
+    def _call_llm_once(content: str, is_chain_source: bool | None = None, spinner_msg: str | None = None) -> dict:
         """Single attempt — raises LLMCallError on any failure."""
         try:
             if use_cli:
-                return run_llm_mapping_cli(content, vulns, spinner_msg=spinner_msg, chains=chains,
-                                            extra_info_mapping=args.extra_info_mapping, extra_info_extract=args.extra_info_extract)
-            return run_llm_mapping(content, vulns, args.model, llm_client, spinner_msg=spinner_msg, chains=chains,
-                                    extra_info_mapping=args.extra_info_mapping, extra_info_extract=args.extra_info_extract)
+                result = run_llm_mapping_cli(content, vulns, spinner_msg=spinner_msg, chains=chains,
+                                              extra_info_mapping=args.extra_info_mapping, extra_info_extract=args.extra_info_extract,
+                                              is_chain_source=is_chain_source)
+            else:
+                result = run_llm_mapping(content, vulns, args.model, llm_client, spinner_msg=spinner_msg, chains=chains,
+                                          extra_info_mapping=args.extra_info_mapping, extra_info_extract=args.extra_info_extract,
+                                          is_chain_source=is_chain_source)
         except LLMCallError:
             raise
         except json.JSONDecodeError as e:
@@ -1917,27 +2211,31 @@ def main():
             mod = getattr(cls, "__module__", "") or ""
             label = "Claude API error" if "anthropic" in mod else "LLM error"
             raise LLMCallError(f"{label}: {e}")
+        if vulns:
+            _enforce_source_kind(result, is_chain_source)
+        return result
 
-    def _call_llm(content: str, spinner_msg: str | None = None) -> dict:
+    def _call_llm(content: str, is_chain_source: bool | None = None, spinner_msg: str | None = None) -> dict:
         """One retry after a 30s backoff on any LLMCallError. Rate limits
         and transient network blips usually clear in that window."""
         import time as _time
         try:
-            return _call_llm_once(content, spinner_msg=spinner_msg)
+            return _call_llm_once(content, is_chain_source=is_chain_source, spinner_msg=spinner_msg)
         except LLMCallError as e:
             print(f"  {colored('⚠', 'YELLOW')} {e}", file=sys.stderr)
             print(f"  {C.DIM}Retrying once in 30s...{C.RESET}", file=sys.stderr)
             _time.sleep(30)
             try:
-                return _call_llm_once(content, spinner_msg=(spinner_msg or "") + " (retry)")
+                return _call_llm_once(content, is_chain_source=is_chain_source, spinner_msg=(spinner_msg or "") + " (retry)")
             except LLMCallError as e2:
                 # Re-raise so the chunked path can checkpoint + exit cleanly.
                 raise
 
     # Checkpoint path (chunked mode only; only --dir creates multiple files).
+    # Lives in the first discovered findings dir when there's more than one.
     checkpoint_path = None
-    if chunked and findings_dir is not None:
-        checkpoint_path = findings_dir / ".scanimport-checkpoint.json"
+    if chunked and findings_dirs:
+        checkpoint_path = findings_dirs[0] / ".scanimport-checkpoint.json"
 
     if chunked:
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1959,7 +2257,7 @@ def main():
                 print(f"  {colored('⚠', 'YELLOW')} Could not read checkpoint at {checkpoint_path}: {e}", file=sys.stderr)
                 print(f"  {C.DIM}Starting fresh.{C.RESET}", file=sys.stderr)
 
-        pending = [(fname, content) for (fname, content) in file_parts if fname not in processed]
+        pending = [(fname, content, is_chain) for (fname, content, is_chain) in file_parts if fname not in processed]
         skipped = len(file_parts) - len(pending)
         if skipped:
             print(f"  {colored('⏭', 'CYAN')} Skipping {skipped} file(s) already in checkpoint")
@@ -1974,14 +2272,14 @@ def main():
             fail_lock = threading.Lock()
             first_failure = [None]  # holds (fname, LLMCallError)
 
-            def _process(fname: str, content: str):
+            def _process(fname: str, content: str, is_chain: bool):
                 # Don't run more work if another thread already failed —
                 # short-circuit so we exit fast on the first error.
                 with fail_lock:
                     if first_failure[0] is not None:
                         return
                 try:
-                    partial = _call_llm(content)
+                    partial = _call_llm(content, is_chain_source=is_chain)
                 except LLMCallError as e:
                     with fail_lock:
                         if first_failure[0] is None:
@@ -2014,7 +2312,7 @@ def main():
                             print(f"  {colored('⚠', 'YELLOW')} Could not write checkpoint: {e}", file=sys.stderr)
 
             with ThreadPoolExecutor(max_workers=workers) as ex:
-                futs = [ex.submit(_process, fname, content) for fname, content in pending]
+                futs = [ex.submit(_process, fname, content, is_chain) for fname, content, is_chain in pending]
                 # Drain so exceptions surface (none expected — _process catches its own)
                 for _ in as_completed(futs):
                     pass
@@ -2036,15 +2334,29 @@ def main():
         # Single-call path (only one file present).
         combined = file_parts[0][1]
         try:
-            mapping = _call_llm(combined)
+            mapping = _call_llm(combined, is_chain_source=file_parts[0][2])
         except LLMCallError as e:
             print(f"  {colored('✗', 'RED')} {e}", file=sys.stderr)
             sys.exit(1)
 
     if args.scanner:
         mapping["scanner_name"] = args.scanner
+
+    # A stats.jsonl-style metrics stream (found anywhere under state_root by
+    # content, not by that exact filename -- see _find_stats_files) is
+    # deterministic and authoritative when present -- unlike everything else
+    # here, it's not an LLM guess at what the report text says. Only --dir
+    # has a state_root to look in; --file/--probely have nothing to check.
+    stats = _read_scan_stats(state_root) if state_root is not None else None
+    stats_use: dict[str, bool] = {}  # per-field operator answers, filled in below
+
+    llm_scan_date = mapping.get("scan_date")  # kept so a declined date can be restored
     if args.scan_start:
         mapping["scan_date"] = args.scan_start
+    elif stats and stats.get("started_at"):
+        derived_date = _scan_date_from_iso(stats["started_at"])
+        if derived_date:
+            mapping["scan_date"] = derived_date  # tentative -- confirmed per-field below
 
     match_warnings = validate_llm_matches(mapping, vulns, chains)
 
@@ -2054,9 +2366,55 @@ def main():
         for w in match_warnings:
             print(f"    {colored('!', 'YELLOW')} {w}")
 
+    if stats:
+        print(f"\n  {colored('Scan metadata:', 'BOLD')} {C.DIM}(from {', '.join(stats['source_files'])}){C.RESET}")
+        print(f"    Started:  {mapping.get('scan_date') or stats.get('started_at') or '?'}")
+        print(f"    Duration: {format_duration(stats['duration_seconds']) if stats.get('duration_seconds') is not None else '?'}")
+        print(f"    Cost:     {'$' + format(stats['cost_usd'], ',.2f') if stats.get('cost_usd') is not None else '?'}")
+        print(f"    Tokens:   {format(stats['tokens_used'], ',') if stats.get('tokens_used') is not None else '?'}")
+        print(f"    Model(s): {', '.join(sorted(stats['model_names'])) if stats.get('model_names') else '?'}")
+        if not stats.get("is_final"):
+            print(f"    {colored('⚠', 'YELLOW')} No snapshot marked final=true — using the last one written; "
+                  f"the run may have been interrupted.")
+
     if args.dry_run:
         print(f"\n  {colored('⚑', 'YELLOW')} Dry run — skipping submission\n")
         return
+
+    if stats:
+        # The labels the operator passed may predate knowing which model(s)
+        # actually ran (or the scanner just doesn't self-report it) --
+        # the metrics-stream file says for certain. Flag a mismatch and let
+        # the operator decide, rather than silently adding or silently
+        # staying wrong.
+        missing_models = sorted((stats.get("model_names") or set()) - set(label_names))
+        if missing_models:
+            print(f"\n  {colored('⚠', 'YELLOW')} Metrics file reports model(s) not in --labels "
+                  f"({', '.join(label_names) or 'none'}): {colored(', '.join(missing_models), 'BOLD')}")
+            try:
+                answer = input(f"  {colored('?', 'CYAN')} Add to labels? [{colored('y', 'GREEN')}/N] ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = "n"
+            if answer == "y":
+                label_names.extend(m for m in missing_models if m not in label_names)
+
+        # Ask per-field, not as one bundled yes/no -- see
+        # _stats_fields_to_confirm's docstring for why.
+        print()
+        aborted = False
+        for field, label, value_desc in _stats_fields_to_confirm(args, stats):
+            try:
+                answer = input(f"  {colored('?', 'CYAN')} Use metrics-file {label} ({value_desc})? "
+                                f"[{colored('y', 'GREEN')}/N] ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print(f"\n  {colored('⏭', 'YELLOW')} Aborted")
+                aborted = True
+                break
+            stats_use[field] = answer == "y"
+        if aborted:
+            return
+        if stats_use.get("scan_date") is False:
+            mapping["scan_date"] = llm_scan_date
 
     # Confirm before submitting (only if --confirm)
     if args.confirm:
@@ -2070,13 +2428,28 @@ def main():
             return
 
     try:
-        # Precedence: explicit CLI flag > value the LLM read from the report.
-        # Tokens additionally fall back to the importer's own mapping tokens.
-        cost = args.cost if args.cost is not None else _as_float(mapping.get("cost"))
-        tokens = args.tokens or _as_int(mapping.get("tokens")) or mapping.get("_llm_tokens")
+        # Precedence: explicit CLI flag > metrics-stream file, but only for
+        # fields the operator actually accepted above (stats_use) > value
+        # the LLM read from the report text. Tokens additionally fall back
+        # to the importer's own mapping tokens.
+        cost = (
+            args.cost if args.cost is not None
+            else stats["cost_usd"] if stats and stats.get("cost_usd") is not None and stats_use.get("cost")
+            else _as_float(mapping.get("cost"))
+        )
+        tokens = (
+            args.tokens
+            or (stats["tokens_used"] if stats and stats_use.get("tokens") else None)
+            or _as_int(mapping.get("tokens"))
+            or mapping.get("_llm_tokens")
+        )
         # --duration is minutes; backend expects seconds. The report's
         # duration_seconds is already in seconds.
-        duration_s = int(args.duration * 60) if args.duration is not None else _as_int(mapping.get("duration_seconds"))
+        duration_s = (
+            int(args.duration * 60) if args.duration is not None
+            else int(stats["duration_seconds"]) if stats and stats.get("duration_seconds") is not None and stats_use.get("duration")
+            else _as_int(mapping.get("duration_seconds"))
+        )
         # Auto-add the model that ran the scan as a label. Precedence: explicit
         # --scan-model > the value the LLM read from the report.
         scan_model = args.scan_model or mapping.get("scan_model")
@@ -2095,26 +2468,12 @@ def main():
 
     # Upload scan state (zip of the originally passed --dir). Only when --dir
     # is the source: --file and --probely have no directory of context to zip.
+    # A failure here is a warning, not fatal -- the scan itself already
+    # submitted; --upload-state-for lets the operator retry just this step
+    # afterward (e.g. once a proxy 413 limit has been raised) without
+    # re-running the LLM mapping pass.
     if state_root is not None and not args.skip_state:
-        import tempfile
-        try:
-            with tempfile.NamedTemporaryFile(prefix="scan-state-", suffix=".zip", delete=False) as tmp:
-                tmp_path = Path(tmp.name)
-            with Spinner(f"Zipping {state_root.name}/ ..."):
-                size = _zip_directory(state_root, tmp_path)
-            zip_name = f"{state_root.name}.zip"
-            with Spinner(f"Uploading scan state ({_human_size(size)})..."):
-                client.upload_scan_state(scan_id, tmp_path, zip_name)
-            print(f"  {colored('✓', 'GREEN')} Scan state uploaded: {colored(zip_name, 'BOLD')} {C.DIM}({_human_size(size)}){C.RESET}")
-        except httpx.HTTPStatusError as e:
-            print(f"  {colored('⚠', 'YELLOW')} Scan state upload failed: {e.response.status_code} {e.response.text[:200]}", file=sys.stderr)
-        except Exception as e:
-            print(f"  {colored('⚠', 'YELLOW')} Scan state upload failed: {e}", file=sys.stderr)
-        finally:
-            try:
-                tmp_path.unlink()
-            except (NameError, OSError):
-                pass
+        _upload_scan_state(client, scan_id, state_root)
 
     # Successful submission — clear checkpoint so a future run starts fresh.
     if checkpoint_path and checkpoint_path.exists():

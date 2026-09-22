@@ -207,6 +207,84 @@ def test_run_llm_mapping_picks_extra_info_by_mode():
 # broken: "matched != current" must fire for all three directions, not just
 # "matched is not None and different".
 
+
+# ── Source-file-type enforcement for chain vs. individual-vuln credit ──
+#
+# Real incident (2026-09-21): the model over-credited standalone findings
+# as full chains -- once by stating a further step's consequence without
+# demonstrating it, once by ignoring an explicit "not performed / withheld"
+# disclaimer, once by ignoring an explicit "scored separately" disclaimer --
+# and separately under-credited a genuine chain finding by splitting it
+# into one sub-finding per mechanism, each matched to an individual vuln
+# instead of the chain. _enforce_source_kind is the mechanical backstop:
+# a file's own directory (when the scan separates dedicated chain write-ups
+# from standalone findings) hard-caps which field its findings can ever
+# populate, regardless of what the model returns.
+
+def test_enforce_source_kind_clears_vuln_match_on_a_chain_source_file():
+    result = {"findings": [{"matched_vuln_db_id": 55987, "matched_chain_db_id": None}]}
+    import_scan._enforce_source_kind(result, is_chain_source=True)
+    assert result["findings"][0]["matched_vuln_db_id"] is None
+
+
+def test_enforce_source_kind_clears_chain_match_on_a_standalone_source_file():
+    """The exact real-incident shape: a standalone SSRF finding that only
+    claimed (never demonstrated) a further token-forgery step got
+    matched_chain_db_id set anyway."""
+    result = {"findings": [{"matched_vuln_db_id": None, "matched_chain_db_id": 15}]}
+    import_scan._enforce_source_kind(result, is_chain_source=False)
+    assert result["findings"][0]["matched_chain_db_id"] is None
+
+
+def test_enforce_source_kind_is_a_noop_without_a_directory_signal():
+    """No directory-based signal (e.g. a single combined report, or --file)
+    -- the content rule in SYSTEM_PROMPT_MAP still applies, but there is
+    nothing here to enforce mechanically."""
+    result = {"findings": [{"matched_vuln_db_id": 1, "matched_chain_db_id": 2}]}
+    import_scan._enforce_source_kind(result, is_chain_source=None)
+    assert result["findings"][0] == {"matched_vuln_db_id": 1, "matched_chain_db_id": 2}
+
+
+def test_enforce_source_kind_handles_multiple_findings_and_missing_keys():
+    result = {"findings": [
+        {"matched_vuln_db_id": 1, "matched_chain_db_id": None},
+        {"matched_vuln_db_id": 2},  # matched_chain_db_id absent entirely
+    ]}
+    import_scan._enforce_source_kind(result, is_chain_source=True)
+    assert all(f["matched_vuln_db_id"] is None for f in result["findings"])
+
+
+def test_source_kind_prompt_section_matches_content_rule_wording():
+    """The per-file source-type note must frame itself as secondary to the
+    content-based rule in SYSTEM_PROMPT_MAP, not a replacement for it, and
+    for a chain file must warn against splitting one narrative into
+    per-mechanism findings (the exact way a genuine chain lost its credit)."""
+    vulns = [{"id": 1, "vuln_id": "TP-001", "title": "SQLi", "severity": "high"}]
+
+    chain_msg = import_scan._build_user_message("REPORT", vulns, None, None, True)
+    assert "do not split one connected chain narrative" in chain_msg
+    assert "matched_vuln_db_id must stay null" in chain_msg
+
+    standalone_msg = import_scan._build_user_message("REPORT", vulns, None, None, False)
+    assert "matched_chain_db_id must stay null" in standalone_msg
+
+    no_signal_msg = import_scan._build_user_message("REPORT", vulns, None, None, None)
+    assert "Source File Type" not in no_signal_msg
+
+
+def test_system_prompt_map_rejects_claim_without_demonstration():
+    """The universal, directory-independent rule: explaining a further
+    step's consequence, stating it was withheld/not performed, or saying
+    the combined outcome is scored separately, must never by itself justify
+    matched_chain_db_id -- this must hold even with no directory signal at
+    all, which is why it lives in SYSTEM_PROMPT_MAP itself, not only in the
+    per-file source-type note."""
+    prompt = import_scan.SYSTEM_PROMPT_MAP
+    assert "not performed" in prompt
+    assert "withheld" in prompt
+    assert "scored separately" in prompt or "reported separately" in prompt
+
+
 def test_correction_condition_covers_all_three_directions():
     """Mirrors the exact condition in submit_to_vulnapps's correction loop."""
     def would_correct(llm_matched, server_current):
@@ -222,3 +300,188 @@ def test_correction_condition_covers_all_three_directions():
     # 4) already agree -> no API call needed
     assert not would_correct(llm_matched=42, server_current=42)
     assert not would_correct(llm_matched=None, server_current=None)
+
+
+# ── _scan_date_from_iso / _read_scan_stats ──
+# Real incident (2026-09-21): cost/tokens/duration/model live in a separate
+# stats.jsonl (an append-only per-agent metrics stream the scanning tool
+# writes), not anywhere in the report's own JSON/markdown -- so the importer
+# had no way to see them and the fields stayed empty on the submitted scan.
+
+def test_scan_date_from_iso_takes_leading_date_hour_minute():
+    assert import_scan._scan_date_from_iso("2026-09-17T23:14:20.425412Z") == "2026-09-17 23:14"
+
+
+def test_scan_date_from_iso_none_for_missing_or_too_short():
+    assert import_scan._scan_date_from_iso(None) is None
+    assert import_scan._scan_date_from_iso("2026-09-17") is None
+
+
+def test_read_scan_stats_none_when_file_absent(tmp_path):
+    assert import_scan._read_scan_stats(tmp_path) is None
+
+
+def test_read_scan_stats_prefers_the_snapshot_marked_final(tmp_path):
+    lines = [
+        {"event": "agent_finished", "agent_id": "a1"},
+        {"event": "run_snapshot", "totals": {"cost_usd": 1.0, "tokens_used": 100},
+         "duration_seconds": 10, "started_at": "2026-09-17T23:14:20.425412Z",
+         "agents": {"a1": {"model_name": "claude-sonnet-5"}}},
+        {"event": "run_snapshot", "totals": {"cost_usd": 12.34, "tokens_used": 999888},
+         "duration_seconds": 4321, "started_at": "2026-09-17T23:14:20.425412Z",
+         "agents": {"a1": {"model_name": "claude-sonnet-5"}, "a2": {"model_name": "claude-opus-5"}},
+         "final": True},
+    ]
+    (tmp_path / "stats.jsonl").write_text("\n".join(json.dumps(l) for l in lines))
+
+    stats = import_scan._read_scan_stats(tmp_path)
+
+    assert stats["cost_usd"] == 12.34
+    assert stats["tokens_used"] == 999888
+    assert stats["duration_seconds"] == 4321
+    assert stats["started_at"] == "2026-09-17T23:14:20.425412Z"
+    assert stats["model_names"] == {"claude-sonnet-5", "claude-opus-5"}
+    assert stats["is_final"] is True
+    assert stats["source_files"] == ["stats.jsonl"]
+
+
+def test_read_scan_stats_finds_the_file_regardless_of_name_or_nesting(tmp_path):
+    """The filename 'stats.jsonl' is a convention from the one tool we've
+    seen emit this, not a contract -- a differently-named file, nested in a
+    subdirectory, must still be picked up by its content shape."""
+    lines = [
+        {"event": "run_snapshot", "totals": {"cost_usd": 5.0, "tokens_used": 500},
+         "duration_seconds": 50, "started_at": "2026-09-17T23:14:20Z",
+         "agents": {}, "final": True},
+    ]
+    nested = tmp_path / "logs" / "run-metrics.jsonl"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("\n".join(json.dumps(l) for l in lines))
+
+    stats = import_scan._read_scan_stats(tmp_path)
+
+    assert stats["cost_usd"] == 5.0
+    assert stats["source_files"] == ["logs/run-metrics.jsonl"]
+
+
+def test_read_scan_stats_skips_hidden_and_underscore_directories(tmp_path):
+    lines = [
+        {"event": "run_snapshot", "totals": {"cost_usd": 5.0, "tokens_used": 500},
+         "duration_seconds": 50, "started_at": "2026-09-17T23:14:20Z",
+         "agents": {}, "final": True},
+    ]
+    hidden = tmp_path / ".git" / "stats.jsonl"
+    hidden.parent.mkdir(parents=True)
+    hidden.write_text("\n".join(json.dumps(l) for l in lines))
+    private = tmp_path / "_scratch" / "stats.jsonl"
+    private.parent.mkdir(parents=True)
+    private.write_text("\n".join(json.dumps(l) for l in lines))
+
+    assert import_scan._read_scan_stats(tmp_path) is None
+
+
+def test_find_stats_files_ignores_jsonl_without_an_event_key(tmp_path):
+    """A .jsonl file that happens to live in the report dir but isn't a
+    metrics stream (e.g. some unrelated per-line data export) must not be
+    mistaken for one."""
+    (tmp_path / "vulnerabilities.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in [{"id": 1, "title": "SQLi"}, {"id": 2, "title": "XSS"}])
+    )
+
+    assert import_scan._find_stats_files(tmp_path) == []
+    assert import_scan._read_scan_stats(tmp_path) is None
+
+
+def test_read_scan_stats_falls_back_to_last_snapshot_when_none_is_final():
+    """The run may have been interrupted before a final=true record was
+    written -- fall back to the last run_snapshot seen and say so."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = pathlib.Path(tmp)
+        lines = [
+            {"event": "run_snapshot", "totals": {"cost_usd": 1.0, "tokens_used": 100},
+             "duration_seconds": 10, "started_at": "2026-09-17T23:14:20Z", "agents": {}},
+            {"event": "run_snapshot", "totals": {"cost_usd": 2.5, "tokens_used": 200},
+             "duration_seconds": 20, "started_at": "2026-09-17T23:14:20Z", "agents": {}},
+        ]
+        (tmp_path / "stats.jsonl").write_text("\n".join(json.dumps(l) for l in lines))
+
+        stats = import_scan._read_scan_stats(tmp_path)
+
+        assert stats["cost_usd"] == 2.5
+        assert stats["is_final"] is False
+
+
+def test_read_scan_stats_ignores_non_snapshot_events_and_malformed_lines():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = pathlib.Path(tmp)
+        raw = "\n".join([
+            json.dumps({"event": "agent_finished", "agent_id": "a1"}),
+            "not json at all",
+            "",
+            json.dumps({"event": "run_snapshot", "totals": {"cost_usd": 3.0, "tokens_used": 300},
+                        "duration_seconds": 30, "started_at": "2026-09-17T23:14:20Z",
+                        "agents": {}, "final": True}),
+        ])
+        (tmp_path / "stats.jsonl").write_text(raw)
+
+        stats = import_scan._read_scan_stats(tmp_path)
+
+        assert stats["cost_usd"] == 3.0
+        assert stats["is_final"] is True
+
+
+# ── _stats_fields_to_confirm ──
+# Real incident (2026-09-21): the metadata confirmation used to be one
+# bundled yes/no covering cost/tokens/duration/date together. An operator
+# who had already passed --duration explicitly (the scanning tool only
+# recorded wall time until they manually exited, not real scan time) still
+# wanted the metrics file's cost/tokens accepted -- but declining the
+# bundled question discarded all four fields AND aborted the whole
+# submission outright, after the (expensive) LLM mapping pass had already
+# run. Fields must be asked about individually, and a field the operator
+# already settled via CLI flag must not be asked about at all.
+
+_STATS_ALL_FIELDS = {
+    "cost_usd": 145.8855, "tokens_used": 14404361, "duration_seconds": 35241.438,
+    "started_at": "2026-09-17T23:14:20.425412Z",
+}
+
+
+class _FakeArgs:
+    cost = None
+    tokens = None
+    duration = None
+    scan_start = None
+
+
+def test_stats_fields_to_confirm_asks_about_every_field_with_no_cli_override():
+    fields = import_scan._stats_fields_to_confirm(_FakeArgs(), _STATS_ALL_FIELDS)
+    assert [f for f, _, _ in fields] == ["cost", "tokens", "duration", "scan_date"]
+
+
+def test_stats_fields_to_confirm_skips_a_field_already_settled_by_cli():
+    """The exact real-incident shape: --duration was already passed by the
+    operator (to correct for wall-clock time that included idle time after
+    the last real finding) -- it must not be asked about, while cost/tokens
+    still are."""
+    args = _FakeArgs()
+    args.duration = 57.0
+
+    fields = import_scan._stats_fields_to_confirm(args, _STATS_ALL_FIELDS)
+
+    assert [f for f, _, _ in fields] == ["cost", "tokens", "scan_date"]
+
+
+def test_stats_fields_to_confirm_skips_fields_the_metrics_file_has_nothing_for():
+    fields = import_scan._stats_fields_to_confirm(_FakeArgs(), {"cost_usd": 1.0})
+    assert [f for f, _, _ in fields] == ["cost"]
+
+
+def test_stats_fields_to_confirm_value_desc_is_human_readable():
+    fields = import_scan._stats_fields_to_confirm(_FakeArgs(), _STATS_ALL_FIELDS)
+    by_field = {f: v for f, _, v in fields}
+    assert by_field["cost"] == "$145.89"
+    assert by_field["tokens"] == "14,404,361"
+    assert by_field["scan_date"] == "2026-09-17 23:14"
