@@ -1,3 +1,22 @@
+# GitHub Actions deployment
+
+- [x] Inspect upstream deployment scripts and clean-checkout test requirements.
+- [x] Configure existing tests and a container startup check for pull requests and main.
+- [x] Configure publishing to Docker Hub and deploying the exact image over SSH on main.
+- [x] Document repository secrets, host prerequisites, snapshots, and recovery.
+- [x] Validate workflow syntax, shell syntax, and self-contained tests.
+
+Deployment follows the existing EC2 layout: `vulnapps`, `vulnapps-data`, and
+`127.0.0.1:8001`. Configuration comes from GitHub Secrets. Deployment runs are
+serialized; a failed image pull or database snapshot must leave the old service running.
+
+Review: 90 existing self-contained tests passed on Python 3.12; actionlint,
+`bash -n`, and `git diff --check` passed. No new tests were added. The local
+Docker daemon is stopped, so image build/startup and live deployment remain
+unverified. CI gates deployment on the image build/startup check. Application
+settings use individual repository secrets; CI assembles the env-file. No live
+deployment has been performed.
+
 # Prune scoring redesign to decided subset (A/B/D/E/H/J keep, C/F/G/I delete)
 
 See `/Users/nuno/.claude/plans/playful-marinating-gray.md` for full context/rationale.
