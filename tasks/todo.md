@@ -1,5 +1,12 @@
 # GitHub Actions deployment
 
+- [x] Prune dangling images on EC2 after successful startup, with warning-only failure.
+- [x] Validate the script for publication.
+
+Cleanup review: `bash -n` and diff checks passed. Mocked Docker checks confirmed
+cleanup follows healthy startup, cleanup failure is nonfatal, and failed startup
+skips cleanup. No live pruning was performed.
+
 - [x] Remove the known-hosts secret requirement and accept the first SSH host key per run.
 - [x] Update deployment documentation and validate workflow syntax.
 

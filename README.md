@@ -157,6 +157,10 @@ remain one-time setup using `aws/setup-ec2.sh` and `DeployInstructions.txt`.
 The Docker Hub image must be public, or the host's root Docker client must
 already be signed in with pull access.
 
+After the startup check succeeds, the EC2 script runs `docker image prune -f`
+to remove dangling images across that host. It does not prune volumes. Cleanup
+failure prints a warning and does not fail the deployment.
+
 CI runs the self-contained pytest suite, builds the image (including the React
 frontend), and checks its API and homepage on an empty database. It excludes
 `tests/test_api_endpoints.py`, which requires a local production database and

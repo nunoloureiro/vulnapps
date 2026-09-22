@@ -97,6 +97,10 @@ if [[ "$ready" != true ]]; then
     exit 1
 fi
 
+if ! sudo docker image prune -f; then
+    echo 'Warning: deployment succeeded, but dangling image cleanup failed.' >&2
+fi
+
 echo ""
 echo "============================================"
 echo "  Vulnapps is running!"

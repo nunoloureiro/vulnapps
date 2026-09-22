@@ -1667,3 +1667,6 @@ image by digest through the existing `aws/setup-ec2.sh`, preserving `vulnapps-da
 existing loopback port `8001`. Take a SQLite database snapshot before container
 replacement, fail the run on startup failure, and update `latest` only after
 successful deployment. Do not automatically reverse database migrations.
+After successful startup, prune dangling Docker images on EC2 with
+`docker image prune -f`. Leave volumes intact and warn without failing deployment
+if image cleanup fails. No cleanup is needed on the ephemeral Actions runner.
