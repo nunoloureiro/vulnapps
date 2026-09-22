@@ -1,13 +1,5 @@
 # GitHub Actions deployment
 
-- [x] Add EC2 deployment time and revision to the API and app footer.
-- [x] Verify the running deployment metadata before reporting success.
-- [x] Validate the timestamp change for publication.
-
-Footer review: 90 existing tests passed; the frontend production build, API
-metadata checks (including no deployment metadata and disabled caching), workflow
-YAML and shell syntax, and diff checks passed. Live EC2 deployment is unverified.
-
 - [x] Remove the known-hosts secret requirement and accept the first SSH host key per run.
 - [x] Update deployment documentation and validate workflow syntax.
 

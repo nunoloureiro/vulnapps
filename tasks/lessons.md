@@ -1,9 +1,5 @@
 # Lessons
 
-## Deployment visibility belongs in the app
-When a deployment timestamp is requested for Vulnapps, make its placement in the
-app footer explicit. CI output alone does not give the user that visibility.
-
 ## NEVER broad-kill the user's applications
 **Mistake:** Ran `pkill -f "Google Chrome"` to clean up headless renders. This
 killed the user's real Chrome — 100+ open tabs lost, history wiped (no restore

@@ -1667,7 +1667,3 @@ image by digest through the existing `aws/setup-ec2.sh`, preserving `vulnapps-da
 existing loopback port `8001`. Take a SQLite database snapshot before container
 replacement, fail the run on startup failure, and update `latest` only after
 successful deployment. Do not automatically reverse database migrations.
-Set `DEPLOYED_AT` in UTC when starting the replacement container on EC2 and pass
-the GitHub commit as `DEPLOY_REVISION`. Expose both through an uncached
-`/api/deployment` response and show them in the app footer. The deployment startup
-check must verify both values from the running app before reporting success.

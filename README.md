@@ -157,12 +157,6 @@ remain one-time setup using `aws/setup-ec2.sh` and `DeployInstructions.txt`.
 The Docker Hub image must be public, or the host's root Docker client must
 already be signed in with pull access.
 
-The app footer shows the deployment time in UTC and the deployed commit. The same
-values are available at `/api/deployment` with caching disabled. The EC2 script
-sets the timestamp when starting the replacement container and verifies that the
-running app returns its timestamp and revision before declaring success. This
-checks the container locally; it does not verify the public nginx/TLS route.
-
 CI runs the self-contained pytest suite, builds the image (including the React
 frontend), and checks its API and homepage on an empty database. It excludes
 `tests/test_api_endpoints.py`, which requires a local production database and
