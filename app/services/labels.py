@@ -52,9 +52,14 @@ def _validate_color(color: str) -> str:
 async def add_label_to_scan(db, user, scan_id: int, name: str, color: str = "#f97316") -> dict:
     """Attach an existing label to a scan. Returns the label dict.
 
-    Non-admin callers can only attach labels that already exist; creating
-    a new label name is an admin-only operation that must go through
-    ``POST /api/admin/labels`` (vuln-0021).
+    Attaching an existing label only requires scan-write access (same as
+    ``_check_scan_write`` above). Creating a brand-new label name is
+    further restricted to global admins and team contributors/admins on
+    the app's own team (vuln-0021 originally made this admin-only; team
+    contributors already have scan-write access here, so requiring a
+    *global* admin just to coin a new label name was stricter than the
+    rest of their access) -- anyone else gets it rejected with a clear
+    message rather than silently skipped.
     """
     if not name or not name.strip():
         raise ValueError("Label name required")
@@ -77,9 +82,13 @@ async def add_label_to_scan(db, user, scan_id: int, name: str, color: str = "#f9
     if existing:
         label = dict(existing)
     else:
-        if user.get("role") != "admin":
+        can_create = user.get("role") == "admin"
+        if not can_create and app["visibility"] == "team" and app["team_id"]:
+            team_role = await get_team_role(db, user["sub"], app["team_id"])
+            can_create = team_role in ("admin", "contributor")
+        if not can_create:
             raise PermissionError(
-                "Only admins can create new labels; pick an existing label name"
+                "Only admins or team contributors can create new labels; pick an existing label name"
             )
         await db.execute(
             "INSERT INTO labels (name, color) VALUES (?, ?)",

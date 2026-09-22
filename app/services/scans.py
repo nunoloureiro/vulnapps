@@ -503,12 +503,18 @@ async def submit_scan(
             ),
         )
 
-    # Apply labels. Non-admin callers can only attach labels that already
-    # exist — creating a brand-new global label is an admin-only operation
-    # (vuln-0021). Unknown names are silently skipped so well-behaved CI
-    # integrations don't blow up.
+    # Apply labels. Anyone with scan-write access can attach an existing
+    # label; creating a brand-new label name is further restricted to
+    # global admins and team contributors/admins on the app's own team
+    # (vuln-0021 originally made this admin-only, but a team contributor
+    # who can already submit scans for this app shouldn't need a global
+    # admin just to coin a new label name). Unknown names are silently
+    # skipped so well-behaved CI integrations don't blow up.
     if labels:
-        is_admin = user["role"] == "admin"
+        can_create_labels = user["role"] == "admin"
+        if not can_create_labels and app["visibility"] == "team" and app["team_id"]:
+            team_role = await get_team_role(db, user["sub"], app["team_id"])
+            can_create_labels = team_role in ("admin", "contributor")
         for label_name in labels:
             label_name = label_name.strip()
             if not label_name:
@@ -518,7 +524,7 @@ async def submit_scan(
             )
             label_row = await cursor.fetchone()
             if not label_row:
-                if not is_admin:
+                if not can_create_labels:
                     continue
                 await db.execute(
                     "INSERT INTO labels (name, color) VALUES (?, ?)",
