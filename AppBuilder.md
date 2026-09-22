@@ -480,7 +480,7 @@ ALTER TABLE vulnerabilities ADD COLUMN weight_verified INTEGER NOT NULL DEFAULT 
 Apps have a one-to-many relationship with `app_technologies`. Each row stores a single technology name (e.g., "PHP", "Next.js"). In the form, users enter comma-separated values which are parsed and stored as individual rows. The `category` column in `apps` is legacy and not used in the UI.
 
 ### Scan Labels
-Labels are user-defined, color-coded tags for scans. A many-to-many junction table (`scan_labels`) links scans to labels. Labels can be added/removed per-scan by anyone with scan write access. Admin can manage labels globally (CRUD) via `/api/admin/labels`. Labels are displayed as color-coded badges in the scans list and scan detail. The scans list supports filtering by label.
+Labels are user-defined, color-coded tags for scans. A many-to-many junction table (`scan_labels`) links scans to labels. Attaching an *existing* label to a scan only requires scan write access. *Creating* a brand-new label name is further restricted to global admins and team admins/contributors on the app's own team — a private app's own creator (who can submit/write to their own scan without any team role) still cannot coin a new label name, only attach one that already exists. Admin can also manage labels globally (CRUD) via `/api/admin/labels`. Labels are displayed as color-coded badges in the scans list and scan detail. The scans list supports filtering by label.
 
 ### Scan Cost, Tokens & Duration
 Private fields on scans (`cost REAL`, `tokens INTEGER`, `duration INTEGER` seconds). Only visible to the scan owner, team members of the app's team, and admins, and editable inline on the scan detail page (Cost shows even when unset so it can be added). Used to track LLM-based scanner costs/effort.
@@ -642,6 +642,9 @@ All endpoints return JSON. Auth via `Authorization: Bearer <token>` header (JWT 
 
 ### API Root (`/api`)
 `GET /api` — Returns API info and endpoint listing. Redirects to Swagger UI if `Accept: text/html`.
+
+`GET /api/version` — No auth required. Returns `{"version": "v<major>.<minor>"}` — see **App
+Version** above.
 
 ### Auth (`/api/auth`)
 | Method | Path | Auth / Scope | Description |
@@ -1183,6 +1186,32 @@ set both (keeps the chain match, clears the vuln match). `print_mapping_table` s
 separate "CHAIN MATCHED — review these carefully" section so a rare, high-stakes match is
 never buried among ordinary ones before the operator submits.
 
+That prompt-only rule was not enough on its own (real incident, 2026-09-21): a standalone
+SSRF finding that only *stated* a further step's consequence ("with this secret one could
+forge tokens...") without demonstrating it, and a deserialization finding that explicitly
+said the RCE step was "not performed per rules of engagement", both got `matched_chain_db_id`
+anyway; a password-reset-log finding that explicitly said the combined takeover is "scored
+separately" was ALSO chain-credited despite disclaiming that itself; and conversely a
+genuine chain write-up got split into one finding per mechanism, each matched to an
+individual vuln, losing the chain credit the file was written to earn. `SYSTEM_PROMPT_MAP`
+now spells out those three exact "claims/withholds/defers, doesn't demonstrate" phrasings as
+things that must NOT justify chain credit — a directory-independent, content-based rule that
+applies to every scan report regardless of how it's organized.
+
+On top of that, when a scan's own report layout separates dedicated chain write-ups from
+standalone findings into different directories (not guaranteed for every scan, but true of
+this importer's usual source), `_discover_findings_dirs` already reads both, and each file's
+containing directory name (`"chain" in dirname.lower()`) is passed through the whole
+per-file pipeline as `is_chain_source` — a secondary, report-specific signal layered on top
+of the content rule, not a replacement for it. It does two things: the prompt (in
+`_build_user_message`) tells the model which of the two a file was *authored* as, including
+telling a chain file not to split its narrative into per-mechanism findings; and
+`_enforce_source_kind` mechanically force-clears whichever field that source type is never
+allowed to populate — `matched_vuln_db_id` on a chain file, `matched_chain_db_id` on a
+standalone one — regardless of what the model returned. That backstop can only ever
+downgrade a wrong credit to unmatched, never manufacture a wrong one, so it costs nothing
+even for a scan whose directory layout turns out not to carry this meaning.
+
 ### Ground-truth revisions
 
 `ground_truth_revisions`, one sequence per app.
@@ -1345,8 +1374,8 @@ User-defined, color-coded tags for organizing scans.
 - **Junction table**: `scan_labels(scan_id, label_id)` — many-to-many
 - **Badge display**: Color-coded badges in scans list and scan detail
 - **Filtering**: Scans list supports `?label=` filter
-- **Management**: Admin can CRUD labels via `/api/admin/labels`. Non-admin users can add/remove labels on scans they have write access to.
-- **CLI support**: `--labels` flag on import_scan.py for auto-labeling (labels auto-created if they don't exist)
+- **Management**: Admin can CRUD labels globally via `/api/admin/labels`. Any user with scan write access can attach/remove *existing* labels on a scan. *Creating* a new label name (not just attaching one) additionally requires being a global admin or a team admin/contributor on the app's own team — a private app's own creator does not qualify on their own.
+- **CLI support**: `--labels` flag on import_scan.py for auto-labeling (labels auto-created if they don't exist and the submitting user/key qualifies to create one, per the rule above; otherwise the label name is silently skipped, not an error)
 
 ---
 
@@ -1459,11 +1488,13 @@ python tools/import_scan.py --url https://vulnapps.example.com \
 
 **Features:**
 - Reads one or more `.md` scan result files (combines into single scan via `--dir`)
+- `--dir` accepts the project/run root, not just the findings dir directly: `_discover_findings_dirs` finds the right subdirectory/subdirectories to read. If ANY immediate child directory contains `.md` files, ALL such children are used together (a standardized report layout splits findings across siblings like `vulnerabilities/` + `vulnerability_chains/`, and both matter — chunked, one LLM call per file). Only when no child has `.md` files does it fall back to `.md` files at the root itself, then to a child whose name/contents mention "report". A real incident: a root with both a big combined `report.md` AND per-finding subdirectories used to let the combined file win outright, forcing one giant non-chunked LLM call whose response came back too large to parse as valid JSON.
 - Sends scan content + known vulns to Claude for mapping (streamed response — non-streaming calls stall on the 600s read timeout for detail-rich reports; cap is 16384 output tokens)
 - Displays colored mapping table (matched, unmatched, FP)
 - Submits scan and applies LLM match corrections
 - Auto-captures LLM token count from response
 - Supports `--labels` for auto-labeling scans
+- If a metrics-stream file (see below) is found anywhere under `--dir`, reads authoritative cost/tokens/duration/start-time/model from it instead of relying on the LLM to read them out of report prose
 
 **Key flags:**
 | Flag | Description |
@@ -1474,7 +1505,8 @@ python tools/import_scan.py --url https://vulnapps.example.com \
 | `--dir` | Directory with `.md` files (combined into one scan) |
 | `--file` | Single `.md` file to import |
 | `--scanner` | Override LLM-detected scanner name |
-| `--scan-date` | Override LLM-detected date (YYYY-MM-DD) |
+| `--scan-start` | Override LLM/stats-detected start time (`YYYY-MM-DD HH:MM`, plain `YYYY-MM-DD` also accepted) |
+| `--scan-model` | Model that PERFORMED the scan (overrides the value read from the report/metrics-stream file); auto-added as a label |
 | `--authenticated` | Mark scan as authenticated (overrides LLM detection) |
 | `--unauthenticated` | Mark scan as unauthenticated (overrides LLM detection) |
 | `--public` | Make scan public (default: private) |
@@ -1482,6 +1514,7 @@ python tools/import_scan.py --url https://vulnapps.example.com \
 | `--confirm` | Ask for confirmation before submitting (default: auto-submit) |
 | `--cost` | Scan cost in USD (private field) |
 | `--tokens` | Token count (auto-captured from LLM if not set) |
+| `--duration` | Scan duration in minutes (private field) |
 | `--notes` | Notes to attach to the scan |
 | `--model` | Claude model (default: `claude-sonnet-4-6` mapping, `claude-haiku-4-5` extract-only) |
 | `--provider` | `anthropic` or `vertex` (auto-detected from `CLAUDE_CODE_USE_VERTEX=1`) |
@@ -1490,6 +1523,8 @@ python tools/import_scan.py --url https://vulnapps.example.com \
 | `--extra-info-extract` | Extra operator instructions appended to the extraction prompt (used when the app has no known vulns yet to map against) |
 | `--extra-info-mapping` | Extra operator instructions appended to the mapping prompt (used once the app has known vulns to map against) |
 | `--dry-run` | Show mapping without submitting |
+| `--skip-state` | Don't zip/upload `--dir` as scan state |
+| `--upload-state-for <scan_id>` | Skip mapping entirely — just (re-)upload `--dir` as scan state for an already-submitted scan (retry after a state-upload failure) |
 
 **LLM provider:** Supports both Anthropic direct API and Google Vertex AI. Auto-detects from `CLAUDE_CODE_USE_VERTEX=1` env var.
 
@@ -1502,6 +1537,46 @@ switch on whether `vulns` is empty). The section is explicitly scoped as informi
 calls, not overriding the mandatory JSON schema or rules above it. Both the streaming-API path
 and the `--use-cli` subprocess path build this section through the same shared
 `_build_user_message` helper, so the two never drift apart.
+
+**Scan metadata from a metrics-stream file (`_find_stats_files`, `_read_scan_stats`,
+`_scan_date_from_iso`):** the scanning tool that produces a report (e.g. `ai-pentest-agent`)
+may separately emit an append-only JSONL metrics stream (schema:
+`ai-pentest-agent/docs/contracts/stats.schema.json`, conventionally named `stats.jsonl`) that
+is *not* part of the report's own JSON/markdown at all. Real incident (2026-09-21): before
+this, cost/tokens/duration/model stayed empty on the submitted scan unless the operator
+passed `--cost`/`--tokens`/`--duration`/`--scan-model` by hand every time, because the
+importer had no way to see this data — the report text itself never states it. `stats.jsonl`
+is a convention from the one tool we've seen emit this, not a contract every scanner has to
+follow, so `_find_stats_files` locates the file by *content* (any `.jsonl` file under `--dir`,
+searched recursively, skipping hidden/underscore directories, whose first record is a dict
+with an `"event"` key) rather than by that exact filename or top-level placement — a
+differently-named or nested file is still picked up. `_read_scan_stats` then reads the last
+`run_snapshot` record marked `"final": true` across all matched files (falling back to the
+last snapshot seen, with a warning, if the run was interrupted before one was written) and
+extracts `cost_usd`, `tokens_used`, `duration_seconds`, `started_at`, and the set of every
+agent's `model_name`. Precedence for each field is: explicit CLI flag (`--cost`/`--tokens`/
+`--duration`/`--scan-start`/`--scan-model`) > metrics-stream file (deterministic, not an LLM
+guess) > value the LLM extracted from the report text. Before submitting, the importer prints
+this metadata for review — including which file(s) it actually read it from, since the name
+is no longer guaranteed — and flags any model name found there that isn't already in
+`--labels`, offering to add it. It then asks about cost/tokens/duration/start-date **one
+field at a time** (`_stats_fields_to_confirm`), skipping a field entirely when the operator
+already settled it via the matching CLI flag. Real incident (2026-09-21): an earlier version
+asked one bundled yes/no for all four fields — an operator who'd already passed `--duration`
+explicitly (the scanning tool recorded wall time until they manually exited, not real scan
+time) still wanted cost/tokens accepted from the file, but declining the bundled question
+discarded all four fields *and aborted the entire submission* after the LLM mapping pass had
+already run. Per-field confirmation fixes both problems: declining one field only drops that
+field back to the next item in its precedence chain, and only a real Ctrl-C/EOF aborts the
+run — a plain "no" never does.
+
+**Retrying a failed state upload (`--upload-state-for`):** the scan-state zip (of the whole
+`--dir`) is uploaded as the last step of a normal import, after the scan itself is already
+submitted — so a failure there (e.g. nginx's `client_max_body_size` rejecting a large bundle
+with a 413, see the CLI Scan Importer's operational notes) doesn't lose any mapping work, but
+previously had no retry path short of re-running the whole LLM pass. `--upload-state-for
+<scan_id>` skips mapping/import entirely and just zips `--dir` and uploads it for an
+already-submitted scan, sharing the same `_upload_scan_state` helper the normal flow uses.
 
 ---
 
@@ -1534,6 +1609,28 @@ First registered user becomes admin. Database auto-creates on startup.
 
 ---
 
+## App Version (`app/version.py`, `VERSION` file, `/api/version`)
+
+Displayed next to the "Vulnapps" heading on the home page (`frontend/src/pages/Home.jsx`)
+as `v<major>.<minor>`. `major` is a hand-set number in the `VERSION` file at the repo root
+(bump it manually for a deliberate release); `minor` is the number of commits to `main`, so it
+advances automatically on every merge without anyone having to remember to touch anything.
+
+`app/version.py`'s `get_app_version()` reads `VERSION` for the major number. For minor, the
+deployed Docker image has no `.git` to compute a commit count from at runtime (`.git/` is
+excluded from the build context by `.dockerignore`, and the Dockerfile never does a broad
+`COPY . .` that would pull it in anyway) — so `build.sh` computes `git rev-list --count main`
+on the build host (where `.git` *is* available) and passes it to `docker build` as
+`--build-arg COMMIT_COUNT=...`, which the Dockerfile bakes into a `COMMIT_COUNT` file inside
+the image. `get_app_version()` reads that baked file when present; local dev (running uvicorn
+directly from a git checkout, no baked file) falls back to asking git directly. Either way
+resolves to `"0"` if neither source is available, rather than crashing.
+
+`GET /api/version` (in `app/main.py`, alongside the existing `/api` root endpoint; no auth
+required, matching that same public-metadata pattern) returns `{"version": "v1.153"}`.
+`Home.jsx` fetches it on mount and renders it as a muted `.hero-version` span next to the
+`<h1>`, styled after `TaintedPort`'s own `v1.35` version tag next to its hero heading.
+
 ## Docker Deployment
 
 ### Dockerfile (Multi-Stage Build)
@@ -1558,6 +1655,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app/ app/
 COPY migrations/ migrations/
+COPY VERSION .
+
+# Commit count to main, computed on the build host (by build.sh) and passed
+# in since .git isn't in the build context -- see "App Version" above.
+ARG COMMIT_COUNT=0
+RUN echo "$COMMIT_COUNT" > COMMIT_COUNT
 
 # Copy built frontend from Stage 1
 COPY --from=frontend /frontend/dist frontend/dist
