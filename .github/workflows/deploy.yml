@@ -112,6 +112,6 @@ jobs:
           docker push "$IMAGE"
           digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
           [[ "$digest" =~ ^nunoloureiro/vulnapps@sha256:[a-f0-9]{64}$ ]]
-          ssh "${ssh_options[@]}" -p "$port" "$destination" "VULNAPPS_IMAGE='$digest' bash '$remote_dir/setup-ec2.sh' '$remote_dir/app.env'"
+          ssh "${ssh_options[@]}" -p "$port" "$destination" "VULNAPPS_IMAGE='$digest' DEPLOY_REVISION='$GITHUB_SHA' bash '$remote_dir/setup-ec2.sh' '$remote_dir/app.env'"
           docker tag "$IMAGE" nunoloureiro/vulnapps:latest
           docker push nunoloureiro/vulnapps:latest

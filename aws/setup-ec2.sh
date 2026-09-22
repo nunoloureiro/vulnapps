@@ -72,6 +72,7 @@ PY
     sudo docker stop --time 30 vulnapps >/dev/null
     sudo docker rm vulnapps >/dev/null
 fi
+deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 sudo docker run -d \
     --name vulnapps \
     --restart unless-stopped \
@@ -80,12 +81,14 @@ sudo docker run -d \
     "${APP_ENV[@]}" \
     -e DATABASE_PATH=/data/vulnapps.db \
     -e STATE_DIR=/data/scan-state \
+    -e DEPLOYED_AT="$deployed_at" \
+    -e DEPLOY_REVISION="${DEPLOY_REVISION:-unknown}" \
     "$DOCKER_IMAGE"
 
 ready=false
 for attempt in {1..30}; do
     if sudo docker exec vulnapps python -c \
-        'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/api", timeout=2)' \
+        'import json, os, urllib.request; data = json.load(urllib.request.urlopen("http://127.0.0.1:8000/api/deployment", timeout=2)); assert data["deployed_at"] == os.environ["DEPLOYED_AT"]; assert data["revision"] == os.environ["DEPLOY_REVISION"]' \
         >/dev/null 2>&1; then
         ready=true
         break
@@ -100,6 +103,8 @@ fi
 echo ""
 echo "============================================"
 echo "  Vulnapps is running!"
+echo "  Deployed: $deployed_at"
+echo "  Revision: ${DEPLOY_REVISION:-unknown}"
 echo "  Container: 127.0.0.1:8001"
 echo "  Data volume: vulnapps-data (persistent)"
 echo "============================================"

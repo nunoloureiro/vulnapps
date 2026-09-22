@@ -1,7 +1,8 @@
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 from app.database import get_connection, run_migrations
 from app.dependencies import get_current_user
@@ -91,6 +92,15 @@ app.include_router(api_teams.router, prefix="/api/teams", tags=["teams"])
 app.include_router(api_admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(api_dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(api_scanners.router, prefix="/api/scanners", tags=["scanners"])
+
+
+@app.get("/api/deployment")
+async def deployment():
+    return JSONResponse(
+        {"deployed_at": os.environ.get("DEPLOYED_AT"),
+         "revision": os.environ.get("DEPLOY_REVISION")},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api")

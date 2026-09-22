@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import Navbar from './components/Navbar';
+import DeploymentInfo from './components/DeploymentInfo';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -53,6 +54,7 @@ export default function App() {
             <Route path="/admin/labels" element={<AdminLabels />} />
           </Routes>
         </main>
+        <DeploymentInfo />
       </AuthProvider>
     </BrowserRouter>
   );
