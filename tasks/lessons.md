@@ -32,3 +32,30 @@ would have discarded start times from reports.
 (schema/migration + how it's read/written), not just one input widget. A
 `type="date"` editor is a *widget limitation*, not a *data constraint* — say so
 precisely and don't generalize it to the whole field.
+
+## Always validate finding/chain counts after a scan import or catalog change
+
+**Mistake:** Trusted that a scan import produced one vulnapps finding per
+report source item without ever counting. Scan 330 (TaintedPort, app 305)
+turned out to have 70 findings on vulnapps against only 61 distinct source
+items in the report (57 `vulnerabilities/` files + 4 `vulnerability_chains/`
+files). Root cause: the importer's per-file LLM extraction doesn't reliably
+clamp to one finding per source file — when a file bundles multiple root
+causes (e.g. a CSRF+XSS+localStorage-theft+account-takeover chain) or
+mentions a sub-detail in passing (e.g. a `setup_db.php` aside inside a
+directory-listing finding), it sometimes peels those off as separate DB
+findings. All 9 excess findings traced back to real report content (no
+fabrications) and 6 of the 9 were already correctly matched to the right
+vuln, so the practical damage here was low — but it was only luck, and it
+went undetected until explicitly counted.
+
+**Rule:** After importing a scan, count distinct source items in the report
+(one per file under `vulnerabilities/` + `vulnerability_chains/`, cross-checked
+against the report's own `vulnerabilities.csv`/`vulnerability_chains.csv` row
+counts or `penetration_test_report.json`'s array lengths) and compare against
+the finding count on vulnapps. Same discipline after any catalog edit: the
+count of vuln/chain entries in `KnownVulnerabilities.txt` should reconcile
+with the count of `TP-*`/`CODE-*`/`PRBL*` vulns and `CHAIN-*` chains
+registered for that app on vulnapps. A mismatch doesn't necessarily mean
+something's wrong (could be a harmless duplicate match), but it must be
+explained, not assumed away. (Also added to CLAUDE.md as a standing rule.)

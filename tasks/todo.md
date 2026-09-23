@@ -78,3 +78,52 @@ See `/Users/nuno/.claude/plans/playful-marinating-gray.md` for full context/rati
 - [x] compute_metrics sanity: finding_milestones/chain_milestones/scorings were all 0 rows
       before deletion (checked at the start), so old and new weighted_rate are identical —
       the pre-milestone fallback (full credit on match) was already every row's behavior
+
+# Open questions to discuss later
+
+Not action items — flagged for a design discussion, not yet resolved or implemented.
+
+## Sibling-chain scoring fairness
+
+This session (TaintedPort, app 305) we registered `CHAIN-011` as a sibling of the
+existing `CHAIN-004` — both reach the identical outcome (forge a genuinely-signed
+admin JWT using the real hardcoded secret) via two different entry vectors
+(`CHAIN-004` via SSRF reading `jwt.php`; `CHAIN-011` via plain directory-listing
+reading the same file). This mirrors an existing precedent, `CHAIN-002`/`CHAIN-003`,
+also two sibling chains reaching the same "admin claim forgery" outcome via
+different JWT-verification bugs. The `chains`/`chain_members` schema
+(`migrations/028_chains.sql`) only supports a flat AND-list of members per chain —
+there's no way to express "satisfied by path A's members OR path B's members" as
+one chain entity, so registering siblings is the only way to credit either path
+today.
+
+Concern raised: because each sibling chain is scored as its own fully independent
+ground-truth entity (each contributing its own weight to recall's denominator in
+`app/scoring.py`), a scan that fully demonstrates ONE path but not the other shows
+the un-demonstrated sibling as a missed/false-negative chain, dragging down
+recall — even though the scan demonstrated the exact same real-world outcome via
+an equally valid route, and even if it found every individual member vulnerability
+involved across both paths (just didn't connect them into a second explicit
+end-to-end finding). Not clear this is fair.
+
+Angles to discuss (not decided):
+- Should sibling chains for the same outcome count as satisfied for recall if ANY
+  one is fully demonstrated — i.e. treat siblings as an OR-group for scoring even
+  though they're stored as separate rows?
+- Should the schema change to support alternative-path groups directly?
+- Is there a way to flag "these N chains are siblings for outcome X" so scoring or
+  the UI can present/credit them as one conceptual unit?
+
+## Findings vs. chains list-naming asymmetry on the scan detail page
+
+For individual vulnerabilities, the scan detail page's "Findings" list shows the
+scanner's own raw submitted findings (the scanner's claims). But for chains, the
+page's "chains" section instead shows the app's registered ground-truth chains
+(the catalog's chain entities), NOT the scanner's own submitted chain-claims. So
+the same page mixes two different frames: one section is "what did the scanner
+report" (findings), the other is "what does the ground truth contain" (chains)
+rather than "what chain-findings did the scanner report." Confusing/asymmetric —
+flagged for a design discussion (e.g. should there be a distinct "chain findings"
+concept surfaced the same way individual findings are, or should the existing
+findings list simply also surface which findings were matched via
+`matched_chain_id` inline, or something else). Not resolved or implemented.
