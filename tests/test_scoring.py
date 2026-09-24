@@ -27,11 +27,27 @@ def vuln(vid, weight, tier="commodity", **kw):
     return row
 
 
-def finding(fid, matched=None, fp=0, ignored=0, fp_group=None, severity=None, matched_chain=None):
+def finding(fid, matched=None, fp=0, ignored=0, fp_group=None, severity=None,
+            matched_chain=None, matched_vulns=None, matched_chains=None):
+    """A ``scan_findings`` row as ``compute_metrics`` sees it.
+
+    Since migration 040 a finding carries LISTS of matches rather than one id,
+    because a single finding can demonstrate several things at once.
+    ``matched=``/``matched_chain=`` stay as the single-target shorthand most
+    tests want; ``matched_vulns=``/``matched_chains=`` set the full lists.
+    """
+    vuln_ids = (
+        list(matched_vulns) if matched_vulns is not None
+        else ([matched] if matched is not None else [])
+    )
+    chain_ids = (
+        list(matched_chains) if matched_chains is not None
+        else ([matched_chain] if matched_chain is not None else [])
+    )
     return {
         "id": fid,
-        "matched_vuln_id": matched,
-        "matched_chain_id": matched_chain,
+        "matched_vuln_ids": vuln_ids,
+        "matched_chain_ids": chain_ids,
         "is_false_positive": fp,
         "is_ignored": ignored,
         "fp_group": fp_group,
@@ -399,3 +415,79 @@ def test_severity_accuracy_is_case_insensitive_and_ignores_fp_and_pending():
     assert m["severity_checked"] == 1
     assert m["severity_correct"] == 1
     assert m["severity_accuracy"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Multi-match findings (migration 040)
+# ---------------------------------------------------------------------------
+# Real incident (scan 330, TaintedPort): three findings — path traversal, SSRF
+# and directory listing — each explicitly read api/config/jwt.php and quoted
+# the hardcoded HS256 secret, but a finding could only be credited for ONE
+# thing, so each was matched to its own access vuln and CODE-001 scored as a
+# MISS the scan had demonstrated three times over. And a scan reporting one
+# clean chain narrative naming its members got either the chain or one member,
+# never both, while a scan that redundantly re-reported each member got
+# everything. Matches are additive now; these lock in that it does not distort
+# the metric.
+
+def test_one_finding_crediting_three_vulns_equals_three_findings_crediting_one():
+    """The symmetry that makes additive matches safe: the score depends on what
+    was demonstrated, not on how the report was split up."""
+    vulns = [vuln(1, 9), vuln(2, 9), vuln(3, 27)]
+
+    bundled = compute_metrics([finding(10, matched_vulns=[1, 2, 3])], vulns)
+    split = compute_metrics(
+        [finding(10, matched=1), finding(11, matched=2), finding(12, matched=3)],
+        vulns,
+    )
+
+    for key in ("tp", "fn", "fp_groups", "pending", "weighted_found",
+                "weighted_total", "weighted_rate", "precision_upper", "recall"):
+        assert bundled[key] == split[key], key
+    assert bundled["tp"] == 3
+
+
+def test_one_finding_can_credit_a_chain_and_its_members_at_once():
+    """The case that was previously unexpressible: a report whose single
+    finding walks the chain end to end AND names each member it used. The
+    chain and the members are separate assertions, both credited."""
+    vulns = [vuln(1, 9), vuln(2, 9)]
+    chain = {"id": 7, "impact_weight": 27, "members": [1, 2],
+             "existed_since_revision": 1, "invalidated_at_revision": None}
+
+    m = compute_metrics(
+        [finding(10, matched_vulns=[1, 2], matched_chains=[7])], vulns, [chain]
+    )
+
+    assert m["tp"] == 2
+    assert m["credit_by_chain"][7] == 1.0
+    assert m["weighted_found"] == 9.0 + 9.0 + 27.0
+    assert m["pending"] == 0
+
+
+def test_a_chain_match_alone_still_does_not_credit_its_members():
+    """Crediting the members stays an explicit assertion, never inferred from
+    the chain match — the reviewer/importer has to say the finding actually
+    demonstrated each one."""
+    vulns = [vuln(1, 9), vuln(2, 9)]
+    chain = {"id": 7, "impact_weight": 27, "members": [1, 2],
+             "existed_since_revision": 1, "invalidated_at_revision": None}
+
+    m = compute_metrics([finding(10, matched_chains=[7])], vulns, [chain])
+
+    assert m["credit_by_chain"][7] == 1.0
+    assert m["tp"] == 0
+    assert m["fn"] == 2
+
+
+def test_duplicate_credit_of_one_vuln_across_findings_counts_once():
+    """Two findings both crediting the same vuln is one TP, not two — the
+    scan-330 shape where several findings each read the same secret."""
+    vulns = [vuln(1, 9), vuln(2, 3)]
+
+    m = compute_metrics(
+        [finding(10, matched_vulns=[1, 2]), finding(11, matched_vulns=[1])], vulns
+    )
+
+    assert m["tp"] == 2
+    assert m["weighted_found"] == 12.0

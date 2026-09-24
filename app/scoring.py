@@ -193,7 +193,7 @@ def compute_metrics(
         The headline metric: ``weighted_found / weighted_total``. A matched
         vuln scores its full weight. A chain scores its full weight when
         EITHER: (a) some finding is matched directly to the chain
-        (``matched_chain_id``) — the scanner's own report contained one
+        (``matched_chain_ids``) — the scanner's own report contained one
         finding that itself named/narrated combining the members, which is
         first-class evidence on its own, same as any vuln match; or (b)
         every member is independently matched AND a reviewer has explicitly
@@ -226,10 +226,10 @@ def compute_metrics(
     scope_ids = {field(v, "id") for v in vulns}
 
     # --- findings by adjudication state -----------------------------------
+    # One finding can match several vulns and/or several chains (migration
+    # 040), so every read here is over the attached lists, never a single id.
     matched_ids = {
-        field(f, "matched_vuln_id")
-        for f in findings
-        if field(f, "matched_vuln_id") is not None
+        vid for f in findings for vid in (field(f, "matched_vuln_ids", None) or [])
     }
     in_scope_matched = matched_ids & scope_ids
     # A finding matched to a vuln that is out of scope at this revision (e.g.
@@ -254,8 +254,8 @@ def compute_metrics(
     ignored = sum(1 for f in findings if int(field(f, "is_ignored", 0) or 0) == 1)
     pending = sum(
         1 for f in findings
-        if field(f, "matched_vuln_id") is None
-        and field(f, "matched_chain_id") is None
+        if not (field(f, "matched_vuln_ids", None) or [])
+        and not (field(f, "matched_chain_ids", None) or [])
         and int(field(f, "is_false_positive", 0) or 0) == 0
         and int(field(f, "is_ignored", 0) or 0) == 0
     )
@@ -273,15 +273,18 @@ def compute_metrics(
     vuln_severity = {
         field(v, "id"): str(field(v, "severity", "") or "").strip().lower() for v in vulns
     }
+    # A finding matching several vulns reports one severity, which is compared
+    # against each of them — still an OR per vuln, so a multi-vuln finding is
+    # not penalised per member.
     reported_by_vuln: dict = {}
     for f in findings:
-        vid = field(f, "matched_vuln_id")
-        if vid not in in_scope_matched:
-            continue
         f_sev = str(field(f, "severity", "") or "").strip().lower()
         if not f_sev:
             continue
-        reported_by_vuln.setdefault(vid, set()).add(f_sev)
+        for vid in (field(f, "matched_vuln_ids", None) or []):
+            if vid not in in_scope_matched:
+                continue
+            reported_by_vuln.setdefault(vid, set()).add(f_sev)
 
     severity_checked = tp
     severity_correct = sum(
@@ -313,15 +316,15 @@ def compute_metrics(
         for v in vulns
     }
 
-    # A finding matched DIRECTLY to a chain (matched_chain_id) is automatic,
-    # first-class evidence — the scanner's own report contained one finding
-    # that itself named/narrated the chain, exactly the "clearly identified
-    # as a separate finding that references the others" case. This does not
-    # require every member to also show up as its own separate finding.
+    # A finding matched DIRECTLY to a chain is automatic, first-class
+    # evidence — the scanner's own report contained one finding that itself
+    # named/narrated the chain, exactly the "clearly identified as a separate
+    # finding that references the others" case. This does not require every
+    # member to also show up as its own separate finding; since migration 040
+    # that same finding can additionally credit the members it explicitly
+    # demonstrates, which is a separate assertion, not an inference from this.
     chain_direct_matches = {
-        field(f, "matched_chain_id")
-        for f in findings
-        if field(f, "matched_chain_id") is not None
+        cid for f in findings for cid in (field(f, "matched_chain_ids", None) or [])
     }
 
     credit_by_chain = {}

@@ -141,7 +141,7 @@ async def test_match_finding_new_match(db):
     scan_id = await submit(db, app_id, [{"vuln_type": "Other", "title": "Path Traversal in Export"}])
     finding_id = await first_finding_id(db, scan_id)
 
-    await scans_service.match_finding(db, ADMIN, scan_id, finding_id, vuln_id)
+    await scans_service.match_finding(db, ADMIN, scan_id, finding_id, [vuln_id], [])
 
     entries = await audit_service.list_audit_events(db, scan_id=scan_id)
     assert len(entries) == 1
@@ -157,8 +157,8 @@ async def test_match_finding_changed_match(db):
     scan_id = await submit(db, app_id, [{"vuln_type": "Other", "title": "F"}])
     finding_id = await first_finding_id(db, scan_id)
 
-    await scans_service.match_finding(db, ADMIN, scan_id, finding_id, vuln_a)
-    await scans_service.match_finding(db, ADMIN, scan_id, finding_id, vuln_b)
+    await scans_service.match_finding(db, ADMIN, scan_id, finding_id, [vuln_a], [])
+    await scans_service.match_finding(db, ADMIN, scan_id, finding_id, [vuln_b], [])
 
     entries = await audit_service.list_audit_events(db, scan_id=scan_id)
     assert len(entries) == 2
@@ -173,8 +173,8 @@ async def test_match_finding_unmatch(db):
     scan_id = await submit(db, app_id, [{"vuln_type": "Other", "title": "F"}])
     finding_id = await first_finding_id(db, scan_id)
 
-    await scans_service.match_finding(db, ADMIN, scan_id, finding_id, vuln_id)
-    await scans_service.match_finding(db, ADMIN, scan_id, finding_id, None)
+    await scans_service.match_finding(db, ADMIN, scan_id, finding_id, [vuln_id], [])
+    await scans_service.match_finding(db, ADMIN, scan_id, finding_id, [], [])
 
     entries = await audit_service.list_audit_events(db, scan_id=scan_id)
     assert len(entries) == 2

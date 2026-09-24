@@ -415,9 +415,13 @@ async def test_22_ignore_finding_roundtrip(transport, auth_headers):
 
         before = (await client.get(f"/api/scans/{sid}", headers=auth_headers)).json()
         m0 = before["metrics"]
+        # Pending == no matches at all. Findings carry match LISTS since
+        # migration 040; reading the old scalar key here silently matched
+        # every finding, so this picked an already-matched one and ignoring it
+        # did not move the pending count.
         fid = next(f["id"] for f in before["findings"]
-                   if not f.get("matched_vuln_id") and not f.get("is_false_positive")
-                   and not f.get("is_ignored"))
+                   if not f.get("matched_vuln_ids") and not f.get("matched_chain_ids")
+                   and not f.get("is_false_positive") and not f.get("is_ignored"))
 
         # Ignore it
         r = await client.post(f"/api/scans/{sid}/findings/{fid}/ignore",
@@ -618,3 +622,50 @@ async def test_28_version_endpoint(transport):
     assert r.status_code == 200, r.text
     assert r.json()["version"].startswith("v")
     print(f"  PASS: GET /api/version -> {r.status_code}, {r.json()['version']}")
+
+
+@pytest.mark.asyncio
+async def test_29_match_accepts_both_list_and_legacy_bodies(transport, auth_headers):
+    """The match endpoint takes {vuln_ids, chain_ids} as a full replacement, and
+    still honours the legacy single-value {vuln_id} body — a stale copy of the
+    importer outside this repo keeps sending it. Self-reverts."""
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        scans = (await client.get("/api/scans", headers=auth_headers)).json()["scans"]
+        sid = next((s["id"] for s in scans if (s.get("pending_count") or 0) > 0), None)
+        if sid is None:
+            import pytest
+            pytest.skip("no scan with a pending finding")
+
+        detail = (await client.get(f"/api/scans/{sid}", headers=auth_headers)).json()
+        fid = next(f["id"] for f in detail["findings"]
+                   if not f.get("matched_vuln_ids") and not f.get("matched_chain_ids")
+                   and not f.get("is_false_positive") and not f.get("is_ignored"))
+        vulns = detail["known_vulns"]
+        if len(vulns) < 2:
+            import pytest
+            pytest.skip("need two known vulns")
+        a, b = vulns[0]["id"], vulns[1]["id"]
+
+        try:
+            # Legacy single-value body still works.
+            r = await client.post(f"/api/scans/{sid}/findings/{fid}/match",
+                                  json={"vuln_id": a}, headers=auth_headers)
+            assert r.status_code == 200, r.text
+            assert r.json()["matched_vuln_ids"] == [a]
+            assert r.json()["matched_vuln_id"] == a       # legacy scalar echoed back
+
+            # List body credits several at once.
+            r = await client.post(f"/api/scans/{sid}/findings/{fid}/match",
+                                  json={"vuln_ids": [a, b]}, headers=auth_headers)
+            assert r.status_code == 200, r.text
+            assert sorted(r.json()["matched_vuln_ids"]) == sorted([a, b])
+
+            # Both legacy keys at once is still a 400.
+            r = await client.post(f"/api/scans/{sid}/findings/{fid}/match",
+                                  json={"vuln_id": a, "chain_id": 1}, headers=auth_headers)
+            assert r.status_code == 400, r.text
+        finally:
+            r = await client.post(f"/api/scans/{sid}/findings/{fid}/match",
+                                  json={"vuln_ids": [], "chain_ids": []}, headers=auth_headers)
+            assert r.status_code == 200, r.text
+    print("  PASS: match endpoint accepts list and legacy bodies")

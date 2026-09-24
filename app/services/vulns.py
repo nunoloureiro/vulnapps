@@ -7,6 +7,7 @@ from app.dependencies import get_team_role
 from app.visibility import app_visibility_filter
 from app import scoring
 from app.services import audit as audit_service
+from app.services import finding_matches
 from app.services import scoring as scoring_service
 
 
@@ -481,10 +482,7 @@ async def delete_vuln(db, user, app_id: int, vuln_id: int) -> None:
     app = await _get_visible_app(db, user, app_id)
     await _require_app_write(db, user, app)
 
-    cursor = await db.execute(
-        "SELECT COUNT(*) AS c FROM scan_findings WHERE matched_vuln_id = ?", (vuln_id,)
-    )
-    matched = (await cursor.fetchone())["c"]
+    matched = await finding_matches.count_findings_for_vuln(db, vuln_id)
     if matched:
         raise ValueError(
             f"This vulnerability is matched by {matched} scan finding(s) and cannot be "

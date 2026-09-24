@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.visibility import app_visibility_filter, scan_visibility_filter
+from app.services import finding_matches
 
 
 # Label family taxonomy. Mirrors the conventions documented in
@@ -235,7 +236,7 @@ async def get_dashboard(
         f"SELECT * FROM scan_findings WHERE scan_id IN ({scan_placeholders})",
         scan_ids,
     )
-    all_findings = await cursor.fetchall()
+    all_findings = await finding_matches.attach(db, await cursor.fetchall())
 
     # Group findings by scan_id
     findings_by_scan: dict[int, list] = {}
@@ -261,7 +262,7 @@ async def get_dashboard(
         scanner_name = group_key[0]
         mode_value = group_key[1] if grouping else None
         # Collect all matched vuln ids across all scans for this scanner
-        # keyed by (app_id, matched_vuln_id)
+        # keyed by (app_id, vuln_id)
         tp_pairs: set[tuple[int, int]] = set()
         fp_count = 0
         total_cost = 0.0
@@ -282,7 +283,9 @@ async def get_dashboard(
             app_vulns = vulns_by_app.get(aid, [])
             app_vuln_ids = {v["id"] for v in app_vulns}
 
-            # TP: unique (app_id, matched_vuln_id) where matched to an in-scope vuln
+            # TP: unique (app_id, vuln) pairs matched to an in-scope vuln. One
+            # finding can match several vulns (migration 040), so this iterates
+            # its match list rather than a single id.
             scan_matched = set()
             # FPs are clustered the same way TPs are, so both sides of precision
             # are counted at one granularity: distinct fp_group within the scan,
@@ -291,9 +294,10 @@ async def get_dashboard(
             fp_groups: set = set()
             ungrouped_fp = 0
             for f in findings:
-                if f["matched_vuln_id"] is not None and f["matched_vuln_id"] in app_vuln_ids:
-                    tp_pairs.add((aid, f["matched_vuln_id"]))
-                    scan_matched.add(f["matched_vuln_id"])
+                for vid in f["matched_vuln_ids"]:
+                    if vid in app_vuln_ids:
+                        tp_pairs.add((aid, vid))
+                        scan_matched.add(vid)
                 if f["is_false_positive"] == 1:
                     group = (f["fp_group"] or "").strip().lower()
                     if group:

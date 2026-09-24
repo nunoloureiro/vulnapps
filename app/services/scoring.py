@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from app import scoring
 from app.scoring import compute_metrics
+from app.services import finding_matches
 
 
 VALID_REASONS = (
@@ -168,8 +169,14 @@ async def fetch_chains_in_scope(db, app_id: int, revision: int,
 
 
 async def fetch_findings(db, scan_id: int) -> list:
+    """Findings for *scan_id*, each with its match lists attached.
+
+    This is the chokepoint for every scoring path, so hydrating here is what
+    lets compute_metrics and the comparison matrix read
+    ``matched_vuln_ids``/``matched_chain_ids`` without issuing their own SQL.
+    """
     cursor = await db.execute("SELECT * FROM scan_findings WHERE scan_id = ?", (scan_id,))
-    return await cursor.fetchall()
+    return await finding_matches.attach(db, await cursor.fetchall())
 
 
 # ---------------------------------------------------------------------------

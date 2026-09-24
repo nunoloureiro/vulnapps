@@ -73,7 +73,7 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
   const matchedIds = new Set(metrics.matched_vuln_ids || []);
   const creditByChain = metrics.credit_by_chain || {};
   const directMatchChainIds = new Set(
-    findings.filter(f => f.matched_chain_id != null).map(f => f.matched_chain_id)
+    findings.flatMap(f => f.matched_chain_ids || [])
   );
 
   const toggle = async (chain, credited) => {
@@ -537,17 +537,37 @@ function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpda
     });
   };
 
-  // The dropdown's value encodes which kind of thing is selected: "v:123"
-  // for a vuln id, "c:456" for a chain id (matching a finding directly to a
-  // chain — see app/scoring.py::compute_metrics — is first-class evidence
-  // the chain was demonstrated, same trust level as a vuln match), or ""
-  // to clear the match.
-  const matchFinding = async (findingId, encodedValue) => {
-    let vuln_id = null, chain_id = null;
-    if (encodedValue.startsWith('v:')) vuln_id = parseInt(encodedValue.slice(2));
-    else if (encodedValue.startsWith('c:')) chain_id = parseInt(encodedValue.slice(2));
-    await api.post(`/scans/${scanId}/findings/${findingId}/match`, { vuln_id, chain_id });
+  // A finding can match several vulns and/or chains at once (migration 040):
+  // one file read can prove both an access bug and that the file it read holds
+  // a hardcoded secret, and one finding that walks a chain end to end can
+  // credit the chain AND each member it used. Matching a finding directly to a
+  // chain — see app/scoring.py::compute_metrics — is first-class evidence the
+  // chain was demonstrated, same trust level as a vuln match.
+  //
+  // The endpoint takes the complete set, so these send the whole list.
+  const setMatches = async (findingId, vuln_ids, chain_ids) => {
+    await api.post(`/scans/${scanId}/findings/${findingId}/match`, { vuln_ids, chain_ids });
     onUpdate();
+  };
+
+  // The add-dropdown encodes what was picked: "v:123" a vuln, "c:456" a chain.
+  const addMatch = async (f, encodedValue) => {
+    if (!encodedValue) return;
+    const vulnIds = [...(f.matched_vuln_ids || [])];
+    const chainIds = [...(f.matched_chain_ids || [])];
+    const id = parseInt(encodedValue.slice(2));
+    if (encodedValue.startsWith('v:')) {
+      if (!vulnIds.includes(id)) vulnIds.push(id);
+    } else if (encodedValue.startsWith('c:')) {
+      if (!chainIds.includes(id)) chainIds.push(id);
+    }
+    await setMatches(f.id, vulnIds, chainIds);
+  };
+
+  const removeMatch = async (f, kind, id) => {
+    const vulnIds = (f.matched_vuln_ids || []).filter(v => kind !== 'v' || v !== id);
+    const chainIds = (f.matched_chain_ids || []).filter(c => kind !== 'c' || c !== id);
+    await setMatches(f.id, vulnIds, chainIds);
   };
 
   const markFP = async (findingId) => {
@@ -627,10 +647,19 @@ function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpda
                 {findings.map(f => {
                   const location = f.url || f.filename || '-';
                   const locationDisplay = f.http_method ? `${f.http_method} ${location}` : location;
-                  const matchedVuln = f.matched_vuln_id ? knownVulns.find(v => v.id === f.matched_vuln_id) : null;
-                  const matchedChain = f.matched_chain_id ? chains.find(c => c.id === f.matched_chain_id) : null;
-                  const severityMismatch = !!(f.severity && matchedVuln?.severity &&
-                    f.severity.toLowerCase() !== matchedVuln.severity.toLowerCase());
+                  const matchedVulns = (f.matched_vuln_ids || [])
+                    .map(id => knownVulns.find(v => v.id === id)).filter(Boolean);
+                  const matchedChains = (f.matched_chain_ids || [])
+                    .map(id => chains.find(c => c.id === id)).filter(Boolean);
+                  const hasMatch = matchedVulns.length > 0 || matchedChains.length > 0;
+                  // Severity is compared against the heaviest matched vuln: a
+                  // finding reports one severity, so with several matches the
+                  // most impactful one is what it should have been rated for.
+                  const severityVuln = matchedVulns
+                    .slice()
+                    .sort((a, b) => (b.impact_weight || 0) - (a.impact_weight || 0))[0] || null;
+                  const severityMismatch = !!(f.severity && severityVuln?.severity &&
+                    f.severity.toLowerCase() !== severityVuln.severity.toLowerCase());
                   const hasDetails = !!(f.title || f.severity || f.description || f.poc || f.remediation || f.code_location);
                   const isExpanded = expanded.has(f.id);
                   return (
@@ -663,44 +692,65 @@ function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpda
                       )}
                     </td>
                     <td data-label="Status">
-                      {f.matched_vuln_id || f.matched_chain_id ? <Badge severity="low">TP</Badge> :
+                      {hasMatch ? <Badge severity="low">TP</Badge> :
                        f.is_false_positive ? <Badge severity="critical">FP</Badge> :
                        f.is_ignored ? <Badge severity="ignored">Ignored</Badge> :
                        <Badge severity="pending">Pending</Badge>}
                     </td>
                     <td data-label="Matched Vuln">
-                      {canEdit ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <select className="form-select" style={{ width: 'auto', padding: '2px 4px', fontSize: '0.8rem', flex: 1 }}
-                            value={f.matched_vuln_id ? `v:${f.matched_vuln_id}` : f.matched_chain_id ? `c:${f.matched_chain_id}` : ''}
-                            onChange={e => matchFinding(f.id, e.target.value)}>
-                            <option value="">-- Unmapped --</option>
-                            {knownVulns.map(v => <option key={v.id} value={`v:${v.id}`}>{v.vuln_id} - {v.title}</option>)}
-                            {chains.length > 0 && (
-                              <optgroup label="Chains (this finding narrates the whole chain)">
-                                {chains.map(c => <option key={c.id} value={`c:${c.id}`}>⛓ {c.chain_id} - {c.title}</option>)}
-                              </optgroup>
-                            )}
-                          </select>
-                          {matchedVuln && (
-                            <Link className="fa-link" to={`/apps/${appId}/vulns/${matchedVuln.id}`} title="View vulnerability">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                            </Link>
-                          )}
+                      {/* Matches are additive: chips for what this finding is
+                          credited for, plus a picker that appends another. */}
+                      {hasMatch && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: canEdit ? 4 : 0 }}>
+                          {matchedVulns.map(v => (
+                            <span key={`v${v.id}`} className="badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                              <Link to={`/apps/${appId}/vulns/${v.id}`} title={v.title}>{v.vuln_id}</Link>
+                              {canEdit && (
+                                <button type="button" onClick={() => removeMatch(f, 'v', v.id)}
+                                  title={`Remove ${v.vuln_id}`}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
+                              )}
+                            </span>
+                          ))}
+                          {matchedChains.map(c => (
+                            <span key={`c${c.id}`} className="badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                              <span title={c.title}>⛓ {c.chain_id}</span>
+                              {canEdit && (
+                                <button type="button" onClick={() => removeMatch(f, 'c', c.id)}
+                                  title={`Remove ${c.chain_id}`}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
+                              )}
+                            </span>
+                          ))}
                         </div>
-                      ) : (
-                        matchedVuln ? <Link to={`/apps/${appId}/vulns/${matchedVuln.id}`}>{matchedVuln.vuln_id} - {matchedVuln.title}</Link> :
-                        matchedChain ? <span title={matchedChain.title}>⛓ {matchedChain.chain_id}</span> :
+                      )}
+                      {canEdit ? (
+                        <select className="form-select" style={{ width: 'auto', padding: '2px 4px', fontSize: '0.8rem' }}
+                          value=""
+                          onChange={e => addMatch(f, e.target.value)}>
+                          <option value="">{hasMatch ? '+ add another…' : '-- Unmapped --'}</option>
+                          {knownVulns
+                            .filter(v => !(f.matched_vuln_ids || []).includes(v.id))
+                            .map(v => <option key={v.id} value={`v:${v.id}`}>{v.vuln_id} - {v.title}</option>)}
+                          {chains.length > 0 && (
+                            <optgroup label="Chains (this finding narrates the whole chain)">
+                              {chains
+                                .filter(c => !(f.matched_chain_ids || []).includes(c.id))
+                                .map(c => <option key={c.id} value={`c:${c.id}`}>⛓ {c.chain_id} - {c.title}</option>)}
+                            </optgroup>
+                          )}
+                        </select>
+                      ) : (!hasMatch && (
                         f.is_false_positive ? <span className="text-muted">FP</span> :
                         f.is_ignored ? <span className="text-muted">Ignored</span> : <span className="text-muted">Unmapped</span>
-                      )}
-                      {matchedVuln && matchedVuln.severity && (
+                      ))}
+                      {severityVuln && severityVuln.severity && (
                         <div style={{ marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
                           <span style={severityMismatch ? { outline: '1px solid #f59e0b', borderRadius: 4 } : undefined}>
-                            <Badge severity={matchedVuln.severity.toLowerCase()} />
+                            <Badge severity={severityVuln.severity.toLowerCase()} />
                           </span>
                           {severityMismatch && (
-                            <span title={`Reported ${f.severity} vs ground truth ${matchedVuln.severity}`} style={{ color: '#f59e0b', cursor: 'help' }}>⚠</span>
+                            <span title={`Reported ${f.severity} vs ground truth ${severityVuln.severity}`} style={{ color: '#f59e0b', cursor: 'help' }}>⚠</span>
                           )}
                         </div>
                       )}
@@ -715,10 +765,10 @@ function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpda
                         {canEdit && !f.is_false_positive && (
                           <button className="fa-btn fa-fp" onClick={() => markFP(f.id)} title="Mark as False Positive"><IconFP />FP</button>
                         )}
-                        {canEdit && !f.matched_vuln_id && !f.matched_chain_id && !f.is_false_positive && !f.is_ignored && (
+                        {canEdit && !hasMatch && !f.is_false_positive && !f.is_ignored && (
                           <button className="fa-btn fa-ignore" onClick={() => setIgnored(f.id, true)} title="Ignore — real-ish but irrelevant here (excluded from metrics)"><IconIgnore />Ignore</button>
                         )}
-                        {canEdit && !f.matched_vuln_id && !f.matched_chain_id && (
+                        {canEdit && !hasMatch && (
                           <button className="fa-btn fa-promote"
                             onClick={() => openPromote(f)}
                             title={f.is_false_positive ? 'Promote FP to a real vulnerability' : 'Promote to known vulnerability'}>

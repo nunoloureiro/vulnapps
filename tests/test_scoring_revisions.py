@@ -14,6 +14,7 @@ import pytest
 import pytest_asyncio
 
 from app.database import run_migrations
+from app.services import finding_matches
 from app.services import scans as scans_service
 from app.services import scoring as scoring_service
 from app.services import vulns as vulns_service
@@ -125,7 +126,8 @@ async def test_promoted_prior_vuln_lowers_recall_on_an_older_scan(db):
          "severity": "critical"},
     ])
     cursor = await db.execute(
-        "SELECT id FROM scan_findings WHERE scan_id = ? AND matched_vuln_id IS NULL",
+        "SELECT id FROM scan_findings sf WHERE sf.scan_id = ? AND NOT EXISTS "
+        "(SELECT 1 FROM finding_matches fm WHERE fm.finding_id = sf.id)",
         (new_scan_id,),
     )
     finding_id = (await cursor.fetchone())["id"]
@@ -157,7 +159,8 @@ async def test_promoted_new_code_vuln_leaves_prior_scans_alone(db):
     new_scan_id = await submit(db, app_id, [{"vuln_type": "IDOR", "url": "/orders/1"}])
 
     cursor = await db.execute(
-        "SELECT id FROM scan_findings WHERE scan_id = ? AND matched_vuln_id IS NULL",
+        "SELECT id FROM scan_findings sf WHERE sf.scan_id = ? AND NOT EXISTS "
+        "(SELECT 1 FROM finding_matches fm WHERE fm.finding_id = sf.id)",
         (new_scan_id,),
     )
     finding_id = (await cursor.fetchone())["id"]
@@ -365,12 +368,12 @@ async def test_finding_severity_survives_a_match(db):
     }])
 
     cursor = await db.execute("SELECT * FROM scan_findings WHERE scan_id = ?", (scan_id,))
-    finding = await cursor.fetchone()
-    assert finding["matched_vuln_id"] == vuln_id     # it matched...
+    finding = (await finding_matches.attach(db, await cursor.fetchall()))[0]
+    assert finding["matched_vuln_ids"] == [vuln_id]   # it matched...
     assert finding["severity"] == "low"              # ...and kept what the tool said
 
     # Re-matching by hand must not rewrite it either.
-    await scans_service.match_finding(db, ADMIN, scan_id, finding["id"], vuln_id)
+    await scans_service.match_finding(db, ADMIN, scan_id, finding["id"], [vuln_id], [])
     cursor = await db.execute("SELECT severity FROM scan_findings WHERE id = ?", (finding["id"],))
     assert (await cursor.fetchone())["severity"] == "low"
 

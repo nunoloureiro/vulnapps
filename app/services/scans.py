@@ -12,6 +12,7 @@ from app.visibility import scan_visibility_filter
 from app.dependencies import get_team_role
 from app import scoring
 from app.services import audit as audit_service
+from app.services import finding_matches
 from app.services import scoring as scoring_service
 
 
@@ -185,11 +186,17 @@ async def list_scans(
     # to leave it blank for matched findings) still contributes through the
     # severity carried on the matched vulnerability. FP findings are
     # excluded — the user explicitly marked them as not-real.
+    # A finding can match several vulns (migration 040), so the vuln-severity
+    # fallback takes the highest-weighted matched vuln rather than "the" one.
     sev_subquery = (
         "(SELECT COUNT(*) FROM scan_findings sf "
-        "LEFT JOIN vulnerabilities v ON v.id = sf.matched_vuln_id "
         "WHERE sf.scan_id = scans.id AND sf.is_false_positive = 0 AND sf.is_ignored = 0 "
-        "AND lower(COALESCE(NULLIF(sf.severity, ''), v.severity)) = ?)"
+        "AND lower(COALESCE(NULLIF(sf.severity, ''), ("
+        "  SELECT v.severity FROM finding_matches fm "
+        "  JOIN vulnerabilities v ON v.id = fm.vuln_id "
+        "  WHERE fm.finding_id = sf.id AND fm.vuln_id IS NOT NULL "
+        "  ORDER BY v.impact_weight DESC LIMIT 1"
+        "))) = ?)"
     )
 
     # The list view is a "current" view: scoped to the app's latest revision,
@@ -198,8 +205,9 @@ async def list_scans(
     # the CLUSTERED count — distinct fp_group values plus one per ungrouped FP —
     # so TP and FP are finally counted at the same granularity.
     tp_subquery = (
-        "(SELECT COUNT(DISTINCT sf.matched_vuln_id) FROM scan_findings sf "
-        "JOIN vulnerabilities v ON v.id = sf.matched_vuln_id "
+        "(SELECT COUNT(DISTINCT fm.vuln_id) FROM scan_findings sf "
+        "JOIN finding_matches fm ON fm.finding_id = sf.id "
+        "JOIN vulnerabilities v ON v.id = fm.vuln_id "
         "WHERE sf.scan_id = scans.id AND v.invalidated_at_revision IS NULL)"
     )
     base_query = f"""SELECT scans.*, apps.name as app_name, apps.version as app_version,
@@ -209,7 +217,9 @@ async def list_scans(
                        SELECT DISTINCT COALESCE(NULLIF(fp_group, ''), 'ungrouped:' || id) AS g
                        FROM scan_findings WHERE scan_id=scans.id AND is_false_positive=1
                    )) as fp_count,
-                  (SELECT COUNT(*) FROM scan_findings WHERE scan_id=scans.id AND matched_vuln_id IS NULL AND is_false_positive=0 AND is_ignored=0) as pending_count,
+                  (SELECT COUNT(*) FROM scan_findings sf WHERE sf.scan_id=scans.id
+                       AND NOT EXISTS (SELECT 1 FROM finding_matches fm WHERE fm.finding_id = sf.id)
+                       AND sf.is_false_positive=0 AND sf.is_ignored=0) as pending_count,
                   ((SELECT COUNT(*) FROM vulnerabilities WHERE app_id = scans.app_id AND invalidated_at_revision IS NULL)
                    - {tp_subquery}) as fn_count,
                   {sev_subquery} as sev_critical,
@@ -353,18 +363,17 @@ async def get_scan(db, user, scan_id: int) -> dict:
 
     # Finding counts per matched vuln (for duplicate indicator)
     vuln_finding_counts = dict(
-        Counter(f["matched_vuln_id"] for f in findings if f["matched_vuln_id"] is not None)
+        Counter(vid for f in findings for vid in f["matched_vuln_ids"])
     )
 
     # Finding descriptions per matched vuln (for tooltips)
     vuln_finding_details: dict[int, list[str]] = {}
     for f in findings:
-        vid = f["matched_vuln_id"]
-        if vid is not None:
-            lbl = f["vuln_type"] or ""
-            loc = f["url"] or f["filename"] or ""
-            if loc:
-                lbl = f"{lbl}: {loc}"
+        lbl = f["vuln_type"] or ""
+        loc = f["url"] or f["filename"] or ""
+        if loc:
+            lbl = f"{lbl}: {loc}"
+        for vid in f["matched_vuln_ids"]:
             vuln_finding_details.setdefault(vid, []).append(lbl)
 
     # Edit / cost permissions
@@ -479,10 +488,10 @@ async def submit_scan(
         cursor = await db.execute(
             """INSERT INTO scan_findings
                (scan_id, vuln_type, http_method, url, parameter, filename,
-                matched_vuln_id, is_false_positive, fp_group,
+                is_false_positive, fp_group,
                 title, severity, description, poc, remediation, code_location,
                 reasoning)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 scan_id,
                 f.get("vuln_type", ""),
@@ -490,7 +499,6 @@ async def submit_scan(
                 f.get("url", ""),
                 f.get("parameter", ""),
                 f.get("filename", ""),
-                matched_vuln_id,
                 is_false_positive,
                 fp_group,
                 f.get("title"),
@@ -502,6 +510,10 @@ async def submit_scan(
                 f.get("reasoning"),
             ),
         )
+        # The heuristic matcher proposes at most one vuln; the importer's LLM
+        # corrections that follow submission are what add any further matches.
+        if matched_vuln_id is not None:
+            await finding_matches.replace(db, cursor.lastrowid, [matched_vuln_id], [])
 
     # Apply labels. Anyone with scan-write access can attach an existing
     # label; creating a brand-new label name is further restricted to
@@ -592,115 +604,137 @@ async def update_scan(db, user, scan_id: int, updates: dict) -> dict:
     return dict(await cursor.fetchone())
 
 
-async def match_finding(db, user, scan_id: int, finding_id: int, vuln_id, chain_id=None) -> dict:
-    """Manually match a finding to a vuln, OR to a chain, or clear the match.
+async def match_finding(db, user, scan_id: int, finding_id: int, vuln_ids, chain_ids) -> dict:
+    """Set a finding's matches to exactly *vuln_ids* plus *chain_ids*.
 
-    *vuln_id* and *chain_id* are mutually exclusive — a finding matches one
-    thing. Matching to a *chain_id* directly is first-class evidence the
-    chain was demonstrated (see app/scoring.py::compute_metrics): this is
-    for the case where the scanner's own report contains one finding that
-    itself narrates combining >=2 of the chain's members, as opposed to two
-    separate findings that each independently match one member with no
-    connection between them.
+    A finding can demonstrate several things at once (migration 040): a chain
+    plus the members it walks through, or a single file read that proves both
+    a traversal bug and a hardcoded secret. Passing two empty lists clears the
+    finding back to pending.
 
-    The supplied vuln/chain must belong to the same app as the scan —
-    otherwise the finding row would reference ground truth the caller may
-    not be allowed to read, leaking cross-tenant data (vuln-0004).
+    Matching to a chain is first-class evidence the chain was demonstrated
+    (see app/scoring.py::compute_metrics) — the scanner's own report contained
+    one finding narrating >=2 members combining, as opposed to two unrelated
+    findings that each match one member. Crediting those members alongside it
+    is a separate assertion the caller makes explicitly; it is never inferred
+    from the chain match here.
 
-    Returns {ok, matched_vuln_id, matched_chain_id, is_false_positive}.
+    Every supplied vuln/chain must belong to the same app as the scan —
+    otherwise the row would reference ground truth the caller may not be
+    allowed to read, leaking cross-tenant data (vuln-0004).
+
+    Returns {ok, matched_vuln_ids, matched_chain_ids, is_false_positive}.
     """
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
-    if vuln_id is not None and chain_id is not None:
-        raise ValueError("A finding can match a vuln or a chain, not both")
+    def _as_ids(values, label):
+        out = []
+        for v in values or []:
+            try:
+                out.append(int(v))
+            except (TypeError, ValueError):
+                raise ValueError(f"{label} must be integers")
+        return list(dict.fromkeys(out))
+
+    new_vuln_ids = _as_ids(vuln_ids, "vuln_ids")
+    new_chain_ids = _as_ids(chain_ids, "chain_ids")
 
     cursor = await db.execute(
-        "SELECT id, title, vuln_type, matched_vuln_id, matched_chain_id FROM scan_findings WHERE id = ? AND scan_id = ?",
+        "SELECT id, title, vuln_type FROM scan_findings WHERE id = ? AND scan_id = ?",
         (finding_id, scan_id),
     )
     finding = await cursor.fetchone()
     if not finding:
         raise ValueError("Finding not found")
     finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
-    old_vuln_id = finding["matched_vuln_id"]
-    old_chain_id = finding["matched_chain_id"]
 
-    new_label = None
-    matched_vuln_id = None
-    matched_chain_id = None
-    if vuln_id is not None:
-        try:
-            matched_vuln_id = int(vuln_id)
-        except (TypeError, ValueError):
-            raise ValueError("vuln_id must be an integer")
+    existing = (await finding_matches.load(db, [finding_id]))[finding_id]
+    old_vuln_ids, old_chain_ids = existing["vuln_ids"], existing["chain_ids"]
+
+    # Resolve every target, both to validate app ownership and to build
+    # human-readable labels for the audit entry.
+    labels: dict[tuple[str, int], str] = {}
+    for vid in new_vuln_ids:
         cursor = await db.execute(
-            "SELECT app_id, vuln_id FROM vulnerabilities WHERE id = ?", (matched_vuln_id,)
+            "SELECT app_id, vuln_id FROM vulnerabilities WHERE id = ?", (vid,)
         )
         row = await cursor.fetchone()
         if not row or row["app_id"] != scan["app_id"]:
             raise ValueError("Vulnerability not found")
-        new_label = row["vuln_id"]
-    elif chain_id is not None:
-        try:
-            matched_chain_id = int(chain_id)
-        except (TypeError, ValueError):
-            raise ValueError("chain_id must be an integer")
+        labels[("vuln", vid)] = row["vuln_id"]
+    for cid in new_chain_ids:
         cursor = await db.execute(
-            "SELECT app_id, chain_id FROM chains WHERE id = ?", (matched_chain_id,)
+            "SELECT app_id, chain_id FROM chains WHERE id = ?", (cid,)
         )
         row = await cursor.fetchone()
         if not row or row["app_id"] != scan["app_id"]:
             raise ValueError("Chain not found")
-        new_label = row["chain_id"]
-    is_false_positive = 0
+        labels[("chain", cid)] = row["chain_id"]
 
+    is_false_positive = 0
+    await finding_matches.replace(db, finding_id, new_vuln_ids, new_chain_ids)
     # Matching (or clearing) a finding also lifts any "ignored" flag — the
     # states are mutually exclusive.
     await db.execute(
-        "UPDATE scan_findings SET matched_vuln_id = ?, matched_chain_id = ?, is_false_positive = ?, "
-        "is_ignored = 0, fp_group = NULL WHERE id = ? AND scan_id = ?",
-        (matched_vuln_id, matched_chain_id, is_false_positive, finding_id, scan_id),
+        "UPDATE scan_findings SET is_false_positive = ?, is_ignored = 0, fp_group = NULL "
+        "WHERE id = ? AND scan_id = ?",
+        (is_false_positive, finding_id, scan_id),
     )
 
-    if matched_vuln_id != old_vuln_id or matched_chain_id != old_chain_id:
-        if matched_vuln_id is None and matched_chain_id is None:
-            old_label = None
-            if old_vuln_id is not None:
+    if set(new_vuln_ids) != set(old_vuln_ids) or set(new_chain_ids) != set(old_chain_ids):
+        new_labels = ", ".join(
+            [labels[("vuln", v)] for v in new_vuln_ids]
+            + [labels[("chain", c)] for c in new_chain_ids]
+        )
+        if not new_vuln_ids and not new_chain_ids:
+            # Name what was dropped: the whole point of the entry is being able
+            # to see later what the mapping used to be.
+            old_labels = []
+            for vid in old_vuln_ids:
                 cursor = await db.execute(
-                    "SELECT vuln_id FROM vulnerabilities WHERE id = ?", (old_vuln_id,)
+                    "SELECT vuln_id FROM vulnerabilities WHERE id = ?", (vid,)
                 )
-                old_row = await cursor.fetchone()
-                old_label = old_row["vuln_id"] if old_row else None
-            elif old_chain_id is not None:
+                row = await cursor.fetchone()
+                if row:
+                    old_labels.append(row["vuln_id"])
+            for cid in old_chain_ids:
                 cursor = await db.execute(
-                    "SELECT chain_id FROM chains WHERE id = ?", (old_chain_id,)
+                    "SELECT chain_id FROM chains WHERE id = ?", (cid,)
                 )
-                old_row = await cursor.fetchone()
-                old_label = old_row["chain_id"] if old_row else None
+                row = await cursor.fetchone()
+                if row:
+                    old_labels.append(row["chain_id"])
             message = f"{user['name']} removed the mapping of \"{finding_label}\""
-            if old_label:
-                message += f" (was {old_label})"
+            if old_labels:
+                message += f" (was {', '.join(old_labels)})"
             action = "finding_unmatched"
-        elif old_vuln_id is None and old_chain_id is None:
-            message = f"{user['name']} matched \"{finding_label}\" to {new_label}"
+        elif not old_vuln_ids and not old_chain_ids:
+            message = f"{user['name']} matched \"{finding_label}\" to {new_labels}"
             action = "finding_matched"
         else:
-            message = f"{user['name']} changed the mapping of \"{finding_label}\" to {new_label}"
+            message = (
+                f"{user['name']} changed the mapping of \"{finding_label}\" to {new_labels}"
+            )
             action = "finding_matched"
         await audit_service.record_audit_event(
             db, entity_type="scan_finding", action=action, actor=user, message=message,
             entity_id=finding_id, scan_id=scan_id,
             details={
-                "old_vuln_id": old_vuln_id, "new_vuln_id": matched_vuln_id,
-                "old_chain_id": old_chain_id, "new_chain_id": matched_chain_id,
+                "old_vuln_ids": old_vuln_ids, "new_vuln_ids": new_vuln_ids,
+                "old_chain_ids": old_chain_ids, "new_chain_ids": new_chain_ids,
             },
         )
 
     await db.commit()
 
     return {
-        "ok": True, "matched_vuln_id": matched_vuln_id, "matched_chain_id": matched_chain_id,
+        "ok": True,
+        "matched_vuln_ids": new_vuln_ids, "matched_chain_ids": new_chain_ids,
+        # Scalars for older clients (a stale copy of the importer lives in the
+        # ai-pentest-agent repo); they see the first of each.
+        "matched_vuln_id": new_vuln_ids[0] if new_vuln_ids else None,
+        "matched_chain_id": new_chain_ids[0] if new_chain_ids else None,
         "is_false_positive": is_false_positive,
     }
 
@@ -724,8 +758,9 @@ async def mark_finding_fp(db, user, scan_id: int, finding_id: int, fp_group=None
     finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
 
     group = (fp_group or "").strip() or None
+    await finding_matches.clear(db, finding_id)
     await db.execute(
-        "UPDATE scan_findings SET matched_vuln_id = NULL, is_false_positive = 1, is_ignored = 0, fp_group = ? WHERE id = ? AND scan_id = ?",
+        "UPDATE scan_findings SET is_false_positive = 1, is_ignored = 0, fp_group = ? WHERE id = ? AND scan_id = ?",
         (group, finding_id, scan_id),
     )
     await audit_service.record_audit_event(
@@ -765,11 +800,7 @@ async def confirm_chain_credit(db, user, scan_id: int, chain_pk: int, notes=None
         "SELECT vuln_id FROM chain_members WHERE chain_pk = ?", (chain_pk,)
     )
     member_ids = [row["vuln_id"] for row in await cursor.fetchall()]
-    cursor = await db.execute(
-        "SELECT DISTINCT matched_vuln_id FROM scan_findings WHERE scan_id = ? AND matched_vuln_id IS NOT NULL",
-        (scan_id,),
-    )
-    matched_ids = {row["matched_vuln_id"] for row in await cursor.fetchall()}
+    matched_ids = await finding_matches.matched_vuln_ids_for_scan(db, scan_id)
     if not member_ids or not all(vid in matched_ids for vid in member_ids):
         raise ValueError(
             "Not every member of this chain is matched by this scan — nothing to confirm"
@@ -838,8 +869,9 @@ async def set_finding_ignored(db, user, scan_id: int, finding_id: int, ignored: 
     finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
 
     if ignored:
+        await finding_matches.clear(db, finding_id)
         await db.execute(
-            "UPDATE scan_findings SET is_ignored = 1, matched_vuln_id = NULL, is_false_positive = 0, fp_group = NULL WHERE id = ? AND scan_id = ?",
+            "UPDATE scan_findings SET is_ignored = 1, is_false_positive = 0, fp_group = NULL WHERE id = ? AND scan_id = ?",
             (finding_id, scan_id),
         )
         message = f"{user['name']} marked \"{finding_label}\" as ignored"
@@ -982,9 +1014,10 @@ async def promote_finding(
     )
     new_vuln_id = cursor.lastrowid
 
+    await finding_matches.replace(db, finding_id, [new_vuln_id], [])
     await db.execute(
-        "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = 0, is_ignored = 0, fp_group = NULL WHERE id = ?",
-        (new_vuln_id, finding_id),
+        "UPDATE scan_findings SET is_false_positive = 0, is_ignored = 0, fp_group = NULL WHERE id = ?",
+        (finding_id,),
     )
 
     finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
@@ -1028,7 +1061,7 @@ async def rematch_scan(db, user, scan_id: int) -> dict:
     cursor = await db.execute(
         "SELECT * FROM scan_findings WHERE scan_id = ?", (scan_id,)
     )
-    findings = await cursor.fetchall()
+    findings = await finding_matches.attach(db, await cursor.fetchall())
 
     updated = 0
     for f in findings:
@@ -1045,10 +1078,21 @@ async def rematch_scan(db, user, scan_id: int) -> dict:
         }
         matched_vuln_id, is_false_positive = match_finding_algo(finding_dict, known_vulns)
 
-        if matched_vuln_id != f["matched_vuln_id"] or is_false_positive != f["is_false_positive"]:
+        old_vuln_ids = f["matched_vuln_ids"]
+        old_chain_ids = f["matched_chain_ids"]
+        new_vuln_ids = [matched_vuln_id] if matched_vuln_id is not None else []
+        # The heuristic only ever proposes one vuln and knows nothing about
+        # chains, so it must not flatten a richer hand-made or LLM-made match
+        # set back down to its own single guess.
+        would_lose_matches = len(old_vuln_ids) > 1 or bool(old_chain_ids)
+        if not would_lose_matches and (
+            set(new_vuln_ids) != set(old_vuln_ids)
+            or is_false_positive != f["is_false_positive"]
+        ):
+            await finding_matches.replace(db, f["id"], new_vuln_ids, [])
             await db.execute(
-                "UPDATE scan_findings SET matched_vuln_id = ?, is_false_positive = ? WHERE id = ?",
-                (matched_vuln_id, is_false_positive, f["id"]),
+                "UPDATE scan_findings SET is_false_positive = ? WHERE id = ?",
+                (is_false_positive, f["id"]),
             )
             updated += 1
 
@@ -1166,12 +1210,12 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
         # since the UI only needs match/mismatch, not the full set).
         severity_by_vuln: dict = {}
         for f in findings:
-            vid = f["matched_vuln_id"]
-            if vid is None or vid not in matched_ids:
-                continue
             f_sev = (f["severity"] or "").strip().lower()
-            if f_sev and vid not in severity_by_vuln:
-                severity_by_vuln[vid] = f_sev
+            if not f_sev:
+                continue
+            for vid in f["matched_vuln_ids"]:
+                if vid in matched_ids and vid not in severity_by_vuln:
+                    severity_by_vuln[vid] = f_sev
 
         # Short date: omit year if current year
         scan_date = scan["scan_date"]

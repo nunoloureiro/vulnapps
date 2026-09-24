@@ -125,21 +125,43 @@ async def delete_scan(request: Request, scan_id: int):
 
 @router.post("/{scan_id}/findings/{finding_id}/match")
 async def match_finding(request: Request, scan_id: int, finding_id: int):
-    """Match a finding to a vuln (``vuln_id``) or directly to a chain
-    (``chain_id``, mutually exclusive) — see
-    app/services/scans.py::match_finding for what a chain match means."""
+    """Set a finding's matches: ``{vuln_ids: [], chain_ids: []}``.
+
+    Full replacement, so sending both empty clears the finding back to
+    pending. A finding can match several vulns and/or chains at once — see
+    app/services/scans.py::match_finding.
+
+    The legacy single-value bodies (``{vuln_id: N}`` / ``{chain_id: N}``, with
+    ``null`` to clear) are still accepted: a stale copy of the importer lives
+    outside this repo and still sends them.
+    """
     user = await require_user(request)
     require_scope(user, "vuln-mapper")
     body = await request.json()
-    vuln_id = body.get("vuln_id")
-    chain_id = body.get("chain_id")
+    if "vuln_ids" in body or "chain_ids" in body:
+        vuln_ids = body.get("vuln_ids") or []
+        chain_ids = body.get("chain_ids") or []
+    else:
+        vuln_id = body.get("vuln_id")
+        chain_id = body.get("chain_id")
+        if vuln_id is not None and chain_id is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="A finding can match a vuln or a chain, not both",
+            )
+        vuln_ids = [vuln_id] if vuln_id is not None else []
+        chain_ids = [chain_id] if chain_id is not None else []
+    if not isinstance(vuln_ids, list) or not isinstance(chain_ids, list):
+        raise HTTPException(status_code=400, detail="vuln_ids/chain_ids must be lists")
 
     db = await get_connection()
     try:
-        result = await scans_service.match_finding(db, user, scan_id, finding_id, vuln_id, chain_id)
+        result = await scans_service.match_finding(
+            db, user, scan_id, finding_id, vuln_ids, chain_ids
+        )
     except ValueError as e:
         msg = str(e)
-        status = 400 if "not both" in msg or "must be an integer" in msg else 404
+        status = 400 if "must be integers" in msg else 404
         raise HTTPException(status_code=status, detail=msg)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))

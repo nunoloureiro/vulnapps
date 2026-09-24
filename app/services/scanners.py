@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.visibility import scan_visibility_filter
+from app.services import finding_matches
 from app.services.dashboard import get_dashboard
 
 
@@ -80,7 +81,7 @@ async def get_scanner_detail(db, user, name: str, app_id: str | None = None) -> 
         scan_ids,
     )
     findings_by_scan: dict[int, list] = {}
-    for f in await cursor.fetchall():
+    for f in await finding_matches.attach(db, await cursor.fetchall()):
         findings_by_scan.setdefault(f["scan_id"], []).append(f)
 
     app_placeholders = ",".join("?" * len(app_ids))
@@ -101,8 +102,9 @@ async def get_scanner_detail(db, user, name: str, app_id: str | None = None) -> 
         matched: set[int] = set()
         fp = 0
         for f in findings:
-            if f["matched_vuln_id"] is not None and f["matched_vuln_id"] in app_vuln_ids:
-                matched.add(f["matched_vuln_id"])
+            for vid in f["matched_vuln_ids"]:
+                if vid in app_vuln_ids:
+                    matched.add(vid)
             if f["is_false_positive"] == 1:
                 fp += 1
 
