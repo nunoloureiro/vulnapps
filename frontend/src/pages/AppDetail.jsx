@@ -284,7 +284,7 @@ export default function AppDetail() {
         </div>
       </div>
 
-      <GroundTruth appId={id} app={app} vulns={vulns} />
+      <GroundTruth appId={id} app={app} vulns={vulns} canEdit={can_edit} />
 
       {can_edit && importOpen && (
         <div className="card mb-2">
@@ -472,7 +472,7 @@ const REVISION_REASONS = {
 // Recall legitimately drops when a vuln that existed all along is documented —
 // what used to be wrong is that the change was invisible. Collapsed by default;
 // an app with a single revision has nothing to explain.
-function GroundTruth({ appId, app, vulns = [] }) {
+function GroundTruth({ appId, app, vulns = [], canEdit = false }) {
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(false);
 
@@ -492,6 +492,9 @@ function GroundTruth({ appId, app, vulns = [] }) {
   // curated corpus, and they block the benchmark export there: a corpus whose
   // tiers were never reviewed reports every flaw in it as commodity.
   const unreviewed = vulns.filter(v => !v.weight_verified).length;
+  const corpusTitle = isCorpus
+    ? 'Hand-curated corpus: eligible for benchmark export and configuration aggregation'
+    : 'Not a benchmark corpus — weights and tiers come from the severity backfill, so this app is excluded from benchmark exports';
 
   return (
     <div className="card mb-2">
@@ -501,12 +504,23 @@ function GroundTruth({ appId, app, vulns = [] }) {
           <span className="text-muted text-sm font-mono" style={{ marginLeft: 8 }}>
             revision {latest}
           </span>
-          <span className={`badge badge-${isCorpus ? 'low' : 'ignored'}`} style={{ marginLeft: 8 }}
-            title={isCorpus
-              ? 'Hand-curated corpus: eligible for benchmark export and configuration aggregation'
-              : 'Not a benchmark corpus — weights and tiers come from the severity backfill, so this app is excluded from benchmark exports'}>
-            {isCorpus ? 'benchmark corpus' : 'not curated'}
-          </span>
+          {/* The flag this badge reports is set two regions away, on the app
+              edit form. Anyone who can edit gets the badge itself as the link
+              to that checkbox, so the status and the switch are one control
+              rather than a state with no visible way to change it. `a:hover`
+              recolors it, which is the affordance hint. */}
+          {canEdit ? (
+            <Link to={'/apps/' + appId + '/edit'}
+              className={`badge badge-${isCorpus ? 'low' : 'ignored'}`} style={{ marginLeft: 8 }}
+              title={`${corpusTitle} — click to change it on the app edit form`}>
+              {isCorpus ? 'benchmark corpus' : 'not curated'}
+            </Link>
+          ) : (
+            <span className={`badge badge-${isCorpus ? 'low' : 'ignored'}`} style={{ marginLeft: 8 }}
+              title={corpusTitle}>
+              {isCorpus ? 'benchmark corpus' : 'not curated'}
+            </span>
+          )}
           {isCorpus && unreviewed > 0 && (
             <span className="badge badge-medium" style={{ marginLeft: 6 }}
               title="These carry the placeholder difficulty_tier from the backfill. The benchmark export refuses until they are reviewed.">
