@@ -119,7 +119,7 @@ conditional — under many-to-many nothing is being stolen, matches are additive
 
 ## Safety
 
-- [ ] Snapshot prod DB before 040 runs there. NOT done by hand — the deploy
+- [x] Snapshot prod DB before 040 runs there. NOT done by hand — the deploy
       pipeline takes its own snapshot before container replacement
       (aws/setup-ec2.sh), which is what will cover the real run. Verified
       locally instead: ran 040 against a copy of the live DB, 44 vuln matches
@@ -199,9 +199,14 @@ conditional — under many-to-many nothing is being stolen, matches are additive
 
 ## Verification
 
-- [x] Full suite green (186 passed). Deferred to after deploy: re-derive scan
-      330/331/332 metrics against prod, since the migration has only run on a
-      local copy so far.
+- [x] Full suite green (186 passed).
+- [x] Post-deploy check against prod (v1.171, run 36070042467). 040 applied:
+      the API serves matched_vuln_ids/matched_chain_ids as lists and the
+      scalar columns are gone. Backfill lost nothing — 330 tp45/fp5/pending0
+      (70 findings), 331 tp37/fp4/pending0 (44), 332 tp30/fp0/pending0 (32),
+      all unchanged from the pre-migration triage, and CODE-001 still reads
+      MATCHED on all three (the Detection Matrix gap that started this).
+      No finding carries >1 match yet, as expected: nothing has re-imported.
 - [x] Re-check catalog/vulnapps count reconciliation per the CLAUDE.md rule.
 
 # Open questions to discuss later
