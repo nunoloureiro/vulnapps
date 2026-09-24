@@ -1273,7 +1273,7 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
         "can_edit": can_edit,
         "revision": revision,
         "label": f"{app['name']}@rev{revision}",
-        "guards": _reporting_guards(scanners, revision),
+        "guards": _reporting_guards(scanners, revision, matrix),
     }
 
 
@@ -1281,7 +1281,7 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
 # Reporting guards
 # ---------------------------------------------------------------------------
 
-def _reporting_guards(scanners: list, revision: int) -> dict:
+def _reporting_guards(scanners: list, revision: int, matrix: list) -> dict:
     """Machine-readable warnings about the comparison the caller just asked for.
 
     Deliberately advisory, never blocking — hard-refusing an exploratory
@@ -1297,13 +1297,21 @@ def _reporting_guards(scanners: list, revision: int) -> dict:
         s["scan"]["id"] for s in scanners
         if not s["metrics"]["adjudication_complete"]
     ]
+    # Differing revision STAMPS are not on their own worth telling anyone about:
+    # what matters is whether any cell is actually out of scope, which depends on
+    # each vuln's existed_since_revision, not on the stamps. An app whose vulns
+    # all existed_since_revision=1 (the default — the flaw was always there, it
+    # just got documented later) has every vuln in scope for every scan, so no
+    # cell can read "n/a" no matter how far the stamps have drifted. Counting the
+    # real out-of-scope cells keeps the warning from explaining a non-event.
+    out_of_scope_cells = sum(
+        1 for row in matrix for applicable in row["applicable"] if not applicable
+    )
 
     return {
         "revision": revision,
         "corpus_revisions": corpus_revisions,
-        # Scans run against different corpus revisions are still comparable —
-        # they are all re-scored at one revision — but the drift is worth saying.
-        "corpus_revision_mismatch": len(corpus_revisions) > 1,
+        "out_of_scope_cells": out_of_scope_cells,
         "adjudication_incomplete_scans": incomplete,
         # Precision is meaningless before full adjudication; show the bounds.
         "suppress_precision": bool(incomplete),

@@ -101,19 +101,22 @@ const DETECTION_TIER_LABELS = {
   chained: 'chained',
 };
 
-// Reporting guards. Advisory here on purpose: comparing an old scan with a new
-// one is how you notice ground truth moved, so this view never refuses. The
-// strict version is GET /api/apps/{id}/benchmark, which returns 409 with these
-// same reasons rather than emitting a number that cannot be reproduced.
+// Reporting guards. Advisory on purpose: comparing an old scan with a new one is
+// how you notice ground truth moved, so this view never refuses.
 function ReportingGuards({ guards, label, appId }) {
   if (!guards) return null;
   const warnings = [];
 
-  if (guards.corpus_revision_mismatch) {
+  // Gated on cells that are ACTUALLY out of scope, not on revision stamps
+  // differing — see _reporting_guards in app/services/scans.py. Stamps drift
+  // every time ground truth grows, but a vuln marked as having existed all
+  // along (the default) is still in scope for every scan, so nothing reads
+  // "n/a" and there is nothing to explain.
+  if (guards.out_of_scope_cells > 0) {
     warnings.push(
-      `These scans ran against different corpus revisions (${guards.corpus_revisions.join(', ')}). ` +
-      `Each is judged only on ground truth that existed when it ran, so cells for later ` +
-      `additions read "n/a" rather than as a miss.`
+      `These scans ran against different corpus revisions (${guards.corpus_revisions.join(', ')}), ` +
+      `and ${guards.out_of_scope_cells} cell(s) cover ground truth that did not exist yet when a ` +
+      `scan ran — those read "n/a" rather than as a miss.`
     );
   }
   if (guards.suppress_precision) {
