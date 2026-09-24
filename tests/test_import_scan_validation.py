@@ -167,10 +167,10 @@ def test_run_llm_mapping_picks_extra_info_by_mode():
     class _FakeStream:
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def get_final_text(self): return '{"findings": []}'
         def get_final_message(self):
             class R:
                 usage = None
+                content = [_FakeBlock("text", '{"findings": []}')]
             return R()
 
     class _FakeMessages:
@@ -485,3 +485,32 @@ def test_stats_fields_to_confirm_value_desc_is_human_readable():
     assert by_field["cost"] == "$145.89"
     assert by_field["tokens"] == "14,404,361"
     assert by_field["scan_date"] == "2026-09-17 23:14"
+
+
+# ── _extract_text_blocks ──
+# Real incident (2026-09-23): some models return a "thinking" content block
+# even with no `thinking` param requested. The Anthropic SDK's own
+# stream.get_final_text() assumes text-only content and raises
+# ".get_final_text() can only be called when the API returns a `text`
+# content block" the moment any block isn't type "text", crashing every
+# mapping call against such a model.
+
+class _FakeBlock:
+    def __init__(self, type_, text=None):
+        self.type = type_
+        self.text = text
+
+
+def test_extract_text_blocks_text_only():
+    content = [_FakeBlock("text", "hello")]
+    assert import_scan._extract_text_blocks(content) == "hello"
+
+
+def test_extract_text_blocks_skips_thinking_block():
+    content = [_FakeBlock("thinking", "reasoning about it..."), _FakeBlock("text", '{"findings": []}')]
+    assert import_scan._extract_text_blocks(content) == '{"findings": []}'
+
+
+def test_extract_text_blocks_joins_multiple_text_blocks():
+    content = [_FakeBlock("text", "part one "), _FakeBlock("thinking", "..."), _FakeBlock("text", "part two")]
+    assert import_scan._extract_text_blocks(content) == "part one part two"

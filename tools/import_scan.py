@@ -22,6 +22,18 @@ import time
 import threading
 from pathlib import Path
 
+try:
+    # Use the OS's own certificate trust store (Keychain/Windows Cert
+    # Store/ca-certificates) instead of certifi's bundled public CA list.
+    # Needed on networks with a TLS-inspecting corporate proxy (e.g.
+    # Zscaler) that re-signs HTTPS traffic with a private root CA the OS
+    # trusts but certifi never will. Must run before httpx creates any
+    # SSLContext, so it happens before the httpx import below.
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 import httpx
 
 
@@ -137,8 +149,12 @@ class LLMCallError(Exception):
 # Output cap for the mapping/extraction call. A detail-rich report (20+
 # findings, each with description/evidence/remediation/code_location) easily
 # overruns the old 8192 cap, which truncates the JSON mid-finding and trips a
-# JSONDecodeError. 16384 leaves comfortable headroom.
-MAX_OUTPUT_TOKENS = 16384
+# JSONDecodeError. 16384 wasn't enough either: a 44-finding report against a
+# model that spends part of its own output budget on unrequested extended
+# thinking (see _extract_text_blocks) can burn through 16384 tokens on
+# reasoning alone and never emit any of the actual JSON answer, returning an
+# empty response. 64000 leaves comfortable headroom for both.
+MAX_OUTPUT_TOKENS = 64000
 
 # ── Prompt ───────────────────────────────────────────────────
 
@@ -661,6 +677,18 @@ def _extract_json_text(text: str) -> str:
     return text
 
 
+def _extract_text_blocks(content) -> str:
+    """Join just the "text" blocks of an Anthropic message's content list.
+
+    The SDK's own stream.get_final_text() assumes text-only content and
+    raises if any block is "thinking"/"redacted_thinking" -- some models
+    return a thinking block even without an explicit `thinking` param
+    requested. Filtering by block.type here means mapping still works
+    whether or not the model decided to think out loud.
+    """
+    return "".join(block.text for block in content if block.type == "text")
+
+
 def create_anthropic_client(provider: str, region: str | None, project_id: str | None):
     """Create the appropriate Anthropic client based on provider.
 
@@ -706,8 +734,8 @@ def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_
             system=system,
             messages=[{"role": "user", "content": user_message}],
         ) as stream:
-            text = stream.get_final_text()
             response = stream.get_final_message()
+            text = _extract_text_blocks(response.content)
 
     result = json.loads(_extract_json_text(text))
     # Attach LLM usage stats
@@ -823,7 +851,7 @@ def print_mapping_table(mapping: dict, vulns: list, chains: list | None = None):
             chain = chain_lookup.get(f["matched_chain_db_id"], {})
             chain_title = chain.get("title", f"DB#{f['matched_chain_db_id']}")
             chain_id = chain.get("chain_id", "?")
-            print(f"    {colored('⛓', 'CYAN')} {C.BOLD}{f.get('title', f['vuln_type'])}{C.RESET}")
+            print(f"    {colored('⛓', 'CYAN')} {C.BOLD}{f.get('title') or f.get('vuln_type') or '(untitled finding)'}{C.RESET}")
             print(f"      {colored('→', 'GRAY')} {chain_title} {C.DIM}({chain_id}){C.RESET}")
             print(f"      {C.DIM}{f.get('reasoning', '')}{C.RESET}")
 
@@ -836,7 +864,7 @@ def print_mapping_table(mapping: dict, vulns: list, chains: list | None = None):
             severity = vuln.get("severity", "")
 
             sev_badge = severity_colored(f"[{severity}]", severity) if severity else ""
-            print(f"    {colored('>', 'GREEN')} {C.BOLD}{f.get('title', f['vuln_type'])}{C.RESET}")
+            print(f"    {colored('>', 'GREEN')} {C.BOLD}{f.get('title') or f.get('vuln_type') or '(untitled finding)'}{C.RESET}")
             print(f"      {colored('→', 'GRAY')} {vuln_title} {C.DIM}({vuln_id}){C.RESET} {sev_badge}")
             print(f"      {C.DIM}{f.get('reasoning', '')}{C.RESET}")
 
@@ -844,13 +872,13 @@ def print_mapping_table(mapping: dict, vulns: list, chains: list | None = None):
         print(f"\n  {colored('UNMATCHED', 'YELLOW')} {C.DIM}({len(unmatched)}){C.RESET}")
         for f in unmatched:
             url_str = f" {C.DIM}{f.get('url', '')}{C.RESET}" if f.get("url") else ""
-            print(f"    {colored('?', 'YELLOW')} {C.BOLD}{f.get('title', f['vuln_type'])}{C.RESET}{url_str}")
+            print(f"    {colored('?', 'YELLOW')} {C.BOLD}{f.get('title') or f.get('vuln_type') or '(untitled finding)'}{C.RESET}{url_str}")
             print(f"      {C.DIM}{f.get('reasoning', '')}{C.RESET}")
 
     if fps:
         print(f"\n  {colored('FALSE POSITIVES', 'RED')} {C.DIM}({len(fps)}){C.RESET}")
         for f in fps:
-            print(f"    {colored('x', 'RED')} {f.get('title', f['vuln_type'])} {C.DIM}{f.get('url', '')}{C.RESET}")
+            print(f"    {colored('x', 'RED')} {f.get('title') or f.get('vuln_type') or '(untitled finding)'} {C.DIM}{f.get('url', '')}{C.RESET}")
 
     # Summary bar
     parts = []
