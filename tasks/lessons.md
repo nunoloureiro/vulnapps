@@ -59,3 +59,26 @@ with the count of `TP-*`/`CODE-*`/`PRBL*` vulns and `CHAIN-*` chains
 registered for that app on vulnapps. A mismatch doesn't necessarily mean
 something's wrong (could be a harmless duplicate match), but it must be
 explained, not assumed away. (Also added to CLAUDE.md as a standing rule.)
+
+## The vulnapps API authenticates with `Authorization: Bearer`, not `X-API-Key`
+
+**Mistake:** Verifying migration 040 on prod, queried
+`https://vulnapps.net/api/scans` with an `X-API-Key` header. The API ignored
+it and served the *anonymous* view: scan 330 came back `{"detail": "Scan not
+found"}` and the scan list held 2 rows instead of the real set. That is
+exactly what a wiped database looks like, moments after a deploy that ran a
+destructive migration (two `DROP COLUMN`s). Almost reported data loss to the
+user. Re-running with `Authorization: Bearer` returned all three scans intact
+with unchanged metrics.
+
+**Why it's dangerous:** `get_scan` deliberately collapses "not authorized"
+into "not found" so private scans can't be enumerated (`app/services/scans.py`,
+the vuln-0005/vuln-0008 fix). So a bad credential is indistinguishable from a
+missing row by design — silence and 404 are the *intended* response, not a
+signal.
+
+**Rule:** Use `Authorization: Bearer $VULNAPPS_API_KEY` (the importer's own
+header, `tools/import_scan.py`). Before concluding that prod data is missing,
+prove the request was authenticated — query a row that is definitely visible,
+or check that the response isn't the public-only subset. Never report data
+loss on the strength of a 404 alone.
