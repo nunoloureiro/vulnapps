@@ -229,7 +229,50 @@ other — that is two unrelated findings, not a demonstrated chain, regardless o
 whether both underlying vulnerabilities are real. Map each to its own \
 matched_vuln_db_id in that case and leave matched_chain_db_id null on both.
 - A finding with a non-null matched_chain_db_id must have matched_vuln_db_id null, and \
-vice versa — a finding matches one or the other, never both.
+vice versa — the PRIMARY match is one or the other, never both.
+- additional_vuln_db_ids is for everything ELSE the same finding explicitly \
+demonstrates, on top of its primary match. One finding can prove more than one \
+known vulnerability at once, and each one it proves should be credited. Two \
+shapes come up constantly: \
+(a) the finding's primary subject is one bug, but its own evidence also \
+explicitly establishes another known vulnerability — e.g. a directory-listing \
+finding whose PoC fetches config/jwt.php and quotes the hardcoded signing \
+secret it contains: primary = the directory listing, additional = the \
+hardcoded-secret vuln, because that finding's own text proves both; \
+(b) the finding narrates a full chain (so matched_chain_db_id is set) and \
+names the member steps it walked through — put every member whose mechanism \
+that finding actually demonstrates in additional_vuln_db_ids, so the chain AND \
+its members are credited from the one finding. \
+The bar is identical to the primary match and to the chain-evidence rule \
+above: the finding's OWN text must demonstrate that specific vulnerability's \
+mechanism with real evidence. A passing mention, a cross-reference to another \
+finding, a "this could also allow…" claim, or the mere fact that the same file \
+or endpoint appears, is NOT enough — leave it out. Never add a vuln here to be \
+generous or comprehensive; if you cannot point at the sentence in that finding \
+that demonstrates it, it does not belong. \
+- CRITICAL limit on (a): disclosing source code that CONTAINS another flaw is \
+not the same as demonstrating that flaw. A finding that dumps files must not \
+claim every code-level vulnerability visible in the dump — that one finding \
+would otherwise sweep up most of the catalogue. The test is what kind of claim \
+the known vulnerability makes: \
+* If the vulnerability IS the presence of something in the source — a \
+hardcoded secret, credential or key — then quoting that value out of the \
+disclosed file demonstrates it completely. Credit it. \
+* If the vulnerability is a claim about how the RUNNING application BEHAVES — \
+"the decoder accepts alg=none", "a signature mismatch is tolerated", "this \
+endpoint skips authorization" — then reading code that appears to contain the \
+bug does NOT demonstrate it. Only an actual request/response in that finding \
+showing the behaviour does. Quoted source is a strong argument that the bug \
+exists; it is not evidence this scan exercised it. Leave it out. \
+Worked example, from a real report: a directory-listing finding fetched \
+config/jwt.php, quoted the hardcoded HS256 secret, then used that secret to \
+forge an is_admin token and got HTTP 200 from /admin/orders. Correct \
+additional credit there is the hardcoded-secret vuln (its value was quoted) \
+and the admin-trusts-the-claim vuln (a live forged request proved it) — but \
+NOT the alg=none or signature-mismatch vulns, which were only visible as code \
+in the dumped file and never exercised. \
+- Do NOT repeat matched_vuln_db_id inside additional_vuln_db_ids, and use [] \
+(not null) when the finding demonstrates nothing beyond its primary match.
 - When you do set matched_chain_db_id, explain in `reasoning` exactly which member \
 steps the finding's own text connects and how (quote or closely paraphrase the \
 connecting language), not just that the finding happens to be severe or related.
@@ -304,6 +347,7 @@ Respond with ONLY valid JSON (no markdown fencing) in this exact format:
             "filename": "string - affected source file or empty string",
             "matched_vuln_db_id": 123 or null,
             "matched_chain_db_id": 456 or null,
+            "additional_vuln_db_ids": [124, 125] or [],
             "is_false_positive": false,
             "fp_group": "string - shared slug for false positives describing the same non-issue, else empty",
             "reasoning": "string - brief explanation of why this maps (or doesn't) to the known vuln or chain",
@@ -448,11 +492,14 @@ class VulnappsClient:
         resp.raise_for_status()
         return resp.json()
 
-    def match_finding(self, scan_id: int, finding_id: int, vuln_id: int | None,
-                       chain_id: int | None = None) -> dict:
+    def match_finding(self, scan_id: int, finding_id: int, vuln_ids, chain_ids) -> dict:
+        """Set a finding's complete match set (one finding can credit several).
+
+        Sends the list body; empty lists clear the finding back to pending.
+        """
         resp = self.client.post(
             f"/api/scans/{scan_id}/findings/{finding_id}/match",
-            json={"vuln_id": vuln_id, "chain_id": chain_id},
+            json={"vuln_ids": list(vuln_ids), "chain_ids": list(chain_ids)},
         )
         resp.raise_for_status()
         return resp.json()
@@ -638,12 +685,16 @@ def _enforce_source_kind(result: dict, is_chain_source: bool | None) -> None:
     distinction doesn't apply (extraction-only mode, or no directory
     context to derive it from) and nothing is touched.
 
-    A finding from the standalone-vulnerabilities directory can never end
-    up chain-credited; a finding from the dedicated chain directory can
-    never end up credited as an individual vuln. Whichever field this file
-    isn't allowed to set is force-cleared to null, regardless of what the
-    model returned — the worst outcome this can produce is an unmatched
-    (pending) finding, never a wrongly-credited one.
+    A finding from the standalone-vulnerabilities directory can never end up
+    chain-credited: its matched_chain_db_id is force-cleared regardless of
+    what the model returned. The worst outcome that can produce is an
+    unmatched (pending) finding, never a wrongly-credited chain.
+
+    The reverse is no longer symmetrical. A finding from the dedicated chain
+    directory may now ALSO credit the member vulns it walked through (via
+    additional_vuln_db_ids, see SYSTEM_PROMPT_MAP) — that is the whole point
+    of a chain write-up being able to earn its members' credit too, so only
+    its PRIMARY vuln match is cleared, keeping the chain the primary target.
     """
     if is_chain_source is None:
         return
@@ -839,33 +890,54 @@ def print_mapping_table(mapping: dict, vulns: list, chains: list | None = None):
     print(f"  {C.DIM}Findings:{C.RESET} {colored(str(len(findings)), 'BOLD')}")
 
     chain_matched = [f for f in findings if f.get("matched_chain_db_id")]
-    matched = [f for f in findings if f.get("matched_vuln_db_id")]
+    matched = [f for f in findings
+               if f.get("matched_vuln_db_id")
+               or (not f.get("matched_chain_db_id") and (f.get("additional_vuln_db_ids") or []))]
+
+    def _extra_line(f):
+        """The other vulns this one finding also demonstrates, if any."""
+        extras = f.get("additional_vuln_db_ids") or []
+        if not extras:
+            return None
+        labels = []
+        for vid in extras:
+            v = vuln_lookup.get(vid, {})
+            labels.append(f"{v.get('vuln_id', f'DB#{vid}')} - {v.get('title', '')}".strip(" -"))
+        return f"      {colored('+', 'GREEN')} also demonstrates: {C.DIM}{'; '.join(labels)}{C.RESET}"
     unmatched = [f for f in findings
                  if not f.get("matched_vuln_db_id") and not f.get("matched_chain_db_id")
+                 and not (f.get("additional_vuln_db_ids") or [])
                  and not f.get("is_false_positive")]
     fps = [f for f in findings if f.get("is_false_positive")]
 
     if chain_matched:
         print(f"\n  {colored('CHAIN MATCHED', 'CYAN')} {C.DIM}({len(chain_matched)}) — review these carefully{C.RESET}")
         for f in chain_matched:
-            chain = chain_lookup.get(f["matched_chain_db_id"], {})
+            chain = chain_lookup.get(f.get("matched_chain_db_id"), {})
             chain_title = chain.get("title", f"DB#{f['matched_chain_db_id']}")
             chain_id = chain.get("chain_id", "?")
             print(f"    {colored('⛓', 'CYAN')} {C.BOLD}{f.get('title') or f.get('vuln_type') or '(untitled finding)'}{C.RESET}")
             print(f"      {colored('→', 'GRAY')} {chain_title} {C.DIM}({chain_id}){C.RESET}")
+            extra = _extra_line(f)
+            if extra:
+                print(extra)
             print(f"      {C.DIM}{f.get('reasoning', '')}{C.RESET}")
 
     if matched:
         print(f"\n  {colored('MATCHED', 'GREEN')} {C.DIM}({len(matched)}){C.RESET}")
         for f in matched:
-            vuln = vuln_lookup.get(f["matched_vuln_db_id"], {})
+            vuln = vuln_lookup.get(f.get("matched_vuln_db_id"), {})
             vuln_title = vuln.get("title", f"DB#{f['matched_vuln_db_id']}")
             vuln_id = vuln.get("vuln_id", "?")
             severity = vuln.get("severity", "")
 
             sev_badge = severity_colored(f"[{severity}]", severity) if severity else ""
             print(f"    {colored('>', 'GREEN')} {C.BOLD}{f.get('title') or f.get('vuln_type') or '(untitled finding)'}{C.RESET}")
-            print(f"      {colored('→', 'GRAY')} {vuln_title} {C.DIM}({vuln_id}){C.RESET} {sev_badge}")
+            if f.get("matched_vuln_db_id"):
+                print(f"      {colored('→', 'GRAY')} {vuln_title} {C.DIM}({vuln_id}){C.RESET} {sev_badge}")
+            extra = _extra_line(f)
+            if extra:
+                print(extra)
             print(f"      {C.DIM}{f.get('reasoning', '')}{C.RESET}")
 
     if unmatched:
@@ -944,9 +1016,12 @@ def validate_llm_matches(mapping: dict, vulns: list, chains: list | None = None)
       should share at least one meaningful keyword. Zero overlap doesn't
       prove the match is wrong, but it's exactly the pattern behind every
       real mismatch found so far, so it's worth a human's attention.
-    - Same hallucination guard for matched_chain_db_id against `chains`.
-    - Mutual exclusivity: a finding must not have both matched_vuln_db_id and
-      matched_chain_db_id set.
+    - Same hallucination guard for matched_chain_db_id against `chains`, and
+      for every id in additional_vuln_db_ids.
+    - Mutual exclusivity of the PRIMARY match: a finding must not have both
+      matched_vuln_db_id and matched_chain_db_id set. additional_vuln_db_ids
+      is exempt by design — the whole point is that one finding can credit
+      several things, including a chain plus the members it walked through.
     """
     vuln_lookup = {v["id"]: v for v in vulns}
     chain_lookup = {c["id"]: c for c in (chains or [])}
@@ -954,6 +1029,30 @@ def validate_llm_matches(mapping: dict, vulns: list, chains: list | None = None)
     for f in mapping.get("findings", []):
         matched = f.get("matched_vuln_db_id")
         matched_chain = f.get("matched_chain_db_id")
+
+        # Additional matches: same hallucination guard, deduped, and never a
+        # repeat of the primary (which would double-count nothing but does
+        # make the mapping table lie about what the finding covers).
+        extra_in = f.get("additional_vuln_db_ids") or []
+        if not isinstance(extra_in, list):
+            warnings.append(
+                f"'{f.get('title', f.get('vuln_type', '?'))}' returned "
+                f"additional_vuln_db_ids that isn't a list — ignoring it."
+            )
+            extra_in = []
+        extra_out = []
+        for vid in extra_in:
+            if not isinstance(vid, int) or vid == matched or vid in extra_out:
+                continue
+            if vid not in vuln_lookup:
+                warnings.append(
+                    f"'{f.get('title', f.get('vuln_type', '?'))}' listed additional "
+                    f"DB id {vid}, which isn't in the known-vulns list shown to the "
+                    f"model — dropping it (possible hallucination)."
+                )
+                continue
+            extra_out.append(vid)
+        f["additional_vuln_db_ids"] = extra_out
 
         if matched is not None and matched_chain is not None:
             warnings.append(
@@ -1073,13 +1172,20 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
             # something. That last case used to silently keep a wrong
             # heuristic match forever, since only a *different* non-null
             # match ever triggered a correction call.
+            # One finding can credit several things at once, so this compares
+            # SETS: the primary match plus everything else the finding was
+            # judged to demonstrate (additional_vuln_db_ids).
             matched = lf.get("matched_vuln_db_id")
             matched_chain = lf.get("matched_chain_db_id")
-            current = sf.get("matched_vuln_id")
-            current_chain = sf.get("matched_chain_id")
-            if matched != current or matched_chain != current_chain:
-                client.match_finding(scan_id, sf["id"], matched, matched_chain)
-                if matched is None and matched_chain is None:
+            vuln_ids = ([matched] if matched is not None else []) + list(
+                lf.get("additional_vuln_db_ids") or []
+            )
+            chain_ids = [matched_chain] if matched_chain is not None else []
+            current_vulns = sf.get("matched_vuln_ids") or []
+            current_chains = sf.get("matched_chain_ids") or []
+            if set(vuln_ids) != set(current_vulns) or set(chain_ids) != set(current_chains):
+                client.match_finding(scan_id, sf["id"], vuln_ids, chain_ids)
+                if not vuln_ids and not chain_ids:
                     unmatches += 1
                 else:
                     corrections += 1

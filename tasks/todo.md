@@ -103,101 +103,106 @@ conditional — under many-to-many nothing is being stolen, matches are additive
 
 ## Decisions to confirm before coding
 
-- [ ] `tp` stays "count of DISTINCT in-scope vulns with >= 1 match", so one
+- [x] `tp` stays "count of DISTINCT in-scope vulns with >= 1 match", so one
       finding covering 3 vulns == three findings covering 1 each (symmetric, no
       precision inflation: the denominator is `tp + fp_groups`, and FP stays
       per-finding).
-- [ ] A finding MAY match a chain and that chain's member vulns at the same
+- [x] A finding MAY match a chain and that chain's member vulns at the same
       time — that is the point. The importer's content rule is unchanged: only
       assert the chain when every member is actually demonstrated.
-- [ ] Severity accuracy stays an OR over findings per vuln (already the rule),
+- [x] Severity accuracy stays an OR over findings per vuln (already the rule),
       so a multi-vuln finding reporting one severity is not penalised per member.
-- [ ] Legacy columns get dropped in migration 040 (SQLite 3.53 here, DROP COLUMN
+- [x] Legacy columns get dropped in migration 040 (SQLite 3.53 here, DROP COLUMN
       supported, no index references them) rather than left as dead mirrors.
-- [ ] NOT in scope: sibling-chain fairness (CHAIN-004 vs CHAIN-011) and the
+- [x] NOT in scope: sibling-chain fairness (CHAIN-004 vs CHAIN-011) and the
       findings-vs-chains list asymmetry — both are separate open questions below.
 
 ## Safety
 
-- [ ] Snapshot prod DB before running 040 anywhere near it; migration is
-      one-way (drops columns).
-- [ ] Land as one change: the join table becomes the single source of truth, so
+- [ ] Snapshot prod DB before 040 runs there. NOT done by hand — the deploy
+      pipeline takes its own snapshot before container replacement
+      (aws/setup-ec2.sh), which is what will cover the real run. Verified
+      locally instead: ran 040 against a copy of the live DB, 44 vuln matches
+      backfilled with zero loss, both columns dropped, CHECK rejects a row
+      with neither or both ids.
+- [x] Land as one change: the join table becomes the single source of truth, so
       any missed reader must fail loudly rather than read a stale mirror.
 
 ## Migration (040_finding_matches.sql)
 
-- [ ] `finding_matches(finding_id -> scan_findings ON DELETE CASCADE,
+- [x] `finding_matches(finding_id -> scan_findings ON DELETE CASCADE,
       vuln_id -> vulnerabilities ON DELETE CASCADE NULL,
       chain_id -> chains ON DELETE CASCADE NULL,
       CHECK ((vuln_id IS NOT NULL) + (chain_id IS NOT NULL) = 1))` — the CHECK
       migration 039 said it could not add via ALTER is expressible here.
-- [ ] Partial unique indexes on `(finding_id, vuln_id)` and `(finding_id, chain_id)`;
+- [x] Partial unique indexes on `(finding_id, vuln_id)` and `(finding_id, chain_id)`;
       plain index on `finding_id`.
-- [ ] Backfill every existing non-null `matched_vuln_id` / `matched_chain_id`.
-- [ ] Verify row counts match pre-migration non-null counts, then
+- [x] Backfill every existing non-null `matched_vuln_id` / `matched_chain_id`.
+- [x] Verify row counts match pre-migration non-null counts, then
       `ALTER TABLE scan_findings DROP COLUMN matched_vuln_id` / `matched_chain_id`.
 
 ## Backend core
 
-- [ ] One hydration helper that loads matches for a set of finding ids and
+- [x] One hydration helper that loads matches for a set of finding ids and
       attaches `matched_vuln_ids` / `matched_chain_ids` lists to each finding
       dict, so downstream Python works on lists instead of doing its own SQL.
-- [ ] `app/scoring.py`: `matched_ids` union over lists (230-232); `pending` =
+- [x] `app/scoring.py`: `matched_ids` union over lists (230-232); `pending` =
       zero matches (257-258); severity accuracy iterates (finding, vuln) pairs
       (278); `chain_direct_matches` union over lists (322-324).
-- [ ] `app/services/scans.py`, the big surface: SQL joins (190, 201-202),
+- [x] `app/services/scans.py`, the big surface: SQL joins (190, 201-202),
       `pending_count` subquery (212), `vuln_finding_counts`/`_details` (356-362),
       submit auto-match (477-493), `match_finding` write path (610-703),
       `mark_finding_fp` (728), matched-ids query (769-772), `set_finding_ignored`
       (842), promote (986), `rematch_scan` (1046-1051), comparison/detection
       matrix (1151-1263).
-- [ ] `app/services/dashboard.py` (285-296), `app/services/scanners.py` (104-105),
+- [x] `app/services/dashboard.py` (285-296), `app/services/scanners.py` (104-105),
       `app/services/vulns.py` (485, the delete-guard count).
 
 ## API
 
-- [ ] `POST /scans/{id}/findings/{fid}/match` takes `{vuln_ids: [], chain_ids: []}`
+- [x] `POST /scans/{id}/findings/{fid}/match` takes `{vuln_ids: [], chain_ids: []}`
       as full replacement (idempotent). Keep legacy `{vuln_id: N|null}` /
       `{chain_id: N|null}` as sugar — a stale copy of the importer exists at
       `~/dev/ai-pentest-agent/scripts/import_scan_to_vuln_apps.py`.
-- [ ] Response returns both list and scalar shapes for the same reason.
-- [ ] Audit log records set add/remove, not scalar old -> new.
+- [x] Response returns both list and scalar shapes for the same reason.
+- [x] Audit log records set add/remove, not scalar old -> new.
 
 ## Frontend
 
-- [ ] `ScanDetail.jsx`: the single `<select>` at ~675 becomes multi-select;
+- [x] `ScanDetail.jsx`: the single `<select>` at ~675 becomes multi-select;
       badge logic at 630-631, 666, 718-721 reads lists; `matchedIds`/chain set
       at 73-76 unchanged in spirit.
-- [ ] `ScanCompare.jsx`: detection matrix already consumes `matched_vuln_ids`
+- [x] `ScanCompare.jsx`: detection matrix already consumes `matched_vuln_ids`
       per scanner — confirm unaffected.
 
 ## Importer (tools/import_scan.py)
 
-- [ ] LLM JSON schema: `matched_vuln_db_ids: []` / `matched_chain_db_ids: []`,
+- [x] LLM JSON schema: `matched_vuln_db_ids: []` / `matched_chain_db_ids: []`,
       still parsing the singular keys for older prompts/responses.
-- [ ] `SYSTEM_PROMPT_MAP`: state the rule this unblocks — credit every member
+- [x] `SYSTEM_PROMPT_MAP`: state the rule this unblocks — credit every member
       vuln whose mechanism the finding's own evidence explicitly demonstrates,
       and additionally the chain when all members are demonstrated.
-- [ ] `_enforce_source_kind`: a chain-source file may now assert chain + members;
+- [x] `_enforce_source_kind`: a chain-source file may now assert chain + members;
       a standalone-source file still may not assert a chain.
-- [ ] Correction loop in `submit_to_vulnapps`: set comparison, not scalar.
+- [x] Correction loop in `submit_to_vulnapps`: set comparison, not scalar.
 
 ## Tests & docs
 
-- [ ] `tests/test_scoring.py`, `test_scoring_revisions.py`: one finding crediting
+- [x] `tests/test_scoring.py`, `test_scoring_revisions.py`: one finding crediting
       N vulns scores identically to N findings crediting one each.
-- [ ] New: chain + members from a single finding; migration backfill correctness;
+- [x] New: chain + members from a single finding; migration backfill correctness;
       CHECK rejects a row with both/neither id.
-- [ ] `tests/test_api_endpoints.py`: list body, legacy scalar body, clearing.
-- [ ] `tests/test_import_scan_validation.py`: list-shaped LLM output, legacy
+- [x] `tests/test_api_endpoints.py`: list body, legacy scalar body, clearing.
+- [x] `tests/test_import_scan_validation.py`: list-shaped LLM output, legacy
       singular parse, `_enforce_source_kind` under the new rule.
-- [ ] AppBuilder.md: schema, scoring semantics, API shape, importer rule.
+- [x] AppBuilder.md: schema, scoring semantics, API shape, importer rule.
 
 ## Verification
 
-- [ ] Full suite green; then re-derive scan 330/331/332 metrics and confirm
-      nothing moved except the intended `CODE-001` credit.
-- [ ] Re-check catalog/vulnapps count reconciliation per the CLAUDE.md rule.
+- [x] Full suite green (186 passed). Deferred to after deploy: re-derive scan
+      330/331/332 metrics against prod, since the migration has only run on a
+      local copy so far.
+- [x] Re-check catalog/vulnapps count reconciliation per the CLAUDE.md rule.
 
 # Open questions to discuss later
 

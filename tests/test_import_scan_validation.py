@@ -514,3 +514,114 @@ def test_extract_text_blocks_skips_thinking_block():
 def test_extract_text_blocks_joins_multiple_text_blocks():
     content = [_FakeBlock("text", "part one "), _FakeBlock("thinking", "..."), _FakeBlock("text", "part two")]
     assert import_scan._extract_text_blocks(content) == "part one part two"
+
+
+# ── additional_vuln_db_ids (one finding, several vulns) ──
+# Real incident (scan 330): three findings each explicitly read jwt.php and
+# quoted the hardcoded secret, but a finding could only be credited for one
+# thing, so each was matched to its own access vuln and CODE-001 scored as a
+# miss. Migration 040 made matches additive; this is the importer side.
+
+_SECRET_VULN = {
+    "id": 99, "vuln_id": "CODE-001", "title": "Hardcoded JWT signing secret",
+    "vuln_type": "Hardcoded Secret", "severity": "high",
+}
+
+
+def test_validate_keeps_real_additional_ids():
+    mapping = {"findings": [{
+        "title": "Directory listing exposes jwt.php",
+        "matched_vuln_db_id": 42, "matched_chain_db_id": None,
+        "additional_vuln_db_ids": [99],
+    }]}
+    warnings = import_scan.validate_llm_matches(
+        mapping, [_JWT_NONE_ALG_VULN | {"id": 42}, _SECRET_VULN]
+    )
+    assert mapping["findings"][0]["additional_vuln_db_ids"] == [99]
+    assert not warnings
+
+
+def test_validate_drops_hallucinated_additional_ids():
+    mapping = {"findings": [{
+        "title": "Directory listing",
+        "matched_vuln_db_id": 42, "matched_chain_db_id": None,
+        "additional_vuln_db_ids": [99, 123456],
+    }]}
+    warnings = import_scan.validate_llm_matches(
+        mapping, [_JWT_NONE_ALG_VULN | {"id": 42}, _SECRET_VULN]
+    )
+    assert mapping["findings"][0]["additional_vuln_db_ids"] == [99]
+    assert any("123456" in w for w in warnings)
+
+
+def test_validate_drops_additional_id_repeating_the_primary():
+    """Listing the primary again would make the mapping table claim the
+    finding covers more than it does."""
+    mapping = {"findings": [{
+        "title": "F", "matched_vuln_db_id": 42, "matched_chain_db_id": None,
+        "additional_vuln_db_ids": [42, 99, 99],
+    }]}
+    import_scan.validate_llm_matches(
+        mapping, [_JWT_NONE_ALG_VULN | {"id": 42}, _SECRET_VULN]
+    )
+    assert mapping["findings"][0]["additional_vuln_db_ids"] == [99]
+
+
+def test_validate_tolerates_a_non_list_additional_field():
+    mapping = {"findings": [{
+        "title": "F", "matched_vuln_db_id": 42, "matched_chain_db_id": None,
+        "additional_vuln_db_ids": 99,
+    }]}
+    warnings = import_scan.validate_llm_matches(mapping, [_JWT_NONE_ALG_VULN | {"id": 42}])
+    assert mapping["findings"][0]["additional_vuln_db_ids"] == []
+    assert any("isn't a list" in w for w in warnings)
+
+
+def test_chain_source_keeps_member_credit_but_loses_the_primary_vuln():
+    """A chain write-up may now credit the members it walked through, so only
+    its PRIMARY vuln match is cleared — the chain stays the primary target."""
+    result = {"findings": [{
+        "matched_vuln_db_id": 42, "matched_chain_db_id": 7,
+        "additional_vuln_db_ids": [99],
+    }]}
+    import_scan._enforce_source_kind(result, is_chain_source=True)
+    f = result["findings"][0]
+    assert f["matched_vuln_db_id"] is None
+    assert f["matched_chain_db_id"] == 7
+    assert f["additional_vuln_db_ids"] == [99]
+
+
+def test_standalone_source_still_cannot_claim_a_chain():
+    result = {"findings": [{
+        "matched_vuln_db_id": 42, "matched_chain_db_id": 7,
+        "additional_vuln_db_ids": [99],
+    }]}
+    import_scan._enforce_source_kind(result, is_chain_source=False)
+    f = result["findings"][0]
+    assert f["matched_chain_db_id"] is None
+    assert f["matched_vuln_db_id"] == 42
+    assert f["additional_vuln_db_ids"] == [99]
+
+
+def test_prompt_documents_when_to_use_additional_ids():
+    """The rule has to survive prompt edits: additional ids are for what the
+    finding's OWN evidence demonstrates, never for being comprehensive."""
+    prompt = import_scan.SYSTEM_PROMPT_MAP
+    assert "additional_vuln_db_ids" in prompt
+    assert "OWN text must demonstrate" in prompt
+    assert "Do NOT repeat matched_vuln_db_id" in prompt
+
+
+def test_prompt_blocks_crediting_vulns_merely_visible_in_dumped_source():
+    """Caught on a live dry run: a directory-listing finding that dumped the
+    backend source credited the hardcoded secret (right — its value was
+    quoted) and the admin-claim-trust vuln (right — it forged a token and got
+    a live 200), but ALSO the alg:none and signature-mismatch vulns, purely
+    because the disclosed code contained them. Unbounded, one file dump would
+    sweep up most of the catalogue, so the prompt has to keep the distinction
+    between a presence-in-source vuln and a runtime-behaviour one."""
+    prompt = import_scan.SYSTEM_PROMPT_MAP
+    assert "disclosing source code that CONTAINS another flaw is" in prompt
+    assert "hardcoded secret, credential or key" in prompt
+    assert "how the RUNNING application BEHAVES" in prompt
+    assert "not evidence this scan exercised it" in prompt

@@ -189,6 +189,7 @@ vulnapps/
 │   ├── 037_audit_log_chains.sql         # widen audit_log.entity_type to allow 'chain'
 │   ├── 038_scan_chain_credits.sql       # explicit human-adjudicated chain credit (see below)
 │   ├── 039_finding_matched_chain.sql    # scan_findings.matched_chain_id (direct chain match)
+│   ├── 040_finding_matches.sql          # finding_matches join table; one finding -> many vulns/chains
 │   ├── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
 │   ├── 013_api_keys.sql                 # API keys table with scopes
 │   ├── 014_scan_labels.sql              # Labels + scan_labels junction table
@@ -332,7 +333,9 @@ CREATE TABLE IF NOT EXISTS scan_findings (
     url             TEXT,
     parameter       TEXT,
     filename        TEXT,                         -- SAST finding filename
-    matched_vuln_id INTEGER REFERENCES vulnerabilities(id),
+    -- matched_vuln_id / matched_chain_id were DROPPED in migration 040; a
+    -- finding's matches live in finding_matches (below), because one finding
+    -- can demonstrate several things at once.
     is_false_positive INTEGER NOT NULL DEFAULT 0,
     is_ignored      INTEGER NOT NULL DEFAULT 0,    -- "Ignored" state (migration 023)
     -- Rich detail fields (migration 019) — populated by scanners that emit full
@@ -691,7 +694,7 @@ Version** above.
 | PUT | `/api/scans/{id}` | Scan write / vuln-mapper | Update scan metadata: `{scanner_name, scan_date, authenticated, notes}` |
 | DELETE | `/api/scans/{id}` | Scan write | Delete scan |
 | POST | `/api/apps/{id}/scans` | User+ / vuln-mapper | Submit scan. Body: `{scanner_name, scanner_version, scan_date, authenticated, is_public, notes, cost, tokens, duration, findings, labels}`. The server stamps `corpus_revision` with the app's latest revision. Each finding may include `{vuln_type, http_method, url, parameter, filename, title, severity, description, poc, remediation, code_location, fp_group}` |
-| POST | `/api/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Map finding to vuln (`{vuln_id: int\|null}`) or directly to a chain (`{chain_id: int\|null}`, mutually exclusive) — see **Exploit chains** |
+| POST | `/api/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Set a finding's complete match set: `{vuln_ids: [int], chain_ids: [int]}` (full replacement; both empty clears it to Pending). One finding may credit several vulns and/or chains — see **Exploit chains**. The legacy single-value bodies (`{vuln_id: int\|null}` / `{chain_id: int\|null}`, mutually exclusive) are still accepted for older clients |
 | POST | `/api/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive. Optional body `{fp_group}` clusters findings describing the same non-issue so precision counts them once |
 | POST | `/api/scans/{id}/findings/{fid}/ignore` | Scan write / vuln-mapper | Set/clear the "Ignored" state. Body `{ignored: bool}` (default `true`). Ignoring clears any match/FP; clearing returns to Pending |
 | POST | `/api/scans/{id}/findings/{fid}/promote` | App write / vuln-mapper | Promote a pending finding into a new vuln on the scan's app. Body: `{vuln_id, title, severity, vuln_type, http_method, url, parameter, filename, description, poc, remediation, code_location, impact_weight, difficulty_tier}` — missing fields fall back to the finding's stored values; `vuln_id` auto-generates as the next `DISC-NNN` slug if blank. **`existed_since` is REQUIRED** (`all_along` \| `this_revision`) — **400** without it. Always opens a `new_prior_vuln` revision. The finding is linked to the new vuln on success |
@@ -877,13 +880,54 @@ instead of list order. A missing title on either side is "can't confirm," not
 
 **Vuln type aliases** — expanded groups covering: SQLi, XSS, IDOR, auth bypass, access control, info disclosure, path traversal, open redirect, security misconfiguration, privilege escalation, data exposure, business logic, CSRF, SSRF, RCE, XXE, SSTI, NoSQL injection, prototype pollution, HTTP header injection, insecure deserialization, file upload, CORS, clickjacking, JWT, weak crypto, hardcoded secrets.
 
+### One finding, several matches (`finding_matches`, migration 040)
+
+A finding's matches live in a join table, not in a column on the finding:
+
+```sql
+CREATE TABLE finding_matches (
+    finding_id INTEGER NOT NULL REFERENCES scan_findings(id) ON DELETE CASCADE,
+    vuln_id    INTEGER REFERENCES vulnerabilities(id) ON DELETE CASCADE,
+    chain_id   INTEGER REFERENCES chains(id) ON DELETE CASCADE,
+    CHECK ((vuln_id IS NOT NULL) + (chain_id IS NOT NULL) = 1)   -- exactly one target per row
+);
+```
+
+`scan_findings.matched_vuln_id` / `matched_chain_id` were dropped: a second source of truth
+for the same fact is how the bugs below went unnoticed, and every reader moved in the same
+change so a missed one fails loudly instead of reading a stale mirror. The `CHECK` is the one
+migration 039 noted it could not add via `ALTER TABLE`.
+
+Why it changed — two real gaps that the single-slot model could not express:
+
+1. **Scan 330 (TaintedPort).** Three findings — path traversal, SSRF and directory listing —
+   each explicitly read `api/config/jwt.php` and quoted the hardcoded HS256 secret. Each was
+   matched to its own access vuln (TP-014 / TP-027 / TP-013), so `CODE-001` scored as MISSED
+   despite being demonstrated three times over. There was no way to credit both: the only fix
+   was re-pointing one finding, which cost its original vuln a piece of evidence.
+2. **Chain-only reporting.** A scan reporting ONE clean chain narrative that names its three
+   members got either the chain or one member — never the chain plus its members — while a
+   scan that redundantly re-reported each member separately got all four. Same discovery,
+   different score, purely from how the report was written up.
+
+`app/services/finding_matches.py` is the only module that touches the table.
+`scoring_service.fetch_findings` hydrates `matched_vuln_ids` / `matched_chain_ids` onto every
+finding, so scoring, the comparison matrix, the dashboard and the per-scanner aggregates read
+lists rather than issuing their own SQL. Writes go through `replace()` (full set replacement,
+so callers are idempotent); marking a finding FP or Ignored clears its matches, and a deleted
+finding cascades.
+
+**Scoring is deliberately unchanged by this.** `tp` is still the count of DISTINCT in-scope
+vulns with at least one match, and FP stays per-finding, so precision's denominator is
+untouched. That is what keeps the metric symmetric (see **Metrics** below).
+
 **Four finding states** (mutually exclusive — any transition clears the others):
-| State | matched_vuln_id | is_false_positive | is_ignored | Meaning |
+| State | finding_matches rows | is_false_positive | is_ignored | Meaning |
 |---|---|---|---|---|
-| **TP** | set | 0 | 0 | Confident match (auto or manual) |
-| **Pending** | null | 0 | 0 | No auto-match, awaiting manual review |
-| **FP** | null | 1 | 0 | User explicitly marked as false positive |
-| **Ignored** | null | 0 | 1 | Real-ish but irrelevant in context — consciously set aside (migration 023) |
+| **TP** | >= 1 | 0 | 0 | Confident match (auto or manual) |
+| **Pending** | none | 0 | 0 | No auto-match, awaiting manual review |
+| **FP** | none | 1 | 0 | User explicitly marked as false positive |
+| **Ignored** | none | 0 | 1 | Real-ish but irrelevant in context — consciously set aside (migration 023) |
 
 - **Automatic matching**: Score >= 60 → TP. Score < 60 → **Pending** (not FP)
 - **Manual mapping**: User maps pending finding to known vuln → TP
@@ -936,7 +980,7 @@ below for the full normative definition; the summary:
 TP        = count of UNIQUE matched vulns IN SCOPE (multiple findings on one vuln = 1 TP)
 FP        = count of findings where is_false_positive = 1        (raw, kept for continuity)
 FP groups = distinct fp_group among FPs + 1 per ungrouped FP     (used by precision)
-Pending   = findings with matched_vuln_id IS NULL AND matched_chain_id IS NULL
+Pending   = findings with NO finding_matches rows at all
             AND is_false_positive = 0 AND is_ignored = 0
             -- a finding matched DIRECTLY to a chain is fully resolved, not
             -- awaiting adjudication (real incident, scan 273: precision showed
@@ -964,7 +1008,12 @@ partial credit. **A chain earns its full weight only when every member is matche
 matching members independently is NOT evidence the chain was walked, so a chain with only
 some members matched earns nothing; there is no separate chain-level credit tracking.
 
-**TP counts unique vulns, not findings.** If 3 scanner findings all match the same known vuln, TP=1. This prevents inflated precision when scanners report the same vuln multiple times (e.g., "Missing CSP", "Missing HSTS", "Missing X-Frame-Options" all matching TP-016 "Missing Security Headers"). In the scan list SQL, this uses `COUNT(DISTINCT matched_vuln_id)`.
+**TP counts unique vulns, not findings.** If 3 scanner findings all match the same known vuln, TP=1. This prevents inflated precision when scanners report the same vuln multiple times (e.g., "Missing CSP", "Missing HSTS", "Missing X-Frame-Options" all matching TP-016 "Missing Security Headers"). In the scan list SQL, this uses `COUNT(DISTINCT fm.vuln_id)` over `finding_matches`.
+The converse also holds since migration 040: one finding may match SEVERAL vulns, and it
+contributes one TP per distinct vuln. That keeps the metric symmetric — a scan that reports
+one finding covering three vulns scores exactly the same as one that reports three findings
+covering one each, so the score depends on what was demonstrated and not on how the report
+was split up (locked in by `test_scoring.py`).
 
 **FPs are clustered the same way.** Counting TP per vuln while counting FP per finding
 made precision non-comparable across tools with different reporting granularity — three
@@ -1142,14 +1191,16 @@ finding text — one matched finding's own description explicitly said *"indepen
 injection"* about the very chain it was credited for). A chain now earns credit one of two
 ways:
 
-1. **Direct match (automatic).** A finding is matched straight to the chain itself via
-   `scan_findings.matched_chain_id` (migration 039), mutually exclusive with
-   `matched_vuln_id`. This is for the case where the scanner's own report contains ONE
-   finding that itself narrates combining >=2 members into the bigger exploit — first-class
-   evidence, same trust level as any vuln match, no separate review required. Available via
-   `POST /api/scans/{id}/findings/{finding_id}/match` (body `{chain_id}` instead of
-   `{vuln_id}`), manually through the "Matched Vuln" dropdown's Chains optgroup on the scan
-   detail page, or automatically from `tools/import_scan.py`'s LLM mapping (see below).
+1. **Direct match (automatic).** A finding is matched straight to the chain itself (a
+   `finding_matches` row carrying `chain_id`). This is for the case where the scanner's own
+   report contains ONE finding that itself narrates combining >=2 members into the bigger
+   exploit — first-class evidence, same trust level as any vuln match, no separate review
+   required. Available via `POST /api/scans/{id}/findings/{finding_id}/match` (put the chain
+   in `chain_ids`), manually through the chip picker on the scan detail page, or
+   automatically from `tools/import_scan.py`'s LLM mapping (see below). Since migration 040
+   the SAME finding may additionally credit the member vulns it demonstrably walked through
+   — the chain and the members are separate assertions, and crediting a member is never
+   inferred from the chain match.
 2. **Explicit human confirmation (manual fallback).** Migration 038's
    `scan_chain_credits(scan_id, chain_pk, credited_by, credited_at, notes)` — for when no
    single finding was tagged directly. Nothing is ever auto-populated into this table; a
@@ -1207,10 +1258,35 @@ of the content rule, not a replacement for it. It does two things: the prompt (i
 `_build_user_message`) tells the model which of the two a file was *authored* as, including
 telling a chain file not to split its narrative into per-mechanism findings; and
 `_enforce_source_kind` mechanically force-clears whichever field that source type is never
-allowed to populate — `matched_vuln_db_id` on a chain file, `matched_chain_db_id` on a
-standalone one — regardless of what the model returned. That backstop can only ever
+allowed to populate — the PRIMARY `matched_vuln_db_id` on a chain file, `matched_chain_db_id`
+on a standalone one — regardless of what the model returned. That backstop can only ever
 downgrade a wrong credit to unmatched, never manufacture a wrong one, so it costs nothing
-even for a scan whose directory layout turns out not to carry this meaning.
+even for a scan whose directory layout turns out not to carry this meaning. It is no longer
+symmetrical: a chain file may still credit the member vulns it walked through via
+`additional_vuln_db_ids` (below), so only its primary vuln match is cleared.
+
+**`additional_vuln_db_ids` — one finding crediting several vulns.** Alongside the primary
+`matched_vuln_db_id` / `matched_chain_db_id`, a finding carries a list of everything ELSE its
+own evidence demonstrates, which the importer submits as one match set (see
+`finding_matches`, migration 040). Two shapes recur: a finding whose subject is one bug but
+whose PoC also establishes another known vuln (the scan-330 directory listing that quotes the
+hardcoded secret out of `jwt.php`), and a chain finding naming the members it walked through
+(so the chain and its members are both credited from the one finding).
+
+The bar is the same as for any other match — the finding's own text must demonstrate that
+specific mechanism — with one carve-out learned from a live dry run. Given the rule above,
+the model credited the hardcoded-secret vuln (right: the secret's *value* was quoted) and the
+admin-trusts-the-claim vuln (right: the finding forged a token and got a live `200` from
+`/admin/orders`), but ALSO the `alg:none` and signature-not-verified vulns purely because the
+*disclosed source code contained* them. Unbounded, one file dump would sweep up most of the
+catalogue. So the prompt now distinguishes by what kind of claim the vuln makes: if the vuln
+IS the presence of something in source (a hardcoded secret, credential, key), quoting it
+demonstrates it completely; if the vuln is a claim about how the running app BEHAVES
+(`alg:none` is accepted, a signature mismatch is tolerated, an endpoint skips authorization),
+only an actual request/response in that finding counts — reading code that contains the bug
+is a strong argument it exists, but not evidence this scan exercised it.
+`validate_llm_matches` additionally applies the hallucination guard to every id in the list,
+dedupes, and drops any that repeat the primary.
 
 ### Ground-truth revisions
 
