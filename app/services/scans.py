@@ -131,6 +131,14 @@ async def _live_metrics(db, scan, revision=None):
 # Service functions
 # ---------------------------------------------------------------------------
 
+def _scan_with_cost_permission(scan, can_view_cost):
+    scan_out = dict(scan)
+    if not can_view_cost:
+        for key in ("cost", "tokens", "duration", "notes"):
+            scan_out[key] = None
+    return scan_out
+
+
 async def list_scans(
     db, user,
     app_id=None, scanner="", latest="", q="",
@@ -222,6 +230,7 @@ async def list_scans(
     )
     base_query = f"""SELECT scans.*, apps.name as app_name, apps.version as app_version,
                   users.name as submitter_name,
+                  apps.visibility as app_visibility, apps.team_id as app_team_id,
                   {tp_subquery} as tp_count,
                   (SELECT COUNT(*) FROM (
                        SELECT DISTINCT COALESCE(NULLIF(fp_group, ''), 'ungrouped:' || id) AS g
@@ -326,8 +335,21 @@ async def list_scans(
         )
         user_teams = await cursor.fetchall()
 
+    team_ids = {team["id"] for team in user_teams}
+    visible_scans = []
+    for scan in scans:
+        can_view_cost = bool(user and (
+            user["role"] == "admin"
+            or scan["submitted_by"] == user["sub"]
+            or (scan["app_visibility"] == "team" and scan["app_team_id"] in team_ids)
+        ))
+        scan_out = _scan_with_cost_permission(scan, can_view_cost)
+        scan_out.pop("app_visibility")
+        scan_out.pop("app_team_id")
+        visible_scans.append(scan_out)
+
     return {
-        "scans": scans,
+        "scans": visible_scans,
         "app": app,
         "scan_labels_map": scan_labels_map,
         "scanners": scanners,
@@ -423,13 +445,7 @@ async def get_scan(db, user, scan_id: int) -> dict:
     cursor = await db.execute("SELECT id, name, color FROM labels ORDER BY name")
     all_labels = [dict(row) for row in await cursor.fetchall()]
 
-    # Redact cost/tokens/duration/notes when the caller may not view them.
-    # The `can_view_cost` flag was previously just a UI hint and the raw
-    # fields shipped to the client anyway (vuln-0015).
-    scan_out = dict(scan)
-    if not can_view_cost:
-        for k in ("cost", "tokens", "duration", "notes"):
-            scan_out[k] = None
+    scan_out = _scan_with_cost_permission(scan, can_view_cost)
 
     return {
         "scan": scan_out,

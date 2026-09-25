@@ -311,3 +311,15 @@ mock delay was removed. No production data or review comments changed.
 - [x] Show metric-aware Best/Worst; retain neutral Min/Max for available points.
 - [x] Hide redundant Team filter for app-scoped views and prevent hidden team constraints.
 - [x] Verify metric direction/missing-data regression, all frontend tests, and build.
+
+### Run performance chart
+- [x] Add optional run scatter view: conservative F0.5 vs cost by default, selectable duration and quality metrics.
+- [x] Reuse canonical scoring, preserve filter/history scope, and exclude unavailable axis values explicitly.
+- [x] Enforce scan-detail metadata permissions on list responses with regression coverage.
+- [x] Exercise deterministic preview fixtures, add calculation tests, verify build, and independently review.
+Validation: 14 frontend tests, 159 backend tests, and production build pass. Local browser
+verified chart rendering, duration/weighted axes, run selection, and missing-data counts.
+
+Chart review: stabilized scanner colors across axes/filters, preserved distinct small-value
+ticks, simplified chart prose, and added the green dashed upper-left directional guide.
+Production build and frontend tests pass; live preview confirms the guide renders.

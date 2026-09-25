@@ -970,3 +970,30 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .scan-weighting-control { display: flex; gap: 0.75rem; align-items: center; padding: 0 1.25rem 1rem; color: var(--text-secondary); font-size: 0.8rem; }
 .scan-filter-secondary-scoped { grid-template-columns: 2fr 1fr; }
 .scan-stat-extremes { display: flex; justify-content: flex-end; gap: 0.75rem; white-space: nowrap; }
+
+/* Run performance scatter plot */
+.scan-chart { padding: 1.5rem; }
+.scan-chart-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 2rem; }
+.scan-chart-header h2 { font-size: 1.2rem; }
+.scan-chart-controls { display: flex; gap: 1rem; }
+.scan-chart-controls label, .scan-chart-inspector label { display: grid; gap: .35rem; font-size: .8rem; color: var(--text-secondary); }
+.scan-chart-controls select { min-width: 180px; }
+.scan-chart-coverage { margin: 1rem 0; font-size: .85rem; color: var(--text-secondary); }
+.scan-chart-plot { margin-top: 1.25rem; }
+.scan-chart-plot svg { display: block; width: 100%; }
+.scan-chart-plot text { fill: var(--text-secondary); font-family: var(--font); font-size: 12px; }
+.scan-chart-plot .scan-chart-axis { fill: var(--text); font-size: 13px; }
+.scan-chart-grid { stroke: var(--border); stroke-dasharray: 3 5; }
+.scan-chart-dot { stroke: var(--bg-panel); stroke-width: 2; cursor: pointer; fill-opacity: .85; }
+.scan-chart-dot:hover, .scan-chart-dot:focus, .scan-chart-dot[aria-pressed="true"] { stroke: var(--text); stroke-width: 2; fill-opacity: 1; outline: none; }
+.scan-chart-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 1.25rem; margin: .5rem 0 1.5rem; font-size: .8rem; color: var(--text-secondary); }
+.scan-chart-legend span { display: inline-flex; align-items: center; gap: .45rem; }
+.scan-chart-legend i { width: 9px; height: 9px; border-radius: 50%; }
+.scan-chart-inspector { border-top: 1px solid var(--border); padding: 1rem 0; display: grid; grid-template-columns: minmax(260px, 1fr) 1fr; gap: 2rem; }
+.scan-chart-inspector select { width: 100%; min-width: 0; }
+.scan-chart-run { min-height: 110px; display: flex; flex-direction: column; gap: .2rem; font-size: .85rem; overflow-wrap: anywhere; }
+.scan-chart-empty { padding: 3rem 1rem; text-align: center; color: var(--text-secondary); }
+
+.scan-chart-ideal { pointer-events: none; }
+.scan-chart-ideal rect { fill: rgba(34, 197, 94, .045); stroke: var(--success); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.scan-chart-plot .scan-chart-ideal text { fill: var(--success); font-size: 12px; }
