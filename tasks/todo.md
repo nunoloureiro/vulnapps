@@ -306,3 +306,8 @@ service was modified. Responsive changes are out of scope per Miguel.
 Review validation: 10 Node tests and production build pass. Browser regression verification
 was blocked by automatic approval review (initial timeout and rejected retry); the temporary
 mock delay was removed. No production data or review comments changed.
+
+### Group extremes and app-scoped filters
+- [x] Show metric-aware Best/Worst; retain neutral Min/Max for available points.
+- [x] Hide redundant Team filter for app-scoped views and prevent hidden team constraints.
+- [x] Verify metric direction/missing-data regression, all frontend tests, and build.

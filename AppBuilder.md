@@ -1919,3 +1919,10 @@ failures from successful empty lists. When canonical metrics are present, use th
 FP, pending, and FN counts consistently for summary statistics, sorting, and drill-down rows.
 Autocomplete search results never include the reset action; Enter with no matches preserves
 current selections. Explicit clear controls remain available.
+
+Grouped metrics show observed Best/Worst values per metric (higher is better for detection,
+TP and points found; lower is better for FP/FN/pending). Available corpus points use neutral
+Min/Max labels. These are within-group extremes, not rankings or necessarily the same scan
+across metrics. Keep sample counts visible. Hide Team when an app is selected, ignore any
+team restriction in app-scoped links, and remove stale team restrictions when changing or
+clearing App. The team filter remains available in the cross-app list.

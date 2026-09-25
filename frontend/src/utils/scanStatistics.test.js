@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { scanStatistics, scanQuality, canonicalScanCounts } from './scanStatistics.js';
+import { scanStatistics, scanQuality, canonicalScanCounts, metricExtremes } from './scanStatistics.js';
 
 const summarize = values => scanStatistics(values.map(tp_count => ({ tp_count })), 'tp_count');
 
@@ -54,4 +54,16 @@ test('Counts and Quality use the same corpus-scoped canonical counts, including 
   assert.equal(scan.pending_count, 0);
   const legacy = { tp_count: 1, fn_count: 1 };
   assert.equal(canonicalScanCounts(legacy), legacy);
+});
+
+test('best/worst direction follows the metric while corpus size stays neutral', () => {
+  const stats = { min: 2, max: 8 };
+  for (const field of ['weighted_rate', 'weighted_found', 'precision', 'recall', 'f1', 'tp_count']) {
+    assert.deepEqual(metricExtremes(stats, field), [['Best', 8], ['Worst', 2]]);
+  }
+  for (const field of ['fp_count', 'fn_count', 'pending_count']) {
+    assert.deepEqual(metricExtremes(stats, field), [['Best', 2], ['Worst', 8]]);
+  }
+  assert.deepEqual(metricExtremes(stats, 'weighted_total'), [['Min', 2], ['Max', 8]]);
+  assert.deepEqual(metricExtremes({ min: null, max: null }, 'recall'), [['Best', null], ['Worst', null]]);
 });
