@@ -283,4 +283,4 @@ service was modified. Responsive changes are out of scope per Miguel.
 - [x] Compute precision/recall/F1 per scan before macro averaging; exclude undefined ratios.
 - [x] Verify 157 self-contained backend tests on Python 3.12, three Node statistics tests,
   production build, and desktop browser flows for all/any labels, views, and reset.
-- [ ] Open upstream PR with only the scan-discovery change.
+- [x] Open upstream PR #5 with only the scan-discovery change.
