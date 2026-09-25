@@ -765,8 +765,25 @@ function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpda
                         {canEdit && !f.is_false_positive && (
                           <button className="fa-btn fa-fp" onClick={() => markFP(f.id)} title="Mark as False Positive"><IconFP />FP</button>
                         )}
-                        {canEdit && !hasMatch && !f.is_false_positive && !f.is_ignored && (
-                          <button className="fa-btn fa-ignore" onClick={() => setIgnored(f.id, true)} title="Ignore — real-ish but irrelevant here (excluded from metrics)"><IconIgnore />Ignore</button>
+                        {/* Reachable from any state, not just Pending. Ignoring
+                            discards whatever the finding currently holds, so the
+                            title says which — going FP -> Ignore used to mean
+                            mapping to a vuln, unmapping, then ignoring. */}
+                        {canEdit && !f.is_ignored && (
+                          <button className="fa-btn fa-ignore" onClick={() => setIgnored(f.id, true)}
+                            title={hasMatch
+                              ? 'Ignore — excluded from metrics. Drops the mapping below.'
+                              : f.is_false_positive
+                                ? 'Ignore — excluded from metrics entirely, unlike FP which counts against precision. Clears the FP mark.'
+                                : 'Ignore — real-ish but irrelevant here (excluded from metrics)'}>
+                            <IconIgnore />Ignore
+                          </button>
+                        )}
+                        {canEdit && f.is_ignored && (
+                          <button className="fa-btn fa-ignore" onClick={() => setIgnored(f.id, false)}
+                            title="Un-ignore — returns this finding to Pending">
+                            <IconIgnore />Un-ignore
+                          </button>
                         )}
                         {canEdit && !hasMatch && (
                           <button className="fa-btn fa-promote"

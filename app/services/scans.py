@@ -228,6 +228,19 @@ async def list_scans(
         "JOIN vulnerabilities v ON v.id = fm.vuln_id "
         "WHERE sf.scan_id = scans.id AND v.invalidated_at_revision IS NULL)"
     )
+    # TP split by the CATALOG's severity, not the scanner's reported one: these
+    # are distinct matched vulns, and the vuln row is the thing that carries the
+    # authoritative severity (it is also what the weights use). Deliberately the
+    # same scope as tp_subquery so the four buckets always sum to tp_count --
+    # a breakdown that disagreed with the number beside it would be worse than
+    # no breakdown.
+    tp_sev_subquery = (
+        "(SELECT COUNT(DISTINCT fm.vuln_id) FROM scan_findings sf "
+        "JOIN finding_matches fm ON fm.finding_id = sf.id "
+        "JOIN vulnerabilities v ON v.id = fm.vuln_id "
+        "WHERE sf.scan_id = scans.id AND v.invalidated_at_revision IS NULL "
+        "AND lower(v.severity) = ?)"
+    )
     base_query = f"""SELECT scans.*, apps.name as app_name, apps.version as app_version,
                   users.name as submitter_name,
                   apps.visibility as app_visibility, apps.team_id as app_team_id,
@@ -241,6 +254,11 @@ async def list_scans(
                        AND sf.is_false_positive=0 AND sf.is_ignored=0) as pending_count,
                   ((SELECT COUNT(*) FROM vulnerabilities WHERE app_id = scans.app_id AND invalidated_at_revision IS NULL)
                    - {tp_subquery}) as fn_count,
+                  {tp_sev_subquery} as tp_critical,
+                  {tp_sev_subquery} as tp_high,
+                  {tp_sev_subquery} as tp_medium,
+                  {tp_sev_subquery} as tp_low,
+                  {tp_sev_subquery} as tp_info,
                   {sev_subquery} as sev_critical,
                   {sev_subquery} as sev_high,
                   {sev_subquery} as sev_medium,
@@ -252,8 +270,10 @@ async def list_scans(
            WHERE {vis_clause}{extra_filters}"""
 
     # Severity subqueries each take one bound parameter, prepended to the
-    # existing visibility + filter params.
-    sev_params = ["critical", "high", "medium", "low", "info"]
+    # existing visibility + filter params. SELECT-clause placeholders bind in
+    # order of appearance, so the TP split (which is listed first) binds first.
+    SEVERITIES = ["critical", "high", "medium", "low", "info"]
+    sev_params = SEVERITIES + SEVERITIES
 
     if latest:
         sql = f"""WITH base AS ({base_query}),
@@ -274,11 +294,24 @@ async def list_scans(
     scans = await cursor.fetchall()
     if include_metrics:
         metrics = await scoring_service.score_many(db, scans)
-        detail_keys = {"tiers", "matched_vuln_ids", "missed_vuln_ids", "credit_by_vuln", "credit_by_chain"}
-        scans = [
-            dict(scan, metrics={key: value for key, value in metrics[scan["id"]].items() if key not in detail_keys})
-            for scan in scans
-        ]
+        # `metrics` stays scalar-only: the grouped view averages every field in
+        # it, so a nested value there would be meaningless to aggregate.
+        detail_keys = {"tiers", "matched_vuln_ids", "missed_vuln_ids",
+                       "credit_by_vuln", "credit_by_chain", "tp_by_severity"}
+        scored = []
+        for scan in scans:
+            m = metrics[scan["id"]]
+            # The scorer's tp supersedes the SQL one here (it also applies the
+            # existed_since_revision rule), so its split has to supersede the
+            # SQL columns too — otherwise the breakdown would no longer add up
+            # to the tp_count shown next to it.
+            split = {f"tp_{sev}": count for sev, count in m["tp_by_severity"].items()}
+            scored.append(dict(
+                scan,
+                metrics={key: value for key, value in m.items() if key not in detail_keys},
+                **split,
+            ))
+        scans = scored
 
     # Batch-fetch labels for all returned scans
     scan_labels_map: dict[int, list[dict]] = {}
@@ -893,7 +926,7 @@ async def set_finding_ignored(db, user, scan_id: int, finding_id: int, ignored: 
     await _check_scan_write(db, user, scan, app)
 
     cursor = await db.execute(
-        "SELECT title, vuln_type FROM scan_findings WHERE id = ? AND scan_id = ?",
+        "SELECT title, vuln_type, is_false_positive FROM scan_findings WHERE id = ? AND scan_id = ?",
         (finding_id, scan_id),
     )
     finding = await cursor.fetchone()
@@ -902,12 +935,25 @@ async def set_finding_ignored(db, user, scan_id: int, finding_id: int, ignored: 
     finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
 
     if ignored:
+        # Ignoring is reachable from any state, so it can discard a mapping or
+        # an FP mark. Name what was thrown away -- "marked as ignored" alone
+        # would leave no trace of the matches this dropped.
+        existing = (await finding_matches.load(db, [finding_id])).get(
+            finding_id, {"vuln_ids": [], "chain_ids": []}
+        )
+        dropped = len(existing["vuln_ids"]) + len(existing["chain_ids"])
+        was_fp = bool(finding["is_false_positive"])
+
         await finding_matches.clear(db, finding_id)
         await db.execute(
             "UPDATE scan_findings SET is_ignored = 1, is_false_positive = 0, fp_group = NULL WHERE id = ? AND scan_id = ?",
             (finding_id, scan_id),
         )
         message = f"{user['name']} marked \"{finding_label}\" as ignored"
+        if dropped:
+            message += f" (dropped {dropped} existing match{'es' if dropped != 1 else ''})"
+        elif was_fp:
+            message += " (was marked false positive)"
         action = "finding_marked_ignored"
     else:
         await db.execute(

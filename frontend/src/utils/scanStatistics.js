@@ -29,6 +29,9 @@ export function scanQuality(scan) {
 
 export function canonicalScanCounts(scan) {
   if (!scan.metrics) return scan;
+  // The tp_* split needs no mapping here: when metrics are included the
+  // service already replaces those columns with the scorer's own split, so it
+  // still sums to the tp_count taken below.
   return {
     ...scan,
     tp_count: scan.metrics.tp,

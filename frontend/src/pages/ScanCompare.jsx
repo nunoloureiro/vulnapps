@@ -209,6 +209,16 @@ function ComparisonView({ data, appId }) {
     // Mirrors app/scoring.py's compute_metrics exactly, just recomputed over
     // the severity-filtered vuln subset.
     const tpRows = applicable.filter(row => row.detections[scannerIdx]);
+
+    // The TP split, by the vuln's ground-truth severity rather than what the
+    // scanner called it. Derived from tpRows so it follows the severity filter
+    // and always sums to the `tp` shown above it.
+    const tpBySeverity = tpRows.reduce((acc, row) => {
+      const sev = (row.vuln.severity || '').toLowerCase();
+      if (acc[sev] !== undefined) acc[sev] += 1;
+      return acc;
+    }, { critical: 0, high: 0, medium: 0, low: 0, info: 0 });
+
     const severityChecked = tpRows.length;
     const severityCorrect = tpRows.filter(
       row => row.severity_reported?.[scannerIdx]?.toLowerCase() === (row.vuln.severity || '').toLowerCase()
@@ -247,6 +257,7 @@ function ComparisonView({ data, appId }) {
       severity_checked: severityChecked,
       severity_correct: severityCorrect,
       severity_accuracy: severityChecked > 0 ? severityCorrect / severityChecked : 0,
+      tp_by_severity: tpBySeverity,
       tiers,
     };
   };
@@ -396,6 +407,19 @@ function ComparisonView({ data, appId }) {
                       style={winnerStyle(i)}
                     >
                       {m[k]}
+                      {k === 'tp' && m.tp > 0 && (
+                        <div className="tp-split" style={{ justifyContent: 'center', marginTop: 2 }}>
+                          {['critical', 'high', 'medium', 'low', 'info']
+                            .filter(sev => sev !== 'info' || m.tp_by_severity[sev] > 0)
+                            .map(sev => (
+                              <span key={sev}
+                                className={`tp-split-${sev}${m.tp_by_severity[sev] === 0 ? ' tp-split-zero' : ''}`}
+                                title={`${m.tp_by_severity[sev]} at ground-truth severity ${sev}`}>
+                                {m.tp_by_severity[sev]}{sev[0].toUpperCase()}
+                              </span>
+                            ))}
+                        </div>
+                      )}
                       {k === 'fp_groups' && m.fp !== m.fp_groups && (
                         <div className="text-muted text-xs">{m.fp} findings</div>
                       )}

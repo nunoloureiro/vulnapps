@@ -161,8 +161,20 @@ export default function ScansList() {
       high: acc.high + (s.sev_high ?? 0),
       medium: acc.medium + (s.sev_medium ?? 0),
       low: acc.low + (s.sev_low ?? 0),
+      // Summed across scans, so the same vuln found by two scanners counts
+      // twice — exactly like the `tp` total it sits under.
+      tpSplit: {
+        tp_critical: acc.tpSplit.tp_critical + (s.tp_critical ?? 0),
+        tp_high: acc.tpSplit.tp_high + (s.tp_high ?? 0),
+        tp_medium: acc.tpSplit.tp_medium + (s.tp_medium ?? 0),
+        tp_low: acc.tpSplit.tp_low + (s.tp_low ?? 0),
+        tp_info: acc.tpSplit.tp_info + (s.tp_info ?? 0),
+      },
     }),
-    { tp: 0, fp: 0, pending: 0, fn: 0, critical: 0, high: 0, medium: 0, low: 0 },
+    {
+      tp: 0, fp: 0, pending: 0, fn: 0, critical: 0, high: 0, medium: 0, low: 0,
+      tpSplit: { tp_critical: 0, tp_high: 0, tp_medium: 0, tp_low: 0, tp_info: 0 },
+    },
   ), [scans]);
 
   const SeverityCells = ({ s }) => (
@@ -180,6 +192,30 @@ export default function ScansList() {
       })}
     </>
   );
+
+  // The distinct matched vulns behind the TP number, split by the CATALOG's
+  // severity, so they sum to the figure they sit beside. Deliberately not
+  // `sev-pill`: the Severity column next door already owns that shape and
+  // counts something else (findings), so two identical pill groups side by
+  // side would read as peers. `info` is dropped when zero — it nearly always
+  // is, and the row is already wide.
+  const TpBreakdown = ({ s }) => {
+    const buckets = ['critical', 'high', 'medium', 'low', 'info']
+      .map(sev => [sev, s?.[`tp_${sev}`] ?? 0])
+      .filter(([sev, n]) => sev !== 'info' || n > 0);
+    if (buckets.every(([, n]) => n === 0)) return null;
+    return (
+      <span className="tp-split">
+        {buckets.map(([sev, n]) => (
+          <span key={sev}
+            className={`tp-split-${sev}${n === 0 ? ' tp-split-zero' : ''}`}
+            title={`${n} true positive${n === 1 ? '' : 's'} at ground-truth severity ${sev}`}>
+            {n}{sev[0].toUpperCase()}
+          </span>
+        ))}
+      </span>
+    );
+  };
 
   const toggleSort = (key) => {
     if (sortKey === key) {
@@ -285,7 +321,12 @@ export default function ScansList() {
                         </td>
                       )}
                       <td data-label="Date">{scan.scan_date}</td>
-                      <td data-label="TP" className="text-success">{scan.tp_count ?? '-'}</td>
+                      <td data-label="TP" className="text-success">
+                        <span className="tp-cell">
+                          {scan.tp_count ?? '-'}
+                          <TpBreakdown s={scan} />
+                        </span>
+                      </td>
                       <td data-label="FP" className="text-error">{scan.fp_count ?? '-'}</td>
                       <td data-label="Pending" className="text-muted">{scan.pending_count ?? '-'}</td>
                       <td data-label="FN" className="text-warn">{scan.fn_count ?? '-'}</td>
@@ -324,7 +365,12 @@ export default function ScansList() {
                   <td className="text-muted" data-label="">Total</td>
                   {!appId && <td></td>}
                   <td></td>
-                  <td className="text-success" data-label="TP">{totals.tp}</td>
+                  <td className="text-success" data-label="TP">
+                    <span className="tp-cell">
+                      {totals.tp}
+                      <TpBreakdown s={totals.tpSplit} />
+                    </span>
+                  </td>
                   <td className="text-error" data-label="FP">{totals.fp}</td>
                   <td className="text-muted" data-label="Pending">{totals.pending}</td>
                   <td className="text-warn" data-label="FN">{totals.fn}</td>

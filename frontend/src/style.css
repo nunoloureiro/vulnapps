@@ -361,6 +361,25 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .sev-pill-low      .sev-pill-count { background: rgba(148,163,184,0.18); color: #94a3b8; }
 .sev-pill-low      .sev-pill-letter { background: #64748b; color: #fff; }
 
+/* Breakdown of a TP count by the catalog's severity, e.g. "45  8C 19H 14M 4L".
+ * Lighter than .sev-pill on purpose: it explains the number it sits beside
+ * rather than standing as a column of its own. Same hues as the pills so the
+ * severity vocabulary stays consistent across the page. */
+.tp-cell { display: inline-flex; align-items: baseline; gap: 0.45rem; white-space: nowrap; }
+.tp-split {
+    display: inline-flex;
+    gap: 0.3rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+.tp-split-critical { color: #ef4444; }
+.tp-split-high     { color: #f97316; }
+.tp-split-medium   { color: #eab308; }
+.tp-split-low      { color: #94a3b8; }
+.tp-split-info     { color: #64748b; }
+.tp-split-zero     { opacity: 0.35; }
+
 /* Zero-state: fade *that severity's own colour* rather than dropping to
  * a grey nobody can read. Letter side keeps its hue at ~22% opacity,
  * count side at ~8%. Structure is identical so alignment never shifts. */
@@ -997,3 +1016,35 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .scan-chart-ideal { pointer-events: none; }
 .scan-chart-ideal rect { fill: rgba(34, 197, 94, .045); stroke: var(--success); stroke-width: 1.5; stroke-dasharray: 6 5; }
 .scan-chart-plot .scan-chart-ideal text { fill: var(--success); font-size: 12px; }
+
+/* Change log: version + time in a narrow left rail, the message beside it, so
+ * a day's releases read as one column of versions rather than a wall of text. */
+.changelog-entry {
+    display: flex;
+    gap: 0.9rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--border);
+}
+.changelog-entry:first-of-type { border-top: none; padding-top: 0; }
+.changelog-meta {
+    flex: 0 0 5.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+}
+.changelog-version { font-size: 0.8rem; color: var(--accent); }
+.changelog-body { min-width: 0; }
+.changelog-subject { font-size: 0.86rem; }
+/* Commit bodies are hard-wrapped prose; keep their line breaks but let long
+ * lines reflow rather than forcing the page to scroll sideways. */
+.changelog-notes {
+    margin-top: 0.25rem;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+    .changelog-entry { flex-direction: column; gap: 0.2rem; }
+    .changelog-meta { flex-direction: row; gap: 0.5rem; align-items: baseline; }
+}

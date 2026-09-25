@@ -292,6 +292,19 @@ def compute_metrics(
     )
     severity_accuracy = severity_correct / severity_checked if severity_checked else 0.0
 
+    # --- tp split by ground-truth severity ---------------------------------
+    # The catalog's severity, not the scanner's: `tp` counts distinct matched
+    # vulns, so the vuln row is what carries the authoritative label (and it is
+    # the same side the weights come from). Every bucket is present even at
+    # zero, and they sum to `tp` by construction.
+    tp_by_severity = {sev: 0 for sev in SEVERITY_WEIGHTS}
+    for vid in in_scope_matched:
+        sev = vuln_severity.get(vid, "")
+        if sev not in tp_by_severity:
+            # An unrecognised label would otherwise vanish and break the sum.
+            sev = "info"
+        tp_by_severity[sev] += 1
+
     # --- count-based metrics ---------------------------------------------
     adjudication_complete = pending == 0
     precision_upper = tp / (tp + fp_groups) if (tp + fp_groups) > 0 else 0.0
@@ -401,6 +414,7 @@ def compute_metrics(
         "severity_accuracy": severity_accuracy,
         "severity_checked": severity_checked,
         "severity_correct": severity_correct,
+        "tp_by_severity": tp_by_severity,
         # weighted
         "weighted_found": weighted_found,
         "weighted_total": float(weighted_total),
