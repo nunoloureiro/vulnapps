@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { searchableFilterOptions } from '../utils/searchableFilterOptions';
 import './SearchableFilter.css';
 
-export function SearchableFilter({ label, value, options, onChange, placeholder = 'All', multiple = false }) {
+export function SearchableFilter({ label, value, options, onChange, placeholder = 'All', multiple = false, allLabel = placeholder }) {
   const id = useId();
   const inputRef = useRef(null);
   const listRef = useRef(null);
@@ -11,8 +12,7 @@ export function SearchableFilter({ label, value, options, onChange, placeholder 
   const selectedValues = multiple ? (Array.isArray(value) ? value : []) : [];
   const selected = options.find((option) => String(option.value) === String(value));
   const hasValue = multiple ? selectedValues.length > 0 : value !== '' && value != null;
-  const matches = options.filter((option) => String(option.label).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  const items = [{ value: '', label: placeholder }, ...matches];
+  const items = searchableFilterOptions(options, query, allLabel);
   const currentIndex = Math.min(activeIndex, items.length - 1);
 
   useEffect(() => {
@@ -25,6 +25,7 @@ export function SearchableFilter({ label, value, options, onChange, placeholder 
   }
 
   function choose(option) {
+    if (!option) return;
     if (multiple) {
       if (option.value === '') {
         onChange([]);
@@ -56,7 +57,7 @@ export function SearchableFilter({ label, value, options, onChange, placeholder 
       event.preventDefault();
       if (!open) {
         show();
-      } else {
+      } else if (items.length > 0) {
         const direction = event.key === 'ArrowDown' ? 1 : -1;
         setActiveIndex((currentIndex + direction + items.length) % items.length);
       }
@@ -83,7 +84,7 @@ export function SearchableFilter({ label, value, options, onChange, placeholder 
           aria-autocomplete="list"
           aria-expanded={open}
           aria-controls={`${id}-list`}
-          aria-activedescendant={open ? `${id}-option-${currentIndex}` : undefined}
+          aria-activedescendant={open && currentIndex >= 0 ? `${id}-option-${currentIndex}` : undefined}
           autoComplete="off"
           placeholder={open || (multiple && hasValue) ? `Search ${label.toLocaleLowerCase()}…` : placeholder}
           value={open || multiple ? query : (hasValue ? selected?.label ?? String(value) : '')}
@@ -93,7 +94,7 @@ export function SearchableFilter({ label, value, options, onChange, placeholder 
             const nextQuery = event.target.value;
             setQuery(nextQuery);
             setOpen(true);
-            setActiveIndex(nextQuery.trim() ? 1 : 0);
+            setActiveIndex(0);
           }}
           onKeyDown={handleKeyDown}
         />
@@ -151,7 +152,7 @@ export function SearchableFilter({ label, value, options, onChange, placeholder 
               </li>
             ))}
           </ul>
-          {matches.length === 0 && <div className="searchable-filter-empty" role="status">No matches found</div>}
+          {items.length === 0 && <div className="searchable-filter-empty" role="status">No matches found</div>}
         </div>
       )}
     </div>

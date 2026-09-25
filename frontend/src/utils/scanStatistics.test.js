@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { scanStatistics, scanQuality } from './scanStatistics.js';
+import { scanStatistics, scanQuality, canonicalScanCounts } from './scanStatistics.js';
 
 const summarize = values => scanStatistics(values.map(tp_count => ({ tp_count })), 'tp_count');
 
@@ -43,4 +43,15 @@ test('weighted detection uses canonical impact points, including fractional cred
   assert.equal(scanQuality({ tp_count: 9, fn_count: 1 }).weighted_rate, null);
   assert.equal(scanQuality({ metrics: { weighted_found: 0, weighted_total: 0 } }).weighted_rate, null);
   assert.equal(scanQuality({ metrics: { weighted_found: 0, weighted_total: 30 } }).weighted_rate, 0);
+});
+
+test('Counts and Quality use the same corpus-scoped canonical counts, including drill-down rows', () => {
+  const scan = canonicalScanCounts({ tp_count: 1, fn_count: 1, fp_count: 2, pending_count: 3,
+    metrics: { tp: 1, fn: 0, fp_groups: 0, pending: 0 } });
+  assert.equal(scanQuality(scan).recall, 1);
+  assert.equal(scanStatistics([scan], 'fn_count').mean, 0);
+  assert.equal(scan.fp_count, 0);
+  assert.equal(scan.pending_count, 0);
+  const legacy = { tp_count: 1, fn_count: 1 };
+  assert.equal(canonicalScanCounts(legacy), legacy);
 });

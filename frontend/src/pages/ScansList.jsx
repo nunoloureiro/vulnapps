@@ -1,10 +1,11 @@
-import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
+import { Fragment, useState, useEffect, useMemo, useRef, useReducer } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import { SearchableFilter } from '../components/SearchableFilter';
 import { groupScans, scanGroupOptions } from '../utils/scanGroups';
-import { scanStatistics, scanQuality } from '../utils/scanStatistics';
+import { initialScanRequest, scanRequestReducer, scanResultForKey } from '../utils/scanRequest';
+import { scanStatistics, scanQuality, canonicalScanCounts } from '../utils/scanStatistics';
 import { LabelBadge } from '../components/LabelBadge';
 
 // Ordering for which labels survive when the cell can only show a few.
@@ -31,10 +32,9 @@ export default function ScansList() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [data, setData] = useState(null);
+  const [request, dispatchRequest] = useReducer(scanRequestReducer, initialScanRequest);
+  const data = request.data;
   const [selected, setSelected] = useState(new Set());
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const requestId = useRef(0);
   const [metricView, setMetricView] = useState('quality');
   const weighting = searchParams.get('weighting') === 'unweighted' ? 'unweighted' : 'weighted';
@@ -65,20 +65,22 @@ export default function ScansList() {
   if (labelValues.length) queryParams.set('label_match', labelMatch);
   if (groupBy) queryParams.set('include_metrics', 'true');
   const query = queryParams.toString();
+  const requestKey = JSON.stringify([query, user?.id ?? null]);
+  const { loading, data: resultData, error } = scanResultForKey(request, requestKey);
   const fetchScans = () => {
     const id = ++requestId.current;
-    setError('');
+    dispatchRequest({ type: 'start', key: requestKey, id });
     return api.get(`/scans?${query}`).then(d => {
-      if (id === requestId.current) { setData(d); setLoading(false); }
+      if (id === requestId.current) dispatchRequest({ type: 'success', key: requestKey, id, data: d });
     }).catch(err => {
-      if (id === requestId.current) { setData(null); setError(err.message); setLoading(false); }
+      if (id === requestId.current) dispatchRequest({ type: 'failure', key: requestKey, id, error: err.message });
     });
   };
   useEffect(() => {
     setSelected(new Set());
     fetchScans();
     return () => { requestId.current += 1; };
-  }, [query, user?.id]);
+  }, [requestKey]);
   useEffect(() => setExpanded(new Set()), [query, groupBy]);
 
   useEffect(() => {
@@ -94,8 +96,8 @@ export default function ScansList() {
   };
 
   const hasFilters = labelValues.length > 0 || Object.values(params).some(v => v);
-  const rawScans = data?.scans || [];
-  const labelsMap = data?.scan_labels_map || {};
+  const rawScans = useMemo(() => (resultData?.scans || []).map(canonicalScanCounts), [resultData]);
+  const labelsMap = resultData?.scan_labels_map || {};
 
   const appId = params.app_id;
 
@@ -189,7 +191,8 @@ export default function ScansList() {
   const deleteScan = async (id) => {
     if (!confirm('Delete this scan and all its findings?')) return;
     await api.del(`/scans/${id}`);
-    setData(d => ({ ...d, scans: d.scans.filter(s => s.id !== id) }));
+    setSelected(previous => { const next = new Set(previous); next.delete(id); return next; });
+    await fetchScans();
   };
 
   const bulkDelete = async () => {
@@ -320,8 +323,6 @@ export default function ScansList() {
         </div>
   );
 
-  if (loading) return <p className="text-muted">Loading...</p>;
-
   return (
     <>
       <div className="page-header">
@@ -346,7 +347,7 @@ export default function ScansList() {
           </div>
           <div className="scan-filter-secondary">
             <div className="scan-label-filter">
-              <SearchableFilter multiple label="Labels" placeholder="Search and select labels…" value={labelValues}
+              <SearchableFilter multiple label="Labels" allLabel="All labels" placeholder="Search and select labels…" value={labelValues}
                 options={(data?.all_labels || []).map(value => ({ value, label: value }))}
                 onChange={value => setFilter('label', value)} />
               {labelValues.length > 1 && <div className="scan-label-matching"><span>Include scans matching</span>
@@ -378,12 +379,12 @@ export default function ScansList() {
             {Object.entries(scanGroupOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>}
-        <span className="scan-result-count text-muted text-sm" role="status">{scans.length} {scans.length === 1 ? 'scan' : 'scans'}{groupBy ? ` in ${groups.length} groups` : ''}</span>
+        <span className="scan-result-count text-muted text-sm" role="status">{loading ? 'Loading scans…' : error ? 'Scans unavailable' : `${scans.length} ${scans.length === 1 ? 'scan' : 'scans'}${groupBy ? ` in ${groups.length} groups` : ''}`}</span>
       </div>
 
       {error && <p role="alert" className="text-error">Could not load scans: {error} <button className="btn btn-outline btn-sm" onClick={fetchScans}>Retry</button></p>}
 
-      {user && selected.size > 0 && (
+      {!loading && !error && user && selected.size > 0 && (
         <div className="flex gap-1 items-center mb-2">
           <span className="text-muted text-sm">{selected.size} selected</span>
           {appId && selected.size >= 2 && (
@@ -396,7 +397,7 @@ export default function ScansList() {
         </div>
       )}
 
-      {error ? null : scans.length > 0 ? (
+      {loading ? <p role="status" className="text-muted">{groupBy ? 'Loading scored scans…' : 'Loading scans…'}</p> : error ? null : scans.length > 0 ? (
         groupBy ? <div className="card scan-summary-card">
           <div className="scan-summary-heading">
             <div><h2>Scan performance</h2><p>Mean <span className="text-muted">± standard deviation</span><span className="scan-legend-divider">·</span>Min–max beneath</p></div>

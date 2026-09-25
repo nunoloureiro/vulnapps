@@ -1911,3 +1911,11 @@ Grouped lists request `include_metrics=true`. The service batches authorized sca
 inputs, shares corpus/revision reads, and calls the canonical scoring implementation. The
 ordinary list omits this optional computation. Failed list requests clear stale results and
 show the load error rather than a misleading successful empty state.
+
+Scan result payloads are keyed by API query and authenticated user. Render results only after
+the matching request succeeds, including when entering grouped mode to load canonical metrics;
+keep filter controls mounted while loading. Ignore superseded responses and distinguish load
+failures from successful empty lists. When canonical metrics are present, use their TP, grouped
+FP, pending, and FN counts consistently for summary statistics, sorting, and drill-down rows.
+Autocomplete search results never include the reset action; Enter with no matches preserves
+current selections. Explicit clear controls remain available.

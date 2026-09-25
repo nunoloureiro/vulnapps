@@ -73,7 +73,7 @@ function scanResponse(params) {
     scans: rows.map((scan, i) => params.get('include_metrics') === 'true' ? {
       ...scan,
       metrics: {
-        tp: scan.tp_count, fp_groups: scan.fp_count, fn: scan.fn_count,
+        tp: scan.tp_count, fp_groups: scan.fp_count, fn: scan.fn_count, pending: scan.pending_count,
         weighted_found: scan.tp_count === null ? null : scan.tp_count * (2 + scan.id % 3),
         weighted_total: scan.tp_count === null ? null : 140,
       },

@@ -26,3 +26,14 @@ export function scanQuality(scan) {
     f1: valid(tp, fp, fn) && 2 * tp + fp + fn > 0 ? 2 * tp / (2 * tp + fp + fn) : null,
   };
 }
+
+export function canonicalScanCounts(scan) {
+  if (!scan.metrics) return scan;
+  return {
+    ...scan,
+    tp_count: scan.metrics.tp,
+    fp_count: scan.metrics.fp_groups,
+    pending_count: scan.metrics.pending,
+    fn_count: scan.metrics.fn,
+  };
+}

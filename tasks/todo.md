@@ -296,3 +296,13 @@ service was modified. Responsive changes are out of scope per Miguel.
 - [x] Verify score parity across app/corpus revisions, chain credit, and empty denominators.
 - [x] Pass 158 backend tests, six Node tests, frontend build, and browser toggle/reload checks.
 - [x] Refresh PR screenshots for both scoring modes.
+
+### Review corrections
+- [x] Use canonical counts consistently in grouped statistics and scan rows.
+- [x] Hide results until the matching query/user request completes; preserve editable filters.
+- [x] Preserve selections on no-match Enter; keep reset separate from search matches.
+- [x] Add request-state/count-source/autocomplete regression coverage and run npm test in the
+  Docker frontend stage used by CI before building assets.
+Review validation: 10 Node tests and production build pass. Browser regression verification
+was blocked by automatic approval review (initial timeout and rejected retry); the temporary
+mock delay was removed. No production data or review comments changed.
