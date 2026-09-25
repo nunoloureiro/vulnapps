@@ -37,3 +37,13 @@ export function canonicalScanCounts(scan) {
     fn_count: scan.metrics.fn,
   };
 }
+
+export function metricExtremes(stats, field) {
+  if (['fp_count', 'fn_count', 'pending_count'].includes(field)) {
+    return [['Best', stats.min], ['Worst', stats.max]];
+  }
+  if (['weighted_rate', 'weighted_found', 'precision', 'recall', 'f1', 'tp_count'].includes(field)) {
+    return [['Best', stats.max], ['Worst', stats.min]];
+  }
+  return [['Min', stats.min], ['Max', stats.max]];
+}

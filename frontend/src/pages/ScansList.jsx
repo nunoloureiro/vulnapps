@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import { SearchableFilter } from '../components/SearchableFilter';
 import { groupScans, scanGroupOptions } from '../utils/scanGroups';
 import { initialScanRequest, scanRequestReducer, scanResultForKey } from '../utils/scanRequest';
-import { scanStatistics, scanQuality, canonicalScanCounts } from '../utils/scanStatistics';
+import { scanStatistics, scanQuality, canonicalScanCounts, metricExtremes } from '../utils/scanStatistics';
 import { LabelBadge } from '../components/LabelBadge';
 
 // Ordering for which labels survive when the cell can only show a few.
@@ -55,7 +55,8 @@ export default function ScansList() {
     scanner: searchParams.get('scanner') || '',
     latest: searchParams.get('latest') || '',
     q: searchParams.get('q') || '',
-    filter: searchParams.get('filter') || '',
+    filter: searchParams.get('app_id') && searchParams.get('filter')?.startsWith('team:')
+      ? '' : searchParams.get('filter') || '',
   };
 
   const labelValues = [...new Set(searchParams.getAll('label').filter(Boolean))];
@@ -90,6 +91,7 @@ export default function ScansList() {
   const setFilter = (key, val) => {
     const p = new URLSearchParams(searchParams);
     p.delete(key);
+    if (key === 'app_id' && p.get('filter')?.startsWith('team:')) p.delete('filter');
     if (Array.isArray(val)) val.forEach(value => p.append(key, value));
     else if (val) p.set(key, val);
     setSearchParams(p);
@@ -345,7 +347,7 @@ export default function ScansList() {
               <input className="form-input" aria-label="Search scans" placeholder="App, scanner or submitter…" value={params.q} onChange={e => setFilter('q', e.target.value)} />
             </label>
           </div>
-          <div className="scan-filter-secondary">
+          <div className={`scan-filter-secondary${appId || !teams.length ? ' scan-filter-secondary-scoped' : ''}`}>
             <div className="scan-label-filter">
               <SearchableFilter multiple label="Labels" allLabel="All labels" placeholder="Search and select labels…" value={labelValues}
                 options={(data?.all_labels || []).map(value => ({ value, label: value }))}
@@ -362,7 +364,7 @@ export default function ScansList() {
                 <option value="">All scans</option><option value="1">Latest per scanner</option>
               </select>
             </label>
-            {teams.length > 0 && <SearchableFilter label="Team" placeholder="All teams" value={params.filter}
+            {!appId && teams.length > 0 && <SearchableFilter label="Team" placeholder="All teams" value={params.filter}
               options={teams.map(t => ({ value: `team:${t.id}`, label: t.name }))}
               onChange={value => setFilter('filter', value)} />}
           </div>
@@ -400,7 +402,7 @@ export default function ScansList() {
       {loading ? <p role="status" className="text-muted">{groupBy ? 'Loading scored scans…' : 'Loading scans…'}</p> : error ? null : scans.length > 0 ? (
         groupBy ? <div className="card scan-summary-card">
           <div className="scan-summary-heading">
-            <div><h2>Scan performance</h2><p>Mean <span className="text-muted">± standard deviation</span><span className="scan-legend-divider">·</span>Min–max beneath</p></div>
+            <div><h2>Scan performance</h2><p>Mean <span className="text-muted">± standard deviation</span><span className="scan-legend-divider">·</span>Best / worst beneath</p></div>
             <div className="scan-summary-actions"><div className="scan-segmented" role="group" aria-label="Summary metrics">
               <button aria-pressed={metricView === 'quality'} onClick={() => setMetricView('quality')}>Quality</button>
               <button aria-pressed={metricView === 'counts'} onClick={() => setMetricView('counts')}>Counts</button>
@@ -440,9 +442,10 @@ export default function ScansList() {
                         <strong>{stats.mean === null ? '—' : format(stats.mean)}</strong>
                         <span className="scan-stat-spread"> ± {stats.std === null ? '—' : format(stats.std)}</span>
                       </div>
-                      <div className="text-muted text-xs">{stats.n ? `${format(stats.min)}–${format(stats.max)}` : 'No data'}
-                        <span className="scan-stat-missing"> · n={stats.n}/{group.scans.length}</span>
+                      <div className="scan-stat-extremes text-xs">
+                        {metricExtremes(stats, field).map(([name, value]) => <span key={name}><span className="text-muted">{name} </span>{format(value)}</span>)}
                       </div>
+                      <div className="text-muted text-xs">{stats.n ? `n=${stats.n}/${group.scans.length}` : `No data · n=0/${group.scans.length}`}</div>
                     </div>
                   </td>;
 
@@ -453,7 +456,7 @@ export default function ScansList() {
           </table>
         </div>
           <details className="scan-stat-help"><summary>How these statistics are calculated</summary>
-            <p>Weighted detection uses the same current-revision scorer as scan detail: credited vulnerability and chain impact points / available impact points. Weighted precision and weighted F1 are not defined here. Unweighted metrics use vulnerability counts and clustered false positives from that scorer. Each scan has equal weight; scores are calculated per scan before averaging (macro average). Precision = TP/(TP+FP), recall = TP/(TP+FN), F1 = 2TP/(2TP+FP+FN). Pending findings are excluded, so quality scores remain provisional while findings are pending. Undefined ratios are excluded, not counted as zero. Percentage standard deviations describe percentage-point spread. We show the arithmetic mean, sample standard deviation (n−1), and minimum–maximum. Missing values are excluded; n shows the measured/total scans for each metric. Small samples describe observed variation, not evidence of a performance difference. Standard deviation is unavailable for a single scan. Counts are per scan, not distinct findings across scans. Comparisons are most meaningful within the same app version and benchmark corpus; mixed groups are descriptive summaries, not controlled model evaluations.</p>
+            <p>Weighted detection uses the same current-revision scorer as scan detail: credited vulnerability and chain impact points / available impact points. Weighted precision and weighted F1 are not defined here. Unweighted metrics use vulnerability counts and clustered false positives from that scorer. Each scan has equal weight; scores are calculated per scan before averaging (macro average). Precision = TP/(TP+FP), recall = TP/(TP+FN), F1 = 2TP/(2TP+FP+FN). Pending findings are excluded, so quality scores remain provisional while findings are pending. Undefined ratios are excluded, not counted as zero. Percentage standard deviations describe percentage-point spread. We show the arithmetic mean, sample standard deviation (n−1), and observed best/worst values within each group. Higher is better for detection scores, TP, and points found; lower is better for FP, FN, and pending counts. Available points describe corpus size, so they use neutral min/max labels. Best and worst can come from different scans for each metric; they do not rank configurations. Missing values are excluded; n shows the measured/total scans for each metric. Small samples describe observed variation, not evidence of a performance difference. Standard deviation is unavailable for a single scan. Counts are per scan, not distinct findings across scans. Comparisons are most meaningful within the same app version and benchmark corpus; mixed groups are descriptive summaries, not controlled model evaluations.</p>
           </details>
         </div> : renderScanTable(scans)
       ) : (
