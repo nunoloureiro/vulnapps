@@ -106,9 +106,13 @@ async def require_user(request: Request) -> dict:
 
 
 async def require_admin(request: Request) -> dict:
+    """Admin role AND an unrestricted key — see the note in
+    ``app/routers/api/admin.py``'s ``_require_admin``, the sync variant every
+    admin route actually calls. Kept in step so the two cannot drift."""
     user = await require_user(request)
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+    require_scope(user, "full")
     return user
 
 

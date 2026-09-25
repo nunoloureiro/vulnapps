@@ -5,27 +5,13 @@ against a temporary copy of the production database.
 """
 
 import json
-import os
-import shutil
-import tempfile
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-# Point to a temp copy of the real DB so migrations run and data exists
-_REAL_DB = os.path.join(os.path.dirname(__file__), "..", "vulnapps.db")
-_TMP_DIR = tempfile.mkdtemp()
-_TMP_DB = os.path.join(_TMP_DIR, "test_vulnapps.db")
-
-# Copy the database before importing the app (config reads DATABASE_PATH at import)
-shutil.copy2(_REAL_DB, _TMP_DB)
-# Also copy WAL/SHM if present (so we get the latest data)
-for ext in ("-wal", "-shm"):
-    src = _REAL_DB + ext
-    if os.path.exists(src):
-        shutil.copy2(src, _TMP_DB + ext)
-
-os.environ["DATABASE_PATH"] = _TMP_DB
+# The temp copy of the real DB is set up in tests/conftest.py, which pytest
+# imports before any test module — doing it here instead only worked while this
+# file happened to sort first alphabetically.
 
 # Run migrations on the test DB before importing the app (since ASGITransport
 # doesn't trigger FastAPI lifespan events).

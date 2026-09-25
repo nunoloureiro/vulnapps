@@ -528,7 +528,7 @@ On startup (via FastAPI lifespan), all `.sql` files in `migrations/` are execute
 - `get_current_user` middleware checks Bearer header (JWT or API key), injects result into `request.state.user`
 - Role-based auth functions raise HTTPException 401/403:
   - `require_user` — any authenticated user
-  - `require_admin` — admin only
+  - `require_admin` — admin role **and** `full` key scope (see **Security** below)
   - `require_app_write(request, db, app)` — admin, creator, or team contributor+
   - `require_scan_write(request, db, scan, app)` — admin, submitter, or team contributor+
   - `get_team_role(db, user_id, team_id)` — returns team role or None
@@ -541,6 +541,16 @@ On startup (via FastAPI lifespan), all `.sql` files in `migrations/` are execute
 - Password hashes are excluded from the admin user list endpoint
 - API key scope enforcement on all write endpoints
 - All write operations check both authentication and authorization
+- **Role and scope are independent, and admin routes require both.** `role` says
+  who the caller is; `api_key_scope` caps what that particular credential may do
+  (`read` < `vuln-mapper` < `full`; a JWT/cookie session has no scope and is
+  unrestricted). Every route in `app/routers/api/admin.py` goes through
+  `_require_admin`, which checks the role **and then** `require_scope(user, "full")`.
+  Without the scope check a narrow key minted by an admin reached every admin
+  route, user management included — the scope was a label rather than a limit.
+  Role is checked first, so a `full`-scope key cannot buy admin for a non-admin.
+  `tests/test_admin_scope.py` pins each case, including a structural test that
+  every route in the admin router actually calls the gate.
 
 ### SPA serving & cache safety (blank-page guard)
 The SPA catch-all (`app/main.py`) must not turn a cache-skewed deploy into a

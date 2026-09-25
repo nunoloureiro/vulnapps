@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Request, HTTPException
 from app.database import get_connection
+from app.dependencies import require_scope
 from app.services import users as users_service
 from app.services import labels as labels_service
 from app.changelog import get_changelog
@@ -16,6 +17,12 @@ def _require_admin(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Not authenticated")
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+    # Role and scope are independent: an admin can mint a narrow key, and that
+    # key must stay narrow. Without this, a 'read' or 'vuln-mapper' key issued
+    # by an admin reached every route here -- user management included --
+    # because only the role was checked, which made the scope a label rather
+    # than a limit. JWT/cookie sessions carry no scope and are unaffected.
+    require_scope(user, "full")
     return user
 
 

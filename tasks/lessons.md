@@ -91,3 +91,35 @@ sectioning the original scan list alone does not meet the aggregation use case.
 For this scan-filter work, keep verification focused on desktop; responsive redesign is out of scope.
 
 Grouped scan metrics need statistical summaries (mean, standard deviation, range, sample count), not only averages or collapsible lists. Keep grouping optional.
+
+## Verify a permission boundary by exercising it, not by reading the check
+
+**Mistake:** Shipped an admin-only endpoint by copying the surrounding
+convention (`_require_admin`) and called it done. Probing the deployed route
+with a deliberately *narrow* API key returned 200 where 403 was expected: every
+route in the admin router checked `user["role"] == "admin"` and never consulted
+`api_key_scope`, so a `read` or `vuln-mapper` key minted by an admin reached all
+of them, user management included. The scope was a label, not a limit. Matching
+the local convention reproduced the convention's bug.
+
+**Rule:** When adding an endpoint behind an authorization check, test it with a
+credential that *should* be refused, not only one that should pass. For this
+codebase the axes are independent — `role` (who) and `api_key_scope` (what this
+credential may do) — so a role check alone never constrains a key. Ask "which
+credential would I expect to bounce here?" and send it.
+
+## A test module that configures the app at import time is ordering-dependent
+
+**Mistake:** Adding `tests/test_admin_scope.py` broke `tests/test_api_endpoints.py`
+at collection with "unable to open database file". Nothing was wrong with either
+file. `app/config.py` reads DATABASE_PATH once, at import, after `load_dotenv()`;
+test_api_endpoints set that env var at module scope before importing the app, and
+that only worked because it sorted first alphabetically. A new file starting with
+"adm" imported `app.*` earlier, so `.env`'s DATABASE_PATH won instead.
+
+**Rule:** Process-wide setup that must happen before the app is imported belongs
+in `tests/conftest.py`, which pytest loads before any test module — never at the
+top of a test file, where correctness depends on filename sort order. When a
+seemingly unrelated new test file breaks an existing one, suspect import order
+before suspecting the new test, and fix the ordering dependency rather than
+renaming the file to dodge it.
