@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:mock": "vite --config vite.preview.config.js",
     "build": "vite build",
     "preview": "vite preview"
   },

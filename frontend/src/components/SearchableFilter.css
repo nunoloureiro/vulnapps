@@ -1,0 +1,23 @@
+.searchable-filter { position: relative; min-width: 160px; flex: 1 1 160px; }
+.searchable-filter-label { display: block; margin-bottom: 0.35rem; color: var(--text-secondary); font-size: 0.75rem; font-weight: 500; }
+.searchable-filter-control { display: flex; align-items: center; min-height: 38px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+.searchable-filter-control:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+.searchable-filter-control input { width: 100%; min-width: 0; padding: 0.5rem 0.65rem; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; font-size: 0.8125rem; line-height: 1.5; text-overflow: ellipsis; }
+.searchable-filter-control input::placeholder { color: var(--text-secondary); opacity: 1; }
+.searchable-filter-clear { flex: none; padding: 0 0.35rem; border: 0; background: transparent; color: var(--text-secondary); font-size: 1.125rem; cursor: pointer; }
+.searchable-filter-clear:hover { color: var(--text); }
+.searchable-filter-clear:focus-visible { outline: 2px solid var(--accent); border-radius: 3px; }
+.searchable-filter-chevron { padding: 0 0.65rem 0.2rem 0.2rem; color: var(--text-muted); pointer-events: none; }
+.searchable-filter-menu { position: absolute; top: calc(100% + 5px); left: 0; width: 100%; min-width: 200px; z-index: 30; border: 1px solid var(--border-hover); border-radius: var(--radius); background: var(--bg-panel); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); overflow: hidden; }
+.searchable-filter-menu ul { list-style: none; max-height: 240px; overflow-y: auto; padding: 0.25rem; margin: 0; }
+.searchable-filter-menu li { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.45rem 0.5rem; border-radius: 4px; color: var(--text-secondary); font-size: 0.8125rem; overflow-wrap: anywhere; cursor: pointer; }
+.searchable-filter-menu li.is-active { background: var(--accent-dim); color: var(--text); }
+.searchable-filter-menu li[aria-selected="true"] { color: var(--accent); }
+.searchable-filter-selection { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 0.75rem; overflow-wrap: anywhere; }
+.searchable-filter-empty { padding: 0.6rem 0.75rem; color: var(--text-muted); font-size: 0.8125rem; }
+.searchable-filter-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.4rem 0 0; padding: 0; list-style: none; }
+.searchable-filter-chips li { display: inline-flex; align-items: center; gap: 0.35rem; max-width: 100%; padding: 0.15rem 0.35rem 0.15rem 0.5rem; border: 1px solid var(--border-hover); border-radius: 5px; background: var(--accent-dim); color: var(--text); font-size: 0.75rem; }
+.searchable-filter-chips li > span { overflow-wrap: anywhere; min-width: 0; }
+.searchable-filter-chips button { flex: none; border: 0; border-radius: 3px; padding: 0 0.2rem; background: transparent; color: var(--text-secondary); font-size: 1rem; line-height: 1.3; cursor: pointer; }
+.searchable-filter-chips button:hover { color: var(--text); }
+.searchable-filter-chips button:focus-visible { outline: 2px solid var(--accent); }

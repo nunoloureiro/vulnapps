@@ -30,6 +30,22 @@ uvicorn app.main:app --reload --port 8000
 
 Database migrations run automatically on startup.
 
+## Local scan-filter preview
+
+```bash
+cd frontend
+npm ci
+npm run dev:mock
+```
+
+Open [the synthetic scans preview](http://127.0.0.1:5174/scans?app_id=305).
+It runs the real frontend with 18 deterministic mock scans across three apps,
+including overlapping labels, scans without labels, and missing metrics. Filters
+work against these fixtures. The banner identifies synthetic data; the preview
+uses a separate mock login storage key, blocks API writes, and never proxies to a
+backend. Only the scan list and its filter endpoints are mocked; detail and
+comparison pages require the regular development server.
+
 ## Configuration
 
 | Variable | Description | Default |

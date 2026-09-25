@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import FileResponse
 from app.database import get_connection
 from app.services import scans as scans_service
@@ -25,7 +27,8 @@ async def list_scans(
     scanner: str = "",
     latest: str = "",
     q: str = "",
-    label: str = "",
+    label: list[str] = Query(default=[]),
+    label_match: Literal["all", "any"] = "all",
     filter: str = "",
 ):
     user = request.state.user
@@ -45,6 +48,7 @@ async def list_scans(
             latest=latest,
             q=q,
             label=label,
+            label_match=label_match,
             filter=filter,
         )
     except ValueError as e:
