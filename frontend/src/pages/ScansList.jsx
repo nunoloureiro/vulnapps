@@ -6,6 +6,8 @@ import { SearchableFilter } from '../components/SearchableFilter';
 import { groupScans, scanGroupOptions } from '../utils/scanGroups';
 import { initialScanRequest, scanRequestReducer, scanResultForKey } from '../utils/scanRequest';
 import { scanStatistics, scanQuality, canonicalScanCounts, metricExtremes } from '../utils/scanStatistics';
+import { ScanPerformanceChart } from '../components/ScanPerformanceChart';
+import { chartMetrics, chartResources } from '../utils/scanChart';
 import { LabelBadge } from '../components/LabelBadge';
 
 // Ordering for which labels survive when the cell can only show a few.
@@ -45,6 +47,22 @@ export default function ScansList() {
     : [['tp_count', 'TP'], ['fp_count', 'FP'], ['pending_count', 'Pending'], ['fn_count', 'FN']];
   const [expanded, setExpanded] = useState(new Set());
   const groupBy = Object.hasOwn(scanGroupOptions, searchParams.get('group_by')) ? searchParams.get('group_by') : '';
+  const chartView = searchParams.get('view') === 'chart';
+  const chartX = Object.hasOwn(chartResources, searchParams.get('chart_x')) ? searchParams.get('chart_x') : 'cost';
+  const chartY = Object.hasOwn(chartMetrics, searchParams.get('chart_y')) ? searchParams.get('chart_y') : 'f05';
+  const setView = view => {
+    const p = new URLSearchParams(searchParams);
+    p.delete('view');
+    if (view === 'chart') p.set('view', 'chart');
+    else if (view === 'individual') p.delete('group_by');
+    else if (!groupBy) p.set('group_by', 'scanner');
+    setSearchParams(p);
+  };
+  const resetFilters = () => {
+    const p = new URLSearchParams(searchParams);
+    ['app_id', 'scanner', 'latest', 'q', 'filter', 'label', 'label_match'].forEach(key => p.delete(key));
+    setSearchParams(p);
+  };
   const [teams, setTeams] = useState([]);
   const [bulkLabel, setBulkLabel] = useState('');
   const [sortKey, setSortKey] = useState('date');
@@ -64,7 +82,7 @@ export default function ScansList() {
   const queryParams = new URLSearchParams(Object.entries(params).filter(([, value]) => value));
   labelValues.forEach(label => queryParams.append('label', label));
   if (labelValues.length) queryParams.set('label_match', labelMatch);
-  if (groupBy) queryParams.set('include_metrics', 'true');
+  if (groupBy || chartView) queryParams.set('include_metrics', 'true');
   const query = queryParams.toString();
   const requestKey = JSON.stringify([query, user?.id ?? null]);
   const { loading, data: resultData, error } = scanResultForKey(request, requestKey);
@@ -334,7 +352,7 @@ export default function ScansList() {
       {user && (
         <section className="scan-filters mb-2" aria-label="Filter scans">
           <div className="scan-filter-heading"><span>Filter scans</span>
-            {hasFilters && <button className="scan-text-button" onClick={() => setSearchParams({ ...(groupBy ? { group_by: groupBy } : {}), ...(weighting === 'unweighted' ? { weighting } : {}) })}>Reset filters</button>}
+            {hasFilters && <button className="scan-text-button" onClick={resetFilters}>Reset filters</button>}
           </div>
           <div className="scan-filter-primary">
             <SearchableFilter label="App" placeholder="All apps" value={params.app_id}
@@ -373,20 +391,21 @@ export default function ScansList() {
 
       <div className="scan-view-bar mb-2">
         <div className="scan-segmented" role="group" aria-label="Results view">
-          <button aria-pressed={!groupBy} onClick={() => setFilter('group_by', '')}>Individual scans</button>
-          <button aria-pressed={!!groupBy} onClick={() => { if (!groupBy) setFilter('group_by', 'scanner'); }}>Grouped summary</button>
+          <button aria-pressed={!chartView && !groupBy} onClick={() => setView('individual')}>Individual scans</button>
+          <button aria-pressed={!chartView && !!groupBy} onClick={() => setView('grouped')}>Grouped summary</button>
+          <button aria-pressed={chartView} onClick={() => setView('chart')}>Performance chart</button>
         </div>
-        {groupBy && <label className="scan-group-control">Group by
+        {!chartView && groupBy && <label className="scan-group-control">Group by
           <select aria-label="Group by" className="form-select" value={groupBy} onChange={e => setFilter('group_by', e.target.value)}>
             {Object.entries(scanGroupOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>}
-        <span className="scan-result-count text-muted text-sm" role="status">{loading ? 'Loading scans…' : error ? 'Scans unavailable' : `${scans.length} ${scans.length === 1 ? 'scan' : 'scans'}${groupBy ? ` in ${groups.length} groups` : ''}`}</span>
+        <span className="scan-result-count text-muted text-sm" role="status">{loading ? 'Loading scans…' : error ? 'Scans unavailable' : `${scans.length} ${scans.length === 1 ? 'scan' : 'scans'}${!chartView && groupBy ? ` in ${groups.length} groups` : ''}`}</span>
       </div>
 
       {error && <p role="alert" className="text-error">Could not load scans: {error} <button className="btn btn-outline btn-sm" onClick={fetchScans}>Retry</button></p>}
 
-      {!loading && !error && user && selected.size > 0 && (
+      {!loading && !error && !chartView && user && selected.size > 0 && (
         <div className="flex gap-1 items-center mb-2">
           <span className="text-muted text-sm">{selected.size} selected</span>
           {appId && selected.size >= 2 && (
@@ -399,7 +418,7 @@ export default function ScansList() {
         </div>
       )}
 
-      {loading ? <p role="status" className="text-muted">{groupBy ? 'Loading scored scans…' : 'Loading scans…'}</p> : error ? null : scans.length > 0 ? (
+      {loading ? <p role="status" className="text-muted">{groupBy || chartView ? 'Loading scored scans…' : 'Loading scans…'}</p> : error ? null : chartView ? <ScanPerformanceChart scans={scans} labelsMap={labelsMap} resource={chartX} metric={chartY} onAxisChange={setFilter} latest={!!params.latest} /> : scans.length > 0 ? (
         groupBy ? <div className="card scan-summary-card">
           <div className="scan-summary-heading">
             <div><h2>Scan performance</h2><p>Mean <span className="text-muted">± standard deviation</span><span className="scan-legend-divider">·</span>Best / worst beneath</p></div>

@@ -1,0 +1,33 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { conservativeF05, chartRuns, formatChartResource } from './scanChart.js';
+
+const scan = { id: 1, cost: 2, duration: 120, metrics: { tp: 8, fp_groups: 2, fn: 2, pending: 3, weighted_found: 27, weighted_total: 30 } };
+
+test('conservative F0.5 penalizes unresolved items with canonical clustered FP and requires a corpus', () => {
+  assert.equal(conservativeF05(scan), 10 / 15.5);
+  assert.equal(conservativeF05({ ...scan, metrics: { ...scan.metrics, pending: 0 } }), 10 / 12.5);
+  assert.equal(conservativeF05({ metrics: { tp: 0, fp_groups: 0, fn: 5, pending: 0 } }), 0);
+  assert.equal(conservativeF05({ metrics: { tp: 0, fp_groups: 1, fn: 0, pending: 0 } }), null);
+  assert.equal(conservativeF05({ metrics: { tp: 1, fp_groups: 0, fn: 2 } }), null);
+});
+
+test('chart preserves individual runs and zero values, excludes unavailable axes, and converts seconds to minutes', () => {
+  const runs = [scan, { ...scan, id: 2, cost: 0 }, { ...scan, id: 3, cost: null }, { ...scan, id: 4, metrics: null }, { ...scan, id: 5, cost: -1, metrics: null }];
+  const result = chartRuns(runs, 'cost', 'f05');
+  assert.deepEqual(result.points.map(p => p.scan.id), [1, 2]);
+  assert.equal(result.points[1].x, 0);
+  assert.equal(result.excluded, 3);
+  assert.equal(result.missingResource, 2);
+  assert.equal(result.missingScore, 2);
+  assert.equal(chartRuns([scan], 'duration', 'recall').points[0].x, 2);
+  assert.equal(chartRuns([scan], 'cost', 'weighted_rate').points[0].y, 0.9);
+});
+
+test('short-duration and tiny-cost ticks remain distinct instead of rounding to zero', () => {
+  for (const resource of ['cost', 'duration']) {
+    const ticks = [0, .005, .01, .015, .02].map(value => formatChartResource(value, resource));
+    assert.equal(new Set(ticks).size, 5);
+    assert.notEqual(formatChartResource(.000001, resource), formatChartResource(0, resource));
+  }
+});

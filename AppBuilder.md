@@ -1926,3 +1926,24 @@ Min/Max labels. These are within-group extremes, not rankings or necessarily the
 across metrics. Keep sample counts visible. Hide Team when an app is selected, ignore any
 team restriction in app-scoped links, and remove stale team restrictions when changing or
 clearing App. The team filter remains available in the cross-app list.
+
+### Run performance chart
+The scans page has an optional Performance chart view independent of grouping. Each point
+represents one filtered scan; History still controls all runs versus latest per scanner/app.
+Default axes are cost in USD and conservative F0.5. X can switch to wall-clock duration in
+minutes. Y offers conservative F0.5, adjudicated precision, recall, F1, and impact-weighted
+detection (including chain credit). Conservative F0.5 uses
+1.25 TP / (1.25 TP + 0.25 FN + clustered FP + pending), prioritizes precision, and is undefined
+without a benchmark corpus. This follows testbed's unresolved-item penalty with vulnapps'
+canonical clustered FP units. Weighted precision/F0.5 are not offered without weighted FP data.
+Use canonical current-revision metrics. Missing or unauthorized cost/duration and undefined
+scores are excluded, counted visibly, never plotted as zero. Zero cost and zero scores remain
+valid. Colors identify scanners. Hover/focus reveals a run; clicking/selecting opens its
+metrics and a scan-detail link. Provide an accessible run selector for coincident points.
+Keep quality on a fixed 0–100% axis, resource use on a zero-based linear axis, and explain
+that the upper left is preferable. Filters and axis/view selections are shareable in the URL.
+Mixed app/corpus comparisons are descriptive; pending quality is provisional. List endpoints
+must redact cost, tokens, duration, and notes using scan-detail visibility rules.
+
+The scatter chart includes a green dashed upper-left guide for higher quality and lower
+cost/shorter duration. This is a directional visual cue, not a scoring threshold.
