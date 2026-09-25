@@ -966,3 +966,4 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .scan-stat-help summary { cursor: pointer; }
 .scan-stat-help p { max-width: 850px; line-height: 1.6; margin: 0.75rem 0 0; }
 .scan-summary-actions { display: flex; align-items: center; gap: 1rem; }
+.scan-group-description { display: block; margin-top: 0.4rem; max-width: 340px; color: var(--text-muted); font-size: 0.75rem; line-height: 1.5; overflow-wrap: anywhere; }

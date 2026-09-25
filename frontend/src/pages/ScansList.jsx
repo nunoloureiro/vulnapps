@@ -3,6 +3,7 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import { SearchableFilter } from '../components/SearchableFilter';
+import { groupScans, scanGroupOptions } from '../utils/scanGroups';
 import { scanStatistics, scanQuality } from '../utils/scanStatistics';
 import { LabelBadge } from '../components/LabelBadge';
 
@@ -40,7 +41,7 @@ export default function ScansList() {
     ? [['precision', 'Precision'], ['recall', 'Recall'], ['f1', 'F1']]
     : [['tp_count', 'TP'], ['fp_count', 'FP'], ['pending_count', 'Pending'], ['fn_count', 'FN']];
   const [expanded, setExpanded] = useState(new Set());
-  const groupBy = ['scanner', 'app', 'label'].includes(searchParams.get('group_by')) ? searchParams.get('group_by') : '';
+  const groupBy = Object.hasOwn(scanGroupOptions, searchParams.get('group_by')) ? searchParams.get('group_by') : '';
   const [teams, setTeams] = useState([]);
   const [bulkLabel, setBulkLabel] = useState('');
   const [sortKey, setSortKey] = useState('date');
@@ -117,26 +118,7 @@ export default function ScansList() {
     return sorted;
   }, [rawScans, sortKey, sortDir]);
 
-  const groups = useMemo(() => {
-    if (!groupBy) return [{ key: '', name: '', scans }];
-    const grouped = new Map();
-    for (const scan of scans) {
-      let keys;
-      if (groupBy === 'label') {
-        keys = (labelsMap[scan.id] || []).map(label => [String(label.id), label.name]);
-        if (!keys.length) keys = [['unlabeled', 'No labels']];
-      } else if (groupBy === 'app') {
-        keys = [[String(scan.app_id), `${scan.app_name}${scan.app_version ? ` v${scan.app_version}` : ''}`]];
-      } else {
-        keys = [[scan.scanner_name || 'Unknown scanner', scan.scanner_name || 'Unknown scanner']];
-      }
-      for (const [key, name] of keys) {
-        if (!grouped.has(key)) grouped.set(key, { key, name, scans: [] });
-        grouped.get(key).scans.push(scan);
-      }
-    }
-    return [...grouped.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [scans, groupBy, labelsMap]);
+  const groups = useMemo(() => groupScans(scans, labelsMap, groupBy), [scans, groupBy, labelsMap]);
   const toggleGroup = key => setExpanded(previous => {
     const next = new Set(previous);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -389,7 +371,7 @@ export default function ScansList() {
         </div>
         {groupBy && <label className="scan-group-control">Group by
           <select aria-label="Group by" className="form-select" value={groupBy} onChange={e => setFilter('group_by', e.target.value)}>
-            <option value="scanner">Scanner</option><option value="app">App</option><option value="label">Label</option>
+            {Object.entries(scanGroupOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>}
         <span className="scan-result-count text-muted text-sm" role="status">{scans.length} {scans.length === 1 ? 'scan' : 'scans'}{groupBy ? ` in ${groups.length} groups` : ''}</span>
@@ -421,16 +403,20 @@ export default function ScansList() {
               {expanded.size === groups.length ? 'Hide all scans' : 'Show all scans'}
             </button></div>
           </div>
+          <p className="scan-summary-note">{groupBy === 'configuration'
+            ? 'Groups share an app, scanner version and exact label set. Unrecorded settings may still differ.'
+            : groupBy === 'scanner' ? 'Scanner groups can mix versions and settings. Group by app + scanner version + labels for narrower comparisons.'
+            : groupBy === 'scanner_version' ? 'Scanner versions may still span different apps and label sets.' : 'Groups may include different scanners and settings.'} Small samples are descriptive.</p>
           {groupBy === 'label' && <p className="scan-summary-note">A scan can belong to multiple label groups. The overall scan count counts each scan once.</p>}
           {metricView === 'quality' && <p className="scan-summary-note">Count-based scores; each scan has equal weight. {scans.some(scan => (scan.pending_count ?? 0) > 0) && 'Pending findings excluded; scores are provisional.'}</p>}
           <div className="table-wrap">
           <table className="scan-aggregation">
-            <thead><tr><th>{groupBy === 'app' ? 'App' : groupBy === 'label' ? 'Label' : 'Scanner'}</th><th>Scans</th>
+            <thead><tr><th>{scanGroupOptions[groupBy]}</th><th>Scans</th>
               {metricColumns.map(([field, label]) => <th key={field}>{label}</th>)}</tr></thead>
             <tbody>{groups.map(group => <Fragment key={group.key}>
               <tr>
                 <td data-label="Group"><button className="scan-group-toggle" aria-expanded={expanded.has(group.key)} onClick={() => toggleGroup(group.key)}>
-                  <span aria-hidden="true">{expanded.has(group.key) ? '▾' : '▸'}</span>{group.name}
+                  <span aria-hidden="true">{expanded.has(group.key) ? '▾' : '▸'}</span><span>{group.name}{group.detail && <span className="scan-group-description">{group.detail}</span>}</span>
                 </button></td>
                 <td data-label="Scans">{group.scans.length}</td>
                 {metricColumns.map(([field, label]) => {
@@ -443,7 +429,7 @@ export default function ScansList() {
                         <span className="scan-stat-spread"> ± {stats.std === null ? '—' : format(stats.std)}</span>
                       </div>
                       <div className="text-muted text-xs">{stats.n ? `${format(stats.min)}–${format(stats.max)}` : 'No data'}
-                        {stats.n < group.scans.length && <span className="scan-stat-missing"> · {stats.n}/{group.scans.length} measured</span>}
+                        <span className="scan-stat-missing"> · n={stats.n}/{group.scans.length}</span>
                       </div>
                     </div>
                   </td>;
@@ -455,7 +441,7 @@ export default function ScansList() {
           </table>
         </div>
           <details className="scan-stat-help"><summary>How these statistics are calculated</summary>
-            <p>Each scan has equal weight; scores are calculated per scan before averaging (macro average). Precision = TP/(TP+FP), recall = TP/(TP+FN), F1 = 2TP/(2TP+FP+FN). Pending findings are excluded, so quality scores remain provisional while findings are pending. Undefined ratios are excluded, not counted as zero. Percentage standard deviations describe percentage-point spread. We show the arithmetic mean, sample standard deviation (n−1), and minimum–maximum. Missing values are excluded; “measured” indicates incomplete data. Standard deviation is unavailable for a single scan. Counts are per scan, not distinct findings across scans. Comparisons are most meaningful within the same app version and benchmark corpus; mixed groups are descriptive summaries, not controlled model evaluations.</p>
+            <p>Each scan has equal weight; scores are calculated per scan before averaging (macro average). Precision = TP/(TP+FP), recall = TP/(TP+FN), F1 = 2TP/(2TP+FP+FN). Pending findings are excluded, so quality scores remain provisional while findings are pending. Undefined ratios are excluded, not counted as zero. Percentage standard deviations describe percentage-point spread. We show the arithmetic mean, sample standard deviation (n−1), and minimum–maximum. Missing values are excluded; n shows the measured/total scans for each metric. Small samples describe observed variation, not evidence of a performance difference. Standard deviation is unavailable for a single scan. Counts are per scan, not distinct findings across scans. Comparisons are most meaningful within the same app version and benchmark corpus; mixed groups are descriptive summaries, not controlled model evaluations.</p>
           </details>
         </div> : renderScanTable(scans)
       ) : (

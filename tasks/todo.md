@@ -284,3 +284,8 @@ service was modified. Responsive changes are out of scope per Miguel.
 - [x] Verify 157 self-contained backend tests on Python 3.12, three Node statistics tests,
   production build, and desktop browser flows for all/any labels, views, and reset.
 - [x] Open upstream PR #5 with only the scan-discovery change.
+
+### Comparable groups and sample sizes
+- [x] Add scanner-version and app + scanner-version + exact-label-set grouping.
+- [x] Always show measured/total sample counts and clarify small-sample interpretation.
+- [x] Verify five Node tests, production build, and browser grouping/singleton display.

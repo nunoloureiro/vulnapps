@@ -1892,3 +1892,10 @@ Display mean ± sample standard deviation, min–max beneath, and measured/total
 is incomplete. Explain formulas and caveats in an expandable methodology note. Scores exclude
 pending findings and remain provisional while any are pending; these descriptive statistics
 do not establish controlled comparisons across different app versions or benchmark corpora.
+
+Additional grouping options separate scanner versions or the combination of app ID, scanner
+name/version, and exact label-name set (independent of label order). Missing versions are
+explicitly unknown. Show app and labels beneath each configuration group name. These are
+recorded configurations, not proof that unrecorded settings match. Every metric displays
+n=measured/total, including complete and singleton samples. Describe small samples as
+descriptive variation rather than evidence of performance differences.
