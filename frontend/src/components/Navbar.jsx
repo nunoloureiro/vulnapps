@@ -55,6 +55,7 @@ export default function Navbar() {
                   <ul className="nav-dropdown-menu">
                     <li><Link to="/admin/users">Users</Link></li>
                     <li><Link to="/admin/labels">Labels</Link></li>
+                    <li><Link to="/admin/changelog">Change Log</Link></li>
                   </ul>
                 </li>
               )}

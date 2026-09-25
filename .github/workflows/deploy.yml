@@ -40,6 +40,9 @@ jobs:
           bash -n aws/setup-ec2.sh
       - name: Build image and check startup
         run: |
+          # Release history for the changelog page, resolved here because the
+          # image has no .git. Same reason as COMMIT_COUNT below.
+          python tools/gen_changelog.py
           docker build --platform linux/amd64 --build-arg COMMIT_COUNT="$(git rev-list --count HEAD)" -t "$IMAGE" .
           trap 'docker rm -fv vulnapps-ci >/dev/null 2>&1 || true' EXIT
           docker run -d --name vulnapps-ci -e SECRET_KEY=ci-only "$IMAGE"

@@ -1,9 +1,11 @@
-"""API router — admin operations (users, labels)."""
+"""API router — admin operations (users, labels, change log)."""
 
 from fastapi import APIRouter, Request, HTTPException
 from app.database import get_connection
 from app.services import users as users_service
 from app.services import labels as labels_service
+from app.changelog import get_changelog
+from app.version import get_app_version
 
 router = APIRouter()
 
@@ -113,3 +115,16 @@ async def delete_label(request: Request, label_id: int):
     finally:
         await db.close()
     return {"ok": True}
+
+
+# -- Change log -------------------------------------------------------------
+
+
+@router.get("/changelog")
+async def changelog(request: Request):
+    """Release history: one entry per commit on main, with the version number
+    that commit produced. Admin-only because it exposes internal commit
+    messages, which say more about the system than the app's own pages do."""
+    _require_admin(request)
+    entries = get_changelog()
+    return {"version": get_app_version(), "entries": entries}

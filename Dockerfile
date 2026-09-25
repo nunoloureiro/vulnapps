@@ -28,6 +28,14 @@ COPY VERSION .
 ARG COMMIT_COUNT=0
 RUN echo "$COMMIT_COUNT" > COMMIT_COUNT
 
+# Release history, generated on the build host for the same reason (no .git in
+# here to derive it from). Optional: the bracket makes the pattern match zero
+# files without failing the build, and app/changelog.py then falls back to git
+# — which finds nothing in the image, so the page simply reports it is
+# unavailable rather than the whole build breaking. build.sh and the deploy
+# workflow always generate it. See tools/gen_changelog.py.
+COPY CHANGELOG.jso[n] ./
+
 # Copy built frontend from Stage 1
 COPY --from=frontend /frontend/dist frontend/dist
 

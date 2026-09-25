@@ -696,7 +696,7 @@ Version** above.
 | POST | `/api/apps/{id}/scans` | User+ / vuln-mapper | Submit scan. Body: `{scanner_name, scanner_version, scan_date, authenticated, is_public, notes, cost, tokens, duration, findings, labels}`. The server stamps `corpus_revision` with the app's latest revision. Each finding may include `{vuln_type, http_method, url, parameter, filename, title, severity, description, poc, remediation, code_location, fp_group}` |
 | POST | `/api/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Set a finding's complete match set: `{vuln_ids: [int], chain_ids: [int]}` (full replacement; both empty clears it to Pending). One finding may credit several vulns and/or chains — see **Exploit chains**. The legacy single-value bodies (`{vuln_id: int\|null}` / `{chain_id: int\|null}`, mutually exclusive) are still accepted for older clients |
 | POST | `/api/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive. Optional body `{fp_group}` clusters findings describing the same non-issue so precision counts them once |
-| POST | `/api/scans/{id}/findings/{fid}/ignore` | Scan write / vuln-mapper | Set/clear the "Ignored" state. Body `{ignored: bool}` (default `true`). Ignoring clears any match/FP; clearing returns to Pending |
+| POST | `/api/scans/{id}/findings/{fid}/ignore` | Scan write / vuln-mapper | Set/clear the "Ignored" state. Body `{ignored: bool}` (default `true`). Callable from any state — ignoring clears any match/FP; clearing returns to Pending |
 | POST | `/api/scans/{id}/findings/{fid}/promote` | App write / vuln-mapper | Promote a pending finding into a new vuln on the scan's app. Body: `{vuln_id, title, severity, vuln_type, http_method, url, parameter, filename, description, poc, remediation, code_location, impact_weight, difficulty_tier}` — missing fields fall back to the finding's stored values; `vuln_id` auto-generates as the next `DISC-NNN` slug if blank. **`existed_since` is REQUIRED** (`all_along` \| `this_revision`) — **400** without it. Always opens a `new_prior_vuln` revision. The finding is linked to the new vuln on success |
 | POST | `/api/scans/{id}/rematch` | Scan write / vuln-mapper | Re-run automatic matching for all findings (in-scope vulns only) |
 | GET | `/api/scans/{id}/history` | Scan write | Audit-log entries for this scan's findings (matched/unmatched/marked FP/ignored/promoted/rematched), most recent first. Gated on scan write access, not a separate role — see History Log below |
@@ -745,6 +745,7 @@ Version** above.
 | POST | `/api/admin/labels` | Admin | Create label: `{name, color}` |
 | PUT | `/api/admin/labels/{id}` | Admin | Update label: `{name, color}` |
 | DELETE | `/api/admin/labels/{id}` | Admin | Delete label and all associations |
+| GET | `/api/admin/changelog` | Admin | Release history: `{version, entries[]}`, one entry per commit on main — see **Change Log** |
 
 ---
 
@@ -932,7 +933,7 @@ untouched. That is what keeps the metric symmetric (see **Metrics** below).
 - **Automatic matching**: Score >= 60 → TP. Score < 60 → **Pending** (not FP)
 - **Manual mapping**: User maps pending finding to known vuln → TP
 - **Mark FP**: User explicitly marks as FP → `POST /api/scans/{id}/findings/{fid}/mark-fp`
-- **Ignore**: `POST /api/scans/{id}/findings/{fid}/ignore` body `{ignored: bool}` — `true` sets Ignored, `false` returns to Pending (the API keeps the un-ignore path; the UI has no explicit "Restore" button — re-triaging an ignored finding via map/FP/promote clears the ignore, mirroring how FP works)
+- **Ignore**: `POST /api/scans/{id}/findings/{fid}/ignore` body `{ignored: bool}` — `true` sets Ignored, `false` returns to Pending. Reachable from **every** state, not just Pending: the service clears any matches and the FP flag/group, so the states stay mutually exclusive. The UI offers Ignore on TP, FP and Pending rows alike, and an **Un-ignore** button on ignored ones. (Previously the button was conditional on Pending, so moving an FP to Ignored meant mapping it to some vuln, unmapping to get back to Pending, then ignoring; and nothing called the un-ignore path at all, so an ignored finding could only leave that state sideways by being marked FP.) Because ignoring can now discard a mapping or an FP grouping, the audit message names what went away (`… (dropped 2 existing matches)` / `… (was marked false positive)`)
 - **Metrics**: Pending **and Ignored** findings are excluded from TP/FP. Ignored findings are neutral — they are neither TP nor FP, so precision/recall/F1 are unchanged by ignoring; they are also dropped from the scan-list Pending count and severity pills. `rematch` never auto-touches an ignored finding.
 - **Compare page**: Pending and Ignored findings excluded from the FP matrix
 
@@ -1349,6 +1350,37 @@ informational badges on the App page today — no export/aggregation feature cur
 them (see `tasks/scorings-table.md` and `tasks/config-fingerprinting.md` for the deferred
 work that would).
 
+### TP split by severity
+
+`tp` alone is ambiguous — 45 true positives reads very differently as 8 criticals than as 8
+lows. Both the scan list (`ScansList.jsx`, beside the TP cell and in the totals row) and the
+comparison table (`ScanCompare.jsx`, under the TP row) show the split inline: `45  8C 19H 14M 4L`.
+
+Normative rules:
+
+- **Catalog severity, never the scanner's.** `tp` counts *distinct matched vulns*, so the
+  vuln row carries the authoritative label — the same side `impact_weight` comes from. A
+  scanner calling a medium bug critical must not move it between buckets; that gap is what
+  `severity_accuracy` measures, and folding it in here would hide it.
+- **The buckets must sum to the `tp` shown beside them.** All five severities are always
+  present (zero-initialised), matching the `severity_counts` convention on the app detail
+  payload. `info` is hidden in the UI when zero.
+- Counted per distinct vuln, not per finding: two findings hitting one vuln is one TP.
+
+Three producers, kept deliberately in agreement (`tests/test_tp_severity_and_ignore.py`
+pins this):
+
+1. `compute_metrics` returns `tp_by_severity`, built from `in_scope_matched` — the canonical one.
+2. `list_scans` computes `tp_critical..tp_info` in SQL, mirroring `tp_subquery`'s scope
+   exactly so the plain list view's breakdown matches its own `tp_count`. (The SQL `tp` and
+   the scorer's `tp` can differ — the SQL one omits the `existed_since_revision` rule.) When
+   `include_metrics=True` the service overwrites those columns with the scorer's split,
+   because the frontend also swaps in the scorer's `tp_count` there. `tp_by_severity` itself
+   is stripped from the `metrics` payload, which stays scalar-only: the grouped view averages
+   every field in it.
+3. `ScanCompare.jsx` derives its own from `filteredMatrix`/`tpRows`, so the split follows the
+   page's severity filter instead of contradicting it.
+
 ### Reporting guards
 
 `GET /api/apps/{id}/compare` returns a `guards` payload and the UI renders a warning
@@ -1712,6 +1744,35 @@ resolves to `"0"` if neither source is available, rather than crashing.
 required, matching that same public-metadata pattern) returns `{"version": "v1.153"}`.
 `Home.jsx` fetches it on mount and renders it as a muted `.hero-version` span next to the
 `<h1>`, styled after `TaintedPort`'s own `v1.35` version tag next to its hero heading.
+
+## Change Log (`app/changelog.py`, `tools/gen_changelog.py`, `/api/admin/changelog`)
+
+Admin → **Change Log** (`/admin/changelog`, `frontend/src/pages/AdminChangelog.jsx`). Because
+the version's minor number IS the commit count (see **App Version** above), every commit on
+`main` is a release, and the change log is the commit log with the matching version attached:
+version, release datetime, subject, body, short SHA, author.
+
+The minor number for a given commit is that commit's own **ancestor count**, which is *not*
+its position in `git log` — with merge commits the two diverge, and numbering the log top to
+bottom would silently misnumber every entry below the first merge. `_ancestor_counts()` gets
+the whole parent graph in one `git rev-list --parents` call and computes reachability with
+integer bitmasks, so `v1.171` here is the same commit the running app reports as `v1.171`.
+Merge commits are kept (they increment the version, so dropping them would break the
+mapping) but flagged `is_merge` and collapsed behind a toggle in the UI.
+
+Same no-`.git`-in-the-image problem as the version, solved the same way:
+`tools/gen_changelog.py` writes `CHANGELOG.json` on the build host and both build paths run
+it before `docker build` (`build.sh`, and the deploy workflow's "Build image and check
+startup" step). The Dockerfile copies it with the optional-source form `COPY CHANGELOG.jso[n]
+./` so a build without the generator still succeeds; `get_changelog()` then reads the baked
+file if present, falls back to git for local dev, and returns `[]` rather than raising when
+neither exists. `CHANGELOG.json` is gitignored — it is a build artifact, not source.
+`build_entries()` falls back from `main` to `HEAD` because a CI checkout of a pull request is
+detached and has no local `main`.
+
+`GET /api/admin/changelog` returns `{"version", "entries"}` and is admin-only (`_require_admin`,
+like the rest of `app/routers/api/admin.py`) — commit messages describe internals that the
+app's own pages do not.
 
 ## Docker Deployment
 

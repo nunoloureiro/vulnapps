@@ -359,3 +359,63 @@ For reference, app 305 (TaintedPort) as of 2026-09-25: flag off, 57 vulns /
 12 chains, 28 of 57 with `weight_verified = 0`, tiers 38 commodity /
 19 business_logic (so tiers were partly hand-assigned — the backfill only ever
 writes commodity).
+
+## TP severity breakdown + reachable Ignore (2026-09-25)
+
+### Severity breakdown next to true positives
+- [x] `list_scans`: add `tp_critical..tp_info` subqueries mirroring `tp_subquery`
+      exactly (same `invalidated_at_revision IS NULL` scope) plus
+      `AND lower(v.severity) = ?`, so the breakdown always sums to the
+      `tp_count` shown beside it. Params go before `sev_params` — SELECT-clause
+      placeholders bind in order of appearance.
+- [x] ScansList: render the four buckets inline next to TP, reusing the existing
+      `sev-pill` component/CSS rather than a new badge family. Show `info` only
+      when non-zero so the row stays narrow but never under-reports the sum.
+- [x] ScanCompare: derive the breakdown client-side from `filteredMatrix`, the
+      same rows that produce the displayed `tp`, so it tracks the severity
+      filter instead of contradicting it. No backend change needed there.
+- [x] Catalog severity (`row.vuln.severity`), never the scanner's reported
+      severity — decided with the user. The two differ, and that gap is what
+      `severity_accuracy` measures; weights use the catalog side too.
+
+### Ignore reachable from any state
+- [x] ScanDetail: Ignore is currently offered only on Pending
+      (`!hasMatch && !is_false_positive`), so FP -> Ignore means mapping to a
+      vuln, unmapping, then ignoring. Backend `set_finding_ignored` already
+      clears matches and the FP flag, so the restriction is pure UI.
+- [x] Add the missing reverse: nothing calls `setIgnored(id, false)`, so an
+      ignored finding can only leave that state sideways via FP.
+- [x] Say what will be discarded in the button title and the audit message,
+      now that ignoring can throw away a mapping or an FP grouping.
+
+### Verification
+- [x] Backend test: breakdown sums to `tp_count`; ignoring a matched finding
+      clears its matches; ignoring an FP clears the flag and `fp_group`.
+- [x] Full suite + frontend build/tests.
+
+Review (TP split + Ignore): the split needed three producers to agree, not one —
+`compute_metrics` (canonical), `list_scans` SQL (so the plain list matches its own
+`tp_count`, which the scorer's can differ from), and `ScanCompare` client-side (so it
+follows the severity filter). An upstream test caught the first attempt: the list's
+`metrics` payload must stay scalar-only because the grouped view averages every field in
+it, so `tp_by_severity` is stripped there and flattened onto `tp_*` columns instead.
+Ignore needed no backend change — `set_finding_ignored` already cleared matches and the FP
+flag — only the button condition, plus the un-ignore button that never existed and an audit
+message that now names what was discarded. 197 backend tests, 14 frontend, build clean.
+
+## Change Log page (2026-09-25)
+
+- [x] Every commit on main is a release, since minor = commit count. A commit's minor is its
+      ancestor count, NOT its row in `git log` — they diverge at the first merge commit, and
+      numbering by position would misnumber everything below it. One `rev-list --parents`
+      call, reachability via integer bitmasks.
+- [x] Merge commits kept (they increment the version) but flagged and collapsed behind a
+      toggle, rather than filtered out and breaking the mapping.
+- [x] Baked at build time like COMMIT_COUNT — the image has no `.git`. Optional `COPY
+      CHANGELOG.jso[n] ./` so a build without the generator still succeeds; `get_changelog()`
+      falls back to git, then to `[]`.
+- [x] `build_entries()` falls back `main` -> `HEAD`: a CI checkout of a PR is detached with
+      no local `main`, and this page is too cosmetic to fail a build over.
+- [x] Admin-only: commit messages describe internals the app's own pages do not.
+- [x] Verified against real history — 186 entries, newest `v1.186`, matching what
+      `/api/version` reports; 401 unauthenticated, correct payload as admin.

@@ -21,6 +21,7 @@ import TeamDetail from './pages/TeamDetail';
 import TeamForm from './pages/TeamForm';
 import AdminUsers from './pages/AdminUsers';
 import AdminLabels from './pages/AdminLabels';
+import AdminChangelog from './pages/AdminChangelog';
 
 export default function App() {
   return (
@@ -51,6 +52,7 @@ export default function App() {
             <Route path="/teams/:id" element={<TeamDetail />} />
             <Route path="/admin/users" element={<AdminUsers />} />
             <Route path="/admin/labels" element={<AdminLabels />} />
+            <Route path="/admin/changelog" element={<AdminChangelog />} />
           </Routes>
         </main>
       </AuthProvider>

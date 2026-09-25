@@ -50,3 +50,6 @@ frontend/dist/
 # Misc
 *.pem
 *.log
+
+# Generated at build time from git history (tools/gen_changelog.py)
+CHANGELOG.json

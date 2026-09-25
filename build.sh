@@ -77,6 +77,7 @@ echo -e "  ${BLUE}${BOLD}[2/3]${NC} ${BOLD}Building Docker image...${NC}"
 echo -e "  ${DIM}─────────────────────────────────────────${NC}"
 
 COMMIT_COUNT="$(git -C "$SCRIPT_DIR" rev-list --count main)"
+"$PYTHON" "$SCRIPT_DIR/tools/gen_changelog.py"
 docker build --platform linux/amd64 --no-cache --build-arg COMMIT_COUNT="$COMMIT_COUNT" -t "$IMAGE" .
 
 echo ""
