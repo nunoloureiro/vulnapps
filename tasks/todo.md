@@ -257,3 +257,52 @@ flagged for a design discussion (e.g. should there be a distinct "chain findings
 concept surfaced the same way individual findings are, or should the existing
 findings list simply also surface which findings were matched via
 `matched_chain_id` inline, or something else). Not resolved or implemented.
+
+## Scan filters and grouping (2026-09-25)
+- [x] Fetch and merge nunoloureiro/main, preserving local catalog metadata.
+- [x] Replace long filter menus with keyboard-accessible searchable dropdowns.
+- [x] Support multiple labels with explicit all/any matching and shareable URL parameters.
+- [x] Add scanner/app/label aggregate rows with counts, per-scan means, and expandable details.
+- [x] Preview with deterministic local mock data and verify desktop filtering, grouping, empty states, keyboard input, and browser history.
+- [x] Update AppBuilder specification and record verification.
+
+Review: production frontend build and git diff whitespace checks pass. Eight backend tests
+cover label matching and label permissions. Browser checks confirm keyboard selection,
+all/any results, chip removal, URL restoration, aggregate means excluding absent metrics,
+and expandable scan details. Mock server is read-only with 18 synthetic scans; no live
+service was modified. Responsive changes are out of scope per Miguel.
+
+### Grouped statistical summaries
+- [x] Show mean, sample standard deviation, min–max, and measured/total sample count per metric.
+- [x] Handle absent metrics, single observations, and constant observations explicitly.
+- [x] Verify two focused Node statistics tests, production build, and rendered mock values (AI PenTest TP mean 16, std 4; Nuclei TP n=2/3, mean 17, std 2.8).
+
+### Desktop UX and statistical interpretation
+- [x] Separate filters, optional results view, and Quality/Counts summaries.
+- [x] Show compact mean ± standard deviation with ranges; expose formulas in a disclosure.
+- [x] Compute precision/recall/F1 per scan before macro averaging; exclude undefined ratios.
+- [x] Verify 157 self-contained backend tests on Python 3.12, three Node statistics tests,
+  production build, and desktop browser flows for all/any labels, views, and reset.
+- [x] Open upstream PR #5 with only the scan-discovery change.
+
+### Comparable groups and sample sizes
+- [x] Add scanner-version and app + scanner-version + exact-label-set grouping.
+- [x] Always show measured/total sample counts and clarify small-sample interpretation.
+- [x] Verify five Node tests, production build, and browser grouping/singleton display.
+
+### Weighted scoring toggle
+- [x] Default grouped quality to canonical weighted detection; retain explicit unweighted metrics.
+- [x] Batch current-revision scoring inputs for authorized rows only; preserve legacy list cost.
+- [x] Verify score parity across app/corpus revisions, chain credit, and empty denominators.
+- [x] Pass 158 backend tests, six Node tests, frontend build, and browser toggle/reload checks.
+- [x] Refresh PR screenshots for both scoring modes.
+
+### Review corrections
+- [x] Use canonical counts consistently in grouped statistics and scan rows.
+- [x] Hide results until the matching query/user request completes; preserve editable filters.
+- [x] Preserve selections on no-match Enter; keep reset separate from search matches.
+- [x] Add request-state/count-source/autocomplete regression coverage and run npm test in the
+  Docker frontend stage used by CI before building assets.
+Review validation: 10 Node tests and production build pass. Browser regression verification
+was blocked by automatic approval review (initial timeout and rejected retry); the temporary
+mock delay was removed. No production data or review comments changed.

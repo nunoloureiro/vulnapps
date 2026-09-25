@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:mock": "vite --config vite.preview.config.js",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test src/utils/*.test.js"
   },
   "dependencies": {
     "react": "^18.3.1",

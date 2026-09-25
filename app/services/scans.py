@@ -134,7 +134,7 @@ async def _live_metrics(db, scan, revision=None):
 async def list_scans(
     db, user,
     app_id=None, scanner="", latest="", q="",
-    label="", filter="",
+    label="", filter="", label_match="all", include_metrics=False,
 ) -> dict:
     """List scans with filters. Returns dict with scans, metadata, and filter options."""
     extra_filters = ""
@@ -166,13 +166,23 @@ async def list_scans(
         extra_params.append(scanner)
 
 
-    if label:
+    if label_match not in ("all", "any"):
+        raise ValueError("label_match must be 'all' or 'any'")
+    selected_labels = list(dict.fromkeys(
+        name for name in ([label] if isinstance(label, str) else label or []) if name
+    ))
+    if selected_labels:
+        placeholders = ",".join("?" for _ in selected_labels)
         extra_filters += (
             " AND scans.id IN ("
             "SELECT scan_id FROM scan_labels JOIN labels ON scan_labels.label_id = labels.id "
-            "WHERE labels.name = ?)"
+            f"WHERE labels.name IN ({placeholders})"
         )
-        extra_params.append(label)
+        extra_params.extend(selected_labels)
+        if label_match == "all":
+            extra_filters += " GROUP BY scan_id HAVING COUNT(DISTINCT labels.name) = ?"
+            extra_params.append(len(selected_labels))
+        extra_filters += ")"
 
     if q:
         extra_filters += " AND (apps.name LIKE ? OR scans.scanner_name LIKE ? OR users.name LIKE ?)"
@@ -253,6 +263,13 @@ async def list_scans(
     # placeholders), then the WHERE clause's visibility + extra-filter params.
     cursor = await db.execute(sql, sev_params + vis_params + extra_params)
     scans = await cursor.fetchall()
+    if include_metrics:
+        metrics = await scoring_service.score_many(db, scans)
+        detail_keys = {"tiers", "matched_vuln_ids", "missed_vuln_ids", "credit_by_vuln", "credit_by_chain"}
+        scans = [
+            dict(scan, metrics={key: value for key, value in metrics[scan["id"]].items() if key not in detail_keys})
+            for scan in scans
+        ]
 
     # Batch-fetch labels for all returned scans
     scan_labels_map: dict[int, list[dict]] = {}

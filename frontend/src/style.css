@@ -912,3 +912,59 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
        as a card row — drop them so cards stay tight. */
     table.cards-on-mobile td:empty { display: none; }
 }
+
+.scan-view-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
+.scan-view-bar > :first-child { margin-right: auto; }
+.scan-group-control { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--text-secondary); }
+.scan-group-control .form-select { width: auto; padding: 0.3rem 0.5rem; }
+.scan-group-toggle { display: flex; align-items: center; gap: 0.65rem; width: 100%; padding: 0.8rem 1rem; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.scan-group-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.scan-filters { align-items: flex-start; gap: 0.75rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel); }
+.scan-filter-field { display: flex; flex: 1 1 150px; flex-direction: column; gap: 0.35rem; color: var(--text-secondary); font-size: 0.75rem; }
+.scan-filters .scan-filter-field .form-select, .scan-filters .scan-filter-field .form-input { width: 100%; height: 40px; padding: 0.5rem 0.65rem; }
+.scan-filters > .btn { align-self: flex-end; height: 40px; display: inline-flex; align-items: center; }
+.scan-aggregation > tbody > tr > td:first-child { padding-left: 0; }
+.scan-group-detail > td { padding: 1rem !important; background: var(--bg); }
+.scan-group-detail .card { margin: 0; }
+.scan-statistics { display: grid; gap: 0.3rem; min-width: 115px; font-variant-numeric: tabular-nums; }
+.scan-statistics strong { font-size: 1rem; }
+
+.scan-filters { padding: 1.1rem 1.25rem; }
+.scan-filter-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; font-size: 0.8rem; font-weight: 600; }
+.scan-text-button { background: none; border: 0; padding: 0.25rem 0; color: var(--accent); cursor: pointer; font: inherit; font-size: 0.8rem; }
+.scan-text-button:hover { text-decoration: underline; }
+.scan-filter-primary { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 1rem; }
+.scan-filter-secondary { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 1rem; margin-top: 1rem; align-items: start; }
+.scan-filters .searchable-filter { min-width: 0; }
+.scan-label-matching { display: flex; align-items: center; gap: 0.65rem; margin-top: 0.65rem; color: var(--text-secondary); font-size: 0.75rem; }
+.scan-segmented { display: inline-flex; padding: 3px; gap: 3px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; }
+.scan-segmented button { border: 0; border-radius: 4px; background: transparent; color: var(--text-muted); padding: 0.45rem 0.75rem; font: inherit; font-size: 0.8rem; cursor: pointer; white-space: nowrap; }
+.scan-segmented button[aria-pressed="true"] { background: var(--bg-panel); color: var(--text); box-shadow: 0 1px 3px #0005; }
+.scan-segmented button:hover { color: var(--text); }
+.scan-label-matching .scan-segmented button { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
+.scan-view-bar { margin-top: 1.5rem; gap: 1rem; }
+.scan-view-bar > :first-child { margin-right: 0; }
+.scan-result-count { margin-left: auto; }
+.scan-summary-card { padding: 0; overflow: hidden; }
+.scan-summary-heading { display: flex; align-items: center; justify-content: space-between; padding: 1.2rem 1.25rem; }
+.scan-summary-heading h2 { font-size: 1rem; margin: 0 0 0.35rem; }
+.scan-summary-heading p { margin: 0; font-size: 0.75rem; color: var(--text-secondary); }
+.scan-legend-divider { padding: 0 0.6rem; color: var(--text-muted); }
+.scan-summary-note { margin: 0; padding: 0 1.25rem 1rem; color: var(--text-muted); font-size: 0.8rem; }
+.scan-aggregation { min-width: 780px; }
+.scan-aggregation > thead th { background: var(--bg); }
+.scan-aggregation > thead th:not(:first-child), .scan-aggregation > tbody > tr:not(.scan-group-detail) > td:not(:first-child) { text-align: right; }
+.scan-aggregation > thead th:last-child, .scan-aggregation > tbody > tr > td:last-child { padding-right: 1.25rem; }
+.scan-aggregation abbr { text-decoration: none; cursor: help; }
+.scan-aggregation > tbody > tr:not(.scan-group-detail) > td { padding-top: 1rem; padding-bottom: 1rem; }
+.scan-statistics { min-width: 125px; gap: 0.35rem; }
+.scan-stat-primary { white-space: nowrap; }
+.scan-statistics strong { font-weight: 600; font-size: 1rem; }
+.scan-stat-spread { color: var(--text-secondary); font-size: 0.85rem; }
+.scan-stat-missing { color: var(--text-secondary); }
+.scan-stat-help { padding: 1rem 1.25rem; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 0.75rem; }
+.scan-stat-help summary { cursor: pointer; }
+.scan-stat-help p { max-width: 850px; line-height: 1.6; margin: 0.75rem 0 0; }
+.scan-summary-actions { display: flex; align-items: center; gap: 1rem; }
+.scan-group-description { display: block; margin-top: 0.4rem; max-width: 340px; color: var(--text-muted); font-size: 0.75rem; line-height: 1.5; overflow-wrap: anywhere; }
+.scan-weighting-control { display: flex; gap: 0.75rem; align-items: center; padding: 0 1.25rem 1rem; color: var(--text-secondary); font-size: 0.8rem; }

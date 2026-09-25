@@ -82,3 +82,12 @@ header, `tools/import_scan.py`). Before concluding that prod data is missing,
 prove the request was authenticated — query a row that is definitely visible,
 or check that the response isn't the public-only subset. Never report data
 loss on the strength of a 404 alone.
+
+## Scan discovery separates filtering from aggregation
+For scan labels, support combining multiple labels with explicit all/any matching.
+When asked for group by, show aggregate metrics first with optional drill-down;
+sectioning the original scan list alone does not meet the aggregation use case.
+
+For this scan-filter work, keep verification focused on desktop; responsive redesign is out of scope.
+
+Grouped scan metrics need statistical summaries (mean, standard deviation, range, sample count), not only averages or collapsible lists. Keep grouping optional.

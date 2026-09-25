@@ -1860,3 +1860,62 @@ successful deployment. Do not automatically reverse database migrations.
 After successful startup, prune dangling Docker images on EC2 with
 `docker image prune -f`. Leave volumes intact and warn without failing deployment
 if image cleanup fails. No cleanup is needed on the ephemeral Actions runner.
+
+### Scan list discovery and grouping
+
+The scans page uses searchable, keyboard-accessible comboboxes for labels, scanners, apps,
+and teams. Labels support multi-selection with removable chips and an explicit match-all
+(default) or match-any control; other filters remain single-select. Typing narrows choices,
+arrow keys navigate, Enter selects, and Escape dismisses. Show empty-options feedback and
+clear controls. Preserve repeated `label` query parameters and `label_match=all|any` in the
+URL, including backward compatibility for existing single-label links.
+
+The `group_by` URL parameter selects scanner, app, label, or no grouping. Grouping shows an
+aggregation table first: scan count and per-scan statistics for TP, FP, pending, and FN: mean, sample standard
+deviation (denominator n−1), min–max range, and visible measured/total sample counts.
+Exclude missing metrics; show an em dash for missing means or standard deviations with
+fewer than two observations. Retain valid zero values. Groups sort alphabetically; expand a row to inspect and
+sort its underlying scans. Label grouping includes each scan in every assigned label group,
+with a No labels group for unlabeled scans. Group counts overlap; the overall count and bulk
+selection count unique scans. Selecting a group's scans preserves selection in other groups.
+Changing filters clears selection. Ignore stale network responses and offer retry on failure.
+
+A separate `npm run dev:mock` frontend command previews these interactions with synthetic
+scans and no backend dependency. The preview visibly identifies mock data, uses separate
+auth storage, serves allowlisted local assets, and never forwards API requests to a backend.
+
+The desktop scan-discovery UI separates filters from a two-option results view: Individual
+scans (default) and Grouped summary. Reset filters preserves the results view. Grouped summaries
+offer Quality and Counts: count-based precision, recall, and F1 are calculated for each scan
+then macro-averaged, while Counts shows TP, FP, pending, and FN. Exclude undefined ratios.
+Display mean ± sample standard deviation, min–max beneath, and measured/total counts when data
+is incomplete. Explain formulas and caveats in an expandable methodology note. Scores exclude
+pending findings and remain provisional while any are pending; these descriptive statistics
+do not establish controlled comparisons across different app versions or benchmark corpora.
+
+Additional grouping options separate scanner versions or the combination of app ID, scanner
+name/version, and exact label-name set (independent of label order). Missing versions are
+explicitly unknown. Show app and labels beneath each configuration group name. These are
+recorded configurations, not proof that unrecorded settings match. Every metric displays
+n=measured/total, including complete and singleton samples. Describe small samples as
+descriptive variation rather than evidence of performance differences.
+
+Quality summaries default to Weighted, with an explicit Unweighted toggle saved as
+`weighting=unweighted` in the URL. Weighted shows canonical impact-weighted detection,
+points found, and points available; no weighted precision/F1 is invented. Unweighted shows
+count-based precision, recall, and F1 from the same current-revision scorer. Each scan
+remains equally weighted when aggregating scores. Zero available points yields unavailable
+detection, not zero percent. Reset filters preserves the scoring choice.
+
+Grouped lists request `include_metrics=true`. The service batches authorized scans' scoring
+inputs, shares corpus/revision reads, and calls the canonical scoring implementation. The
+ordinary list omits this optional computation. Failed list requests clear stale results and
+show the load error rather than a misleading successful empty state.
+
+Scan result payloads are keyed by API query and authenticated user. Render results only after
+the matching request succeeds, including when entering grouped mode to load canonical metrics;
+keep filter controls mounted while loading. Ignore superseded responses and distinguish load
+failures from successful empty lists. When canonical metrics are present, use their TP, grouped
+FP, pending, and FN counts consistently for summary statistics, sorting, and drill-down rows.
+Autocomplete search results never include the reset action; Enter with no matches preserves
+current selections. Explicit clear controls remain available.
