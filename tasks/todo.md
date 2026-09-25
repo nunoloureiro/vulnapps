@@ -323,3 +323,39 @@ verified chart rendering, duration/weighted axes, run selection, and missing-dat
 Chart review: stabilized scanner colors across axes/filters, preserved distinct small-value
 ticks, simplified chart prose, and added the green dashed upper-left directional guide.
 Production build and frontend tests pass; live preview confirms the guide renders.
+
+## The `benchmark_verified` flag is inert — it is a label, not a rule
+
+`apps.benchmark_verified` (migration 032) and `vulnerabilities.weight_verified`
+exist to tell hand-checked scoring numbers apart from what migration 024
+guessed from severity (~55k vulns across 217 apps). Only the *writing* half was
+ever built.
+
+Verified 2026-09-25, reading the code rather than the comments:
+- `benchmark_verified` is written by `PUT /api/apps/{id}`
+  (`app/services/apps.py:413`) and read by the frontend for display. Nothing
+  else reads it.
+- `get_dashboard` (`app/services/dashboard.py:41`) aggregates over all *visible*
+  apps — visibility, scanner, severity, label, tech, app_id, team. No filter on
+  the flag, so a comparison can silently mix hand-checked apps with ones whose
+  weights are just severity in disguise. That mixing is the exact thing
+  migration 032's header says it exists to prevent.
+- There is no benchmark export. The only export route,
+  `/api/apps/{app_id}/vulns/export` (`app/services/vulns.py:173`), is a plain
+  CSV of every vuln, gated on view permission alone.
+- The `N tiers unreviewed` badge (`AppDetail.jsx`) is display-only and renders
+  solely when the flag is on. It blocks nothing.
+
+Consequence: the badge tooltip claiming an app "is excluded from benchmark
+exports" is false today, and so is "The benchmark export refuses until they are
+reviewed." Wording left untouched on purpose — the choice below is the user's.
+
+Not decided. Either (a) build the filtering, so dashboard aggregation can
+exclude apps whose numbers were never checked, or (b) correct the copy to
+describe the flag as the curation marker it actually is. Only worth doing when
+a cross-app comparison is actually wanted; for a single app it changes nothing.
+
+For reference, app 305 (TaintedPort) as of 2026-09-25: flag off, 57 vulns /
+12 chains, 28 of 57 with `weight_verified = 0`, tiers 38 commodity /
+19 business_logic (so tiers were partly hand-assigned — the backfill only ever
+writes commodity).
