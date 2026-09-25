@@ -10,10 +10,17 @@ export function scanStatistics(scans, field) {
 }
 
 export function scanQuality(scan) {
-  const { tp_count: tp, fp_count: fp, fn_count: fn } = scan;
+  const metrics = scan.metrics;
+  const tp = metrics ? metrics.tp : scan.tp_count;
+  const fp = metrics ? metrics.fp_groups : scan.fp_count;
+  const fn = metrics ? metrics.fn : scan.fn_count;
   const valid = (...values) => values.every(value => Number.isFinite(value) && value >= 0);
   return {
     ...scan,
+    weighted_found: valid(metrics?.weighted_found) ? metrics.weighted_found : null,
+    weighted_total: valid(metrics?.weighted_total) ? metrics.weighted_total : null,
+    weighted_rate: valid(metrics?.weighted_found, metrics?.weighted_total) && metrics.weighted_total > 0
+      ? metrics.weighted_found / metrics.weighted_total : null,
     precision: valid(tp, fp) && tp + fp > 0 ? tp / (tp + fp) : null,
     recall: valid(tp, fn) && tp + fn > 0 ? tp / (tp + fn) : null,
     f1: valid(tp, fp, fn) && 2 * tp + fp + fn > 0 ? 2 * tp / (2 * tp + fp + fn) : null,

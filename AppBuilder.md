@@ -1899,3 +1899,15 @@ explicitly unknown. Show app and labels beneath each configuration group name. T
 recorded configurations, not proof that unrecorded settings match. Every metric displays
 n=measured/total, including complete and singleton samples. Describe small samples as
 descriptive variation rather than evidence of performance differences.
+
+Quality summaries default to Weighted, with an explicit Unweighted toggle saved as
+`weighting=unweighted` in the URL. Weighted shows canonical impact-weighted detection,
+points found, and points available; no weighted precision/F1 is invented. Unweighted shows
+count-based precision, recall, and F1 from the same current-revision scorer. Each scan
+remains equally weighted when aggregating scores. Zero available points yields unavailable
+detection, not zero percent. Reset filters preserves the scoring choice.
+
+Grouped lists request `include_metrics=true`. The service batches authorized scans' scoring
+inputs, shares corpus/revision reads, and calls the canonical scoring implementation. The
+ordinary list omits this optional computation. Failed list requests clear stale results and
+show the load error rather than a misleading successful empty state.

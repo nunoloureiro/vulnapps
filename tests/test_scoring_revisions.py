@@ -409,3 +409,58 @@ async def test_an_explicit_weight_override_survives_an_unrelated_edit(db):
     })
     cursor = await db.execute("SELECT * FROM vulnerabilities WHERE id = ?", (vuln_id,))
     assert (await cursor.fetchone())["impact_weight"] == 27
+
+
+async def test_scan_list_metrics_match_live_scoring_across_corpora_and_chain_credit(db):
+    app_id = await make_app(db)
+    v1 = await add_vuln(db, app_id, "V-1", weight=9, url="/first")
+    v2 = await add_vuln(db, app_id, "V-2", weight=3, url="/second")
+    cursor = await db.execute(
+        "INSERT INTO chains (app_id, chain_id, title, impact_weight, existed_since_revision) "
+        "VALUES (?, 'C-1', 'Demo chain', 27, 1)", (app_id,),
+    )
+    chain_id = cursor.lastrowid
+    await db.executemany(
+        "INSERT INTO chain_members (chain_pk, vuln_id, step_order) VALUES (?, ?, ?)",
+        [(chain_id, v1, 1), (chain_id, v2, 2)],
+    )
+    await db.commit()
+    partial_id = await submit(db, app_id, [{"vuln_type": "SQLi", "url": "/first"}])
+    full_id = await submit(db, app_id, [
+        {"vuln_type": "SQLi", "url": "/first"}, {"vuln_type": "SQLi", "url": "/second"},
+    ])
+    await db.execute(
+        "INSERT INTO scan_chain_credits (scan_id, chain_pk, credited_by) VALUES (?, ?, 1)",
+        (full_id, chain_id),
+    )
+    direct_id = await submit(db, app_id, [{"vuln_type": "IDOR", "url": "/chain"}])
+    cursor = await db.execute("SELECT id FROM scan_findings WHERE scan_id = ?", (direct_id,))
+    await finding_matches.replace(db, (await cursor.fetchone())["id"], [], [chain_id])
+    await scoring_service.create_revision(db, app_id, "corpus_change", "new application flaw")
+    await add_vuln(db, app_id, "V-3", weight=27, url="/new", existed_since=2)
+    later_id = await submit(db, app_id, [{"vuln_type": "SQLi", "url": "/new"}])
+    empty_app = await make_app(db, "Empty corpus")
+    await db.execute("UPDATE apps SET version = '2.0' WHERE id = ?", (empty_app,))
+    empty_id = await submit(db, empty_app, [])
+    await db.commit()
+
+    ordinary = await scans_service.list_scans(db, ADMIN)
+    assert all("metrics" not in scan.keys() for scan in ordinary["scans"])
+    result = await scans_service.list_scans(db, ADMIN, include_metrics=True)
+    scans = {scan["id"]: scan for scan in result["scans"]}
+    for scan in scans.values():
+        revision = await scoring_service.latest_revision(db, scan["app_id"])
+        expected = (await scoring_service.score(db, scan, revision))["metrics"]
+        assert scan["metrics"]
+        for key, value in scan["metrics"].items():
+            assert value == expected[key], (scan["id"], key)
+            assert isinstance(value, (int, float, bool))
+    # Partial chain members receive only their own points, never inferred chain credit.
+    assert scans[partial_id]["metrics"]["weighted_found"] == 9
+    assert scans[partial_id]["metrics"]["weighted_total"] == 39
+    assert scans[full_id]["metrics"]["weighted_found"] == 39
+    assert scans[direct_id]["metrics"]["weighted_found"] == 27
+    assert scans[later_id]["metrics"]["weighted_total"] == 66
+    assert scans[empty_id]["metrics"]["weighted_total"] == 0
+    assert scans[empty_id]["metrics"]["weighted_rate"] == 0
+    assert (await scans_service.list_scans(db, None, include_metrics=True))["scans"] == []

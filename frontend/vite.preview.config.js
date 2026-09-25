@@ -70,7 +70,14 @@ function scanResponse(params) {
       });
   }
   return {
-    scans: rows.sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    scans: rows.map((scan, i) => params.get('include_metrics') === 'true' ? {
+      ...scan,
+      metrics: {
+        tp: scan.tp_count, fp_groups: scan.fp_count, fn: scan.fn_count,
+        weighted_found: scan.tp_count === null ? null : scan.tp_count * (2 + scan.id % 3),
+        weighted_total: scan.tp_count === null ? null : 140,
+      },
+    } : scan).sort((a, b) => b.created_at.localeCompare(a.created_at)),
     scan_labels_map: Object.fromEntries(rows.map(scan => [scan.id, scanLabels[scan.id]])),
     scanners: [...new Set(scans.filter(scan => !appId || String(scan.app_id) === appId).map(scan => scan.scanner_name))].sort(),
     apps_list: [...apps].sort((a, b) => a.name.localeCompare(b.name)),

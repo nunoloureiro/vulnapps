@@ -67,3 +67,8 @@ async def test_label_filters_support_all_any_and_single_label_urls(tmp_path, mon
             assert response.status_code == 200, response.text
             assert {scan["id"] for scan in response.json()["scans"]} == expected, query
         assert (await client.get('/api/scans?label_match=invalid')).status_code == 422
+        ordinary = (await client.get('/api/scans')).json()["scans"]
+        assert all("metrics" not in scan for scan in ordinary)
+        scored = (await client.get('/api/scans?include_metrics=true&label=blackbox')).json()["scans"]
+        assert {scan["id"] for scan in scored} == {1, 2}
+        assert all(scan["metrics"]["weighted_total"] == 0 for scan in scored)

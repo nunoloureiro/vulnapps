@@ -32,3 +32,15 @@ test('computes per-scan quality and excludes undefined denominators rather than 
   const runs = [scanQuality({ tp_count: 1, fp_count: 0, fn_count: 0 }), scanQuality({ tp_count: 1, fp_count: 9, fn_count: 0 })];
   assert.equal(scanStatistics(runs, 'precision').mean, 0.55);
 });
+
+test('weighted detection uses canonical impact points, including fractional credit, with no count fallback', () => {
+  const scan = scanQuality({ tp_count: 9, fp_count: 0, fn_count: 1,
+    metrics: { tp: 1, fp_groups: 1, fn: 3, weighted_found: 13.5, weighted_total: 30 } });
+  assert.equal(scan.weighted_rate, 0.45);
+  assert.equal(scan.weighted_found, 13.5);
+  assert.equal(scan.recall, 0.25);
+  assert.equal(scan.precision, 0.5);
+  assert.equal(scanQuality({ tp_count: 9, fn_count: 1 }).weighted_rate, null);
+  assert.equal(scanQuality({ metrics: { weighted_found: 0, weighted_total: 0 } }).weighted_rate, null);
+  assert.equal(scanQuality({ metrics: { weighted_found: 0, weighted_total: 30 } }).weighted_rate, 0);
+});

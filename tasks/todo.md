@@ -289,3 +289,10 @@ service was modified. Responsive changes are out of scope per Miguel.
 - [x] Add scanner-version and app + scanner-version + exact-label-set grouping.
 - [x] Always show measured/total sample counts and clarify small-sample interpretation.
 - [x] Verify five Node tests, production build, and browser grouping/singleton display.
+
+### Weighted scoring toggle
+- [x] Default grouped quality to canonical weighted detection; retain explicit unweighted metrics.
+- [x] Batch current-revision scoring inputs for authorized rows only; preserve legacy list cost.
+- [x] Verify score parity across app/corpus revisions, chain credit, and empty denominators.
+- [x] Pass 158 backend tests, six Node tests, frontend build, and browser toggle/reload checks.
+- [x] Refresh PR screenshots for both scoring modes.

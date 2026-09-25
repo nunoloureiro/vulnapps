@@ -37,8 +37,11 @@ export default function ScansList() {
   const [error, setError] = useState('');
   const requestId = useRef(0);
   const [metricView, setMetricView] = useState('quality');
+  const weighting = searchParams.get('weighting') === 'unweighted' ? 'unweighted' : 'weighted';
   const metricColumns = metricView === 'quality'
-    ? [['precision', 'Precision'], ['recall', 'Recall'], ['f1', 'F1']]
+    ? weighting === 'weighted'
+      ? [['weighted_rate', 'Weighted detection'], ['weighted_found', 'Points found'], ['weighted_total', 'Points available']]
+      : [['precision', 'Unweighted precision'], ['recall', 'Unweighted recall'], ['f1', 'Unweighted F1']]
     : [['tp_count', 'TP'], ['fp_count', 'FP'], ['pending_count', 'Pending'], ['fn_count', 'FN']];
   const [expanded, setExpanded] = useState(new Set());
   const groupBy = Object.hasOwn(scanGroupOptions, searchParams.get('group_by')) ? searchParams.get('group_by') : '';
@@ -60,6 +63,7 @@ export default function ScansList() {
   const queryParams = new URLSearchParams(Object.entries(params).filter(([, value]) => value));
   labelValues.forEach(label => queryParams.append('label', label));
   if (labelValues.length) queryParams.set('label_match', labelMatch);
+  if (groupBy) queryParams.set('include_metrics', 'true');
   const query = queryParams.toString();
   const fetchScans = () => {
     const id = ++requestId.current;
@@ -67,7 +71,7 @@ export default function ScansList() {
     return api.get(`/scans?${query}`).then(d => {
       if (id === requestId.current) { setData(d); setLoading(false); }
     }).catch(err => {
-      if (id === requestId.current) { setError(err.message); setLoading(false); }
+      if (id === requestId.current) { setData(null); setError(err.message); setLoading(false); }
     });
   };
   useEffect(() => {
@@ -327,7 +331,7 @@ export default function ScansList() {
       {user && (
         <section className="scan-filters mb-2" aria-label="Filter scans">
           <div className="scan-filter-heading"><span>Filter scans</span>
-            {hasFilters && <button className="scan-text-button" onClick={() => setSearchParams(groupBy ? { group_by: groupBy } : {})}>Reset filters</button>}
+            {hasFilters && <button className="scan-text-button" onClick={() => setSearchParams({ ...(groupBy ? { group_by: groupBy } : {}), ...(weighting === 'unweighted' ? { weighting } : {}) })}>Reset filters</button>}
           </div>
           <div className="scan-filter-primary">
             <SearchableFilter label="App" placeholder="All apps" value={params.app_id}
@@ -392,7 +396,7 @@ export default function ScansList() {
         </div>
       )}
 
-      {scans.length > 0 ? (
+      {error ? null : scans.length > 0 ? (
         groupBy ? <div className="card scan-summary-card">
           <div className="scan-summary-heading">
             <div><h2>Scan performance</h2><p>Mean <span className="text-muted">± standard deviation</span><span className="scan-legend-divider">·</span>Min–max beneath</p></div>
@@ -403,12 +407,18 @@ export default function ScansList() {
               {expanded.size === groups.length ? 'Hide all scans' : 'Show all scans'}
             </button></div>
           </div>
+          {metricView === 'quality' && <div className="scan-weighting-control">
+            <span>Scoring</span><div className="scan-segmented" role="group" aria-label="Scoring weights">
+              <button aria-pressed={weighting === 'weighted'} onClick={() => setFilter('weighting', '')}>Weighted</button>
+              <button aria-pressed={weighting === 'unweighted'} onClick={() => setFilter('weighting', 'unweighted')}>Unweighted</button>
+            </div>
+          </div>}
           <p className="scan-summary-note">{groupBy === 'configuration'
             ? 'Groups share an app, scanner version and exact label set. Unrecorded settings may still differ.'
             : groupBy === 'scanner' ? 'Scanner groups can mix versions and settings. Group by app + scanner version + labels for narrower comparisons.'
             : groupBy === 'scanner_version' ? 'Scanner versions may still span different apps and label sets.' : 'Groups may include different scanners and settings.'} Small samples are descriptive.</p>
           {groupBy === 'label' && <p className="scan-summary-note">A scan can belong to multiple label groups. The overall scan count counts each scan once.</p>}
-          {metricView === 'quality' && <p className="scan-summary-note">Count-based scores; each scan has equal weight. {scans.some(scan => (scan.pending_count ?? 0) > 0) && 'Pending findings excluded; scores are provisional.'}</p>}
+          {metricView === 'quality' && <p className="scan-summary-note">{weighting === 'weighted' ? 'Impact-weighted detection, including chain credit. Current benchmark revision; each scan has equal weight in the summary.' : 'Count-based scores; each scan has equal weight.'} {scans.some(scan => (scan.pending_count ?? 0) > 0) && 'Pending findings excluded; scores are provisional.'}</p>}
           <div className="table-wrap">
           <table className="scan-aggregation">
             <thead><tr><th>{scanGroupOptions[groupBy]}</th><th>Scans</th>
@@ -421,7 +431,8 @@ export default function ScansList() {
                 <td data-label="Scans">{group.scans.length}</td>
                 {metricColumns.map(([field, label]) => {
                   const stats = scanStatistics(metricView === 'quality' ? group.scans.map(scanQuality) : group.scans, field);
-                  const format = value => value === null ? '—' : metricView === 'quality' ? `${(value * 100).toFixed(1)}%` : value.toFixed(1);
+                  const percent = ['weighted_rate', 'precision', 'recall', 'f1'].includes(field);
+                  const format = value => value === null ? '—' : percent ? `${(value * 100).toFixed(1)}%` : value.toFixed(1);
                   return <td key={field} data-label={label}>
                     <div className="scan-statistics">
                       <div className="scan-stat-primary" aria-label={`Mean ${stats.mean === null ? 'unavailable' : format(stats.mean)}, standard deviation ${stats.std === null ? 'unavailable' : format(stats.std)}`}>
@@ -441,7 +452,7 @@ export default function ScansList() {
           </table>
         </div>
           <details className="scan-stat-help"><summary>How these statistics are calculated</summary>
-            <p>Each scan has equal weight; scores are calculated per scan before averaging (macro average). Precision = TP/(TP+FP), recall = TP/(TP+FN), F1 = 2TP/(2TP+FP+FN). Pending findings are excluded, so quality scores remain provisional while findings are pending. Undefined ratios are excluded, not counted as zero. Percentage standard deviations describe percentage-point spread. We show the arithmetic mean, sample standard deviation (n−1), and minimum–maximum. Missing values are excluded; n shows the measured/total scans for each metric. Small samples describe observed variation, not evidence of a performance difference. Standard deviation is unavailable for a single scan. Counts are per scan, not distinct findings across scans. Comparisons are most meaningful within the same app version and benchmark corpus; mixed groups are descriptive summaries, not controlled model evaluations.</p>
+            <p>Weighted detection uses the same current-revision scorer as scan detail: credited vulnerability and chain impact points / available impact points. Weighted precision and weighted F1 are not defined here. Unweighted metrics use vulnerability counts and clustered false positives from that scorer. Each scan has equal weight; scores are calculated per scan before averaging (macro average). Precision = TP/(TP+FP), recall = TP/(TP+FN), F1 = 2TP/(2TP+FP+FN). Pending findings are excluded, so quality scores remain provisional while findings are pending. Undefined ratios are excluded, not counted as zero. Percentage standard deviations describe percentage-point spread. We show the arithmetic mean, sample standard deviation (n−1), and minimum–maximum. Missing values are excluded; n shows the measured/total scans for each metric. Small samples describe observed variation, not evidence of a performance difference. Standard deviation is unavailable for a single scan. Counts are per scan, not distinct findings across scans. Comparisons are most meaningful within the same app version and benchmark corpus; mixed groups are descriptive summaries, not controlled model evaluations.</p>
           </details>
         </div> : renderScanTable(scans)
       ) : (

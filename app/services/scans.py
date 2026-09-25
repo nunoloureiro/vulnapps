@@ -134,7 +134,7 @@ async def _live_metrics(db, scan, revision=None):
 async def list_scans(
     db, user,
     app_id=None, scanner="", latest="", q="",
-    label="", filter="", label_match="all",
+    label="", filter="", label_match="all", include_metrics=False,
 ) -> dict:
     """List scans with filters. Returns dict with scans, metadata, and filter options."""
     extra_filters = ""
@@ -263,6 +263,13 @@ async def list_scans(
     # placeholders), then the WHERE clause's visibility + extra-filter params.
     cursor = await db.execute(sql, sev_params + vis_params + extra_params)
     scans = await cursor.fetchall()
+    if include_metrics:
+        metrics = await scoring_service.score_many(db, scans)
+        detail_keys = {"tiers", "matched_vuln_ids", "missed_vuln_ids", "credit_by_vuln", "credit_by_chain"}
+        scans = [
+            dict(scan, metrics={key: value for key, value in metrics[scan["id"]].items() if key not in detail_keys})
+            for scan in scans
+        ]
 
     # Batch-fetch labels for all returned scans
     scan_labels_map: dict[int, list[dict]] = {}

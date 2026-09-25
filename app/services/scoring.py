@@ -222,3 +222,55 @@ async def score(db, scan, revision: int) -> dict:
         "findings": findings,
         "revision": revision,
     }
+
+
+async def score_many(db, scans) -> dict[int, dict]:
+    """Current canonical metrics for an already-authorized scan list.
+
+    Share corpus reads by app/revision and batch scan-specific reads. Scope
+    uses the same helpers as score(), including each scan's corpus revision.
+    """
+    scans = list(scans)
+    if not scans:
+        return {}
+    findings_by_scan = {scan["id"]: [] for scan in scans}
+    confirmed_by_scan = {scan["id"]: set() for scan in scans}
+    for start in range(0, len(scans), 400):
+        scan_ids = [scan["id"] for scan in scans[start:start + 400]]
+        placeholders = ",".join("?" for _ in scan_ids)
+        cursor = await db.execute(
+            f"SELECT * FROM scan_findings WHERE scan_id IN ({placeholders}) ORDER BY id",
+            scan_ids,
+        )
+        findings = await cursor.fetchall()
+        for offset in range(0, len(findings), 400):
+            hydrated = await finding_matches.attach(db, findings[offset:offset + 400])
+            for finding in hydrated:
+                findings_by_scan[finding["scan_id"]].append(finding)
+        cursor = await db.execute(
+            f"SELECT scan_id, chain_pk FROM scan_chain_credits WHERE scan_id IN ({placeholders})",
+            scan_ids,
+        )
+        for row in await cursor.fetchall():
+            confirmed_by_scan[row["scan_id"]].add(row["chain_pk"])
+
+    revisions = {}
+    scopes = {}
+    metrics = {}
+    for scan in scans:
+        app_id = scan["app_id"]
+        if app_id not in revisions:
+            revisions[app_id] = await latest_revision(db, app_id)
+        revision = revisions[app_id]
+        corpus_revision = int(scoring.field(scan, "corpus_revision", revision) or revision)
+        key = (app_id, revision, corpus_revision)
+        if key not in scopes:
+            scopes[key] = (
+                await fetch_vulns_in_scope(db, app_id, revision, corpus_revision),
+                await fetch_chains_in_scope(db, app_id, revision, corpus_revision),
+            )
+        vulns, chains = scopes[key]
+        metrics[scan["id"]] = compute_metrics(
+            findings_by_scan[scan["id"]], vulns, chains, confirmed_by_scan[scan["id"]],
+        )
+    return metrics
