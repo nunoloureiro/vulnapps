@@ -1017,34 +1017,46 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .scan-chart-ideal rect { fill: rgba(34, 197, 94, .045); stroke: var(--success); stroke-width: 1.5; stroke-dasharray: 6 5; }
 .scan-chart-plot .scan-chart-ideal text { fill: var(--success); font-size: 12px; }
 
-/* Change log: version + time in a narrow left rail, the message beside it, so
- * a day's releases read as one column of versions rather than a wall of text. */
-.changelog-entry {
+/* Change log: one scannable line per release, detail only when asked for.
+ * The old layout printed every commit body in full, which made 189 releases
+ * a wall of text. */
+.changelog-row { border-top: 1px solid var(--border); }
+.changelog-row:first-of-type { border-top: none; }
+.changelog-line {
     display: flex;
-    gap: 0.9rem;
-    padding: 0.5rem 0;
-    border-top: 1px solid var(--border);
+    align-items: baseline;
+    gap: 0.6rem;
+    padding: 0.35rem 0;
 }
-.changelog-entry:first-of-type { border-top: none; padding-top: 0; }
-.changelog-meta {
-    flex: 0 0 5.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.1rem;
+.changelog-line.is-expandable { cursor: pointer; }
+.changelog-line.is-expandable:hover { background: var(--accent-dim); }
+.changelog-line.is-expandable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.changelog-caret {
+    flex: 0 0 0.7rem;
+    color: var(--text-muted);
+    font-size: 0.7rem;
 }
-.changelog-version { font-size: 0.8rem; color: var(--accent); }
-.changelog-body { min-width: 0; }
-.changelog-subject { font-size: 0.86rem; }
-/* Commit bodies are hard-wrapped prose; keep their line breaks but let long
- * lines reflow rather than forcing the page to scroll sideways. */
-.changelog-notes {
-    margin-top: 0.25rem;
+.changelog-version { flex: 0 0 4.2rem; font-size: 0.8rem; color: var(--accent); }
+.changelog-time { flex: 0 0 3.2rem; }
+/* The subject is the summary, so it gets the room and never wraps to a
+ * second line -- a uniform row height is what makes the list scannable. */
+.changelog-subject {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.86rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.changelog-detail { padding: 0 0 0.6rem 5.5rem; }
+.changelog-detail ul { margin: 0 0 0.35rem; padding-left: 1rem; }
+.changelog-detail li {
     font-size: 0.78rem;
     color: var(--text-secondary);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+    line-height: 1.5;
+    margin-bottom: 0.15rem;
 }
 @media (max-width: 640px) {
-    .changelog-entry { flex-direction: column; gap: 0.2rem; }
-    .changelog-meta { flex-direction: row; gap: 0.5rem; align-items: baseline; }
+    .changelog-subject { white-space: normal; }
+    .changelog-detail { padding-left: 1.3rem; }
 }

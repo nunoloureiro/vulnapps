@@ -16,10 +16,23 @@ no .git to read — see .dockerignore. A git checkout falls back to asking git
 directly, so local dev needs no build step.
 """
 import json
+import re
 import subprocess
 from pathlib import Path
 
 from app.version import PROJECT_DIR, _read_major
+
+# How many bullets a release is summarised into, and how long each may run.
+MAX_BULLETS = 3
+MAX_BULLET_CHARS = 130
+# A lead sentence shorter than this is usually a transition ("Three producers
+# had to agree.") rather than the point, so it is merged with the one after it.
+LEAD_FLOOR = 55
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_PARAGRAPH_SPLIT = re.compile(r"\n\s*\n")
+# Trailing metadata lines that are not part of the prose.
+_TRAILER = re.compile(r"^[A-Za-z-]+:\s", re.MULTILINE)
 
 BAKED = PROJECT_DIR / "CHANGELOG.json"
 
@@ -73,6 +86,47 @@ def _ancestor_counts(ref: str) -> dict[str, int]:
     return {sha: mask.bit_count() for sha, mask in reach.items()}
 
 
+def summarise(body: str) -> list[str]:
+    """Condense a commit body into at most ``MAX_BULLETS`` short bullets.
+
+    One bullet per paragraph, taking its opening sentence — commit bodies are
+    written a-point-per-paragraph, so the paragraph breaks are the only
+    structure available to split on. This is extraction, not comprehension: a
+    paragraph that opens on a transitional sentence yields a weak bullet, and
+    nothing here can tell the difference. It buys a page you can scan; it does
+    not replace reading the commit.
+    """
+    if not body:
+        return []
+
+    bullets = []
+    for paragraph in _PARAGRAPH_SPLIT.split(body):
+        # Drop trailer lines (Co-Authored-By:, Signed-off-by: and friends).
+        lines = [ln for ln in paragraph.splitlines() if not _TRAILER.match(ln)]
+        text = " ".join(" ".join(lines).split())
+        if not text:
+            continue
+
+        sentences = [s.strip() for s in _SENTENCE_SPLIT.split(text) if s.strip()]
+        if not sentences:
+            continue
+
+        bullet = sentences[0]
+        index = 1
+        while len(bullet) < LEAD_FLOOR and index < len(sentences):
+            bullet = f"{bullet} {sentences[index]}"
+            index += 1
+
+        if len(bullet) > MAX_BULLET_CHARS:
+            bullet = bullet[:MAX_BULLET_CHARS].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+        bullets.append(bullet)
+        if len(bullets) >= MAX_BULLETS:
+            break
+
+    return bullets
+
+
 def _resolve_ref(ref: str) -> str | None:
     """*ref* if it exists, else HEAD — a CI checkout of a pull request is
     detached and has no local `main`, and failing there would break the build
@@ -116,7 +170,10 @@ def build_entries(ref: str = "main") -> list[dict]:
             "date": date,
             "author": author,
             "subject": subject,
-            "body": body.strip(),
+            # Bullets, not the raw body: the page is a scannable history, and
+            # shipping full commit prose made it a wall of text (and a 129KB
+            # payload). The commit itself remains the place for the full text.
+            "bullets": summarise(body.strip()),
             # Merge commits still increment the version (rev-list counts them),
             # so they are kept rather than filtered — dropping them would make
             # the numbers here disagree with the running app. The UI can fold

@@ -22,6 +22,7 @@ export default function AdminChangelog() {
   const [error, setError] = useState(null);
   const [showMerges, setShowMerges] = useState(false);
   const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(() => new Set());
 
   useEffect(() => {
     api.get('/admin/changelog')
@@ -31,16 +32,23 @@ export default function AdminChangelog() {
 
   const entries = data?.entries || [];
 
+  const toggle = sha => setOpen(prev => {
+    const next = new Set(prev);
+    if (next.has(sha)) next.delete(sha); else next.add(sha);
+    return next;
+  });
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return entries.filter(e => {
       if (!showMerges && isNoise(e)) return false;
       if (!q) return true;
-      return `${e.version} ${e.subject} ${e.body} ${e.author}`.toLowerCase().includes(q);
+      return `${e.version} ${e.subject} ${(e.bullets || []).join(' ')} ${e.author}`
+        .toLowerCase().includes(q);
     });
   }, [entries, showMerges, query]);
 
-  // Group by calendar day so a run of commits reads as one day's work.
+  // Group by calendar day so a run of releases reads as one day's work.
   const days = useMemo(() => {
     const out = [];
     for (const e of visible) {
@@ -55,6 +63,7 @@ export default function AdminChangelog() {
   if (!data) return <p className="text-muted">Loading...</p>;
 
   const mergeCount = entries.filter(isNoise).length;
+  const allOpen = visible.length > 0 && visible.every(e => open.has(e.sha));
 
   return (
     <>
@@ -75,8 +84,12 @@ export default function AdminChangelog() {
               placeholder="Filter…"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              style={{ width: 200 }}
+              style={{ width: 180 }}
             />
+            <button type="button" className="btn btn-outline btn-sm"
+              onClick={() => setOpen(allOpen ? new Set() : new Set(visible.map(e => e.sha)))}>
+              {allOpen ? 'Collapse all' : 'Expand all'}
+            </button>
             {mergeCount > 0 && (
               <label className="text-muted text-sm" style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 <input
@@ -85,7 +98,7 @@ export default function AdminChangelog() {
                   onChange={e => setShowMerges(e.target.checked)}
                   style={{ accentColor: 'var(--accent)', marginRight: 6 }}
                 />
-                Show {mergeCount} merge commits
+                Merges
               </label>
             )}
           </div>
@@ -99,19 +112,37 @@ export default function AdminChangelog() {
           <h3 className="card-title mb-2">{day}</h3>
           {items.map(e => {
             const { time } = releaseDate(e.date);
+            const bullets = e.bullets || [];
+            const expanded = open.has(e.sha);
+            const expandable = bullets.length > 0;
             return (
-              <div key={e.sha} className="changelog-entry">
-                <div className="changelog-meta">
+              <div key={e.sha} className="changelog-row">
+                {/* One line per release by default. The subject is already a
+                    summary, so the detail only appears when asked for. */}
+                <div
+                  className={`changelog-line${expandable ? ' is-expandable' : ''}`}
+                  onClick={expandable ? () => toggle(e.sha) : undefined}
+                  role={expandable ? 'button' : undefined}
+                  tabIndex={expandable ? 0 : undefined}
+                  onKeyDown={expandable ? (ev => {
+                    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(e.sha); }
+                  }) : undefined}
+                >
+                  <span className="changelog-caret">{expandable ? (expanded ? '▾' : '▸') : ''}</span>
                   <span className="changelog-version font-mono">{e.version}</span>
-                  <span className="text-muted text-xs">{time}</span>
+                  <span className="text-muted text-xs changelog-time">{time}</span>
+                  <span className="changelog-subject">{e.subject}</span>
                 </div>
-                <div className="changelog-body">
-                  <div className="changelog-subject">{e.subject}</div>
-                  {e.body && <div className="changelog-notes">{e.body}</div>}
-                  <div className="text-muted text-xs" style={{ marginTop: 2 }}>
-                    <span className="font-mono">{e.sha}</span> · {e.author}
+                {expanded && (
+                  <div className="changelog-detail">
+                    <ul>
+                      {bullets.map((b, i) => <li key={i}>{b}</li>)}
+                    </ul>
+                    <div className="text-muted text-xs">
+                      <span className="font-mono">{e.sha}</span> · {e.author}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             );
           })}

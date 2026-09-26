@@ -1759,8 +1759,21 @@ required, matching that same public-metadata pattern) returns `{"version": "v1.1
 
 Admin → **Change Log** (`/admin/changelog`, `frontend/src/pages/AdminChangelog.jsx`). Because
 the version's minor number IS the commit count (see **App Version** above), every commit on
-`main` is a release, and the change log is the commit log with the matching version attached:
-version, release datetime, subject, body, short SHA, author.
+`main` is a release, and the change log is the commit log with the matching version attached.
+
+**One line per release by default** — version, time, subject — expanding on click to at most
+3 bullets plus SHA and author, with expand/collapse all. The first cut rendered every commit
+body in full and 189 releases became a wall of text. The payload carries `bullets`, never the
+raw `body` (129KB → 70KB); the commit itself stays the place for full prose.
+
+`summarise()` takes the opening sentence of each paragraph, since commit bodies are written
+a-point-per-paragraph and the blank lines are the only structure available. Hard-wrapped
+lines are rejoined (git's 72-char breaks are not sentence breaks), a lead sentence under
+`LEAD_FLOOR` absorbs the one after it (a transitional opener is not the point of its
+paragraph), trailers like `Co-Authored-By:` are dropped, and bullets are capped at
+`MAX_BULLETS` / `MAX_BULLET_CHARS` with word-boundary truncation. This is extraction, not
+comprehension: a paragraph opening on a weak sentence still yields a weak bullet and nothing
+in the heuristic can tell. It buys a scannable page, not a written summary.
 
 The minor number for a given commit is that commit's own **ancestor count**, which is *not*
 its position in `git log` — with merge commits the two diverge, and numbering the log top to

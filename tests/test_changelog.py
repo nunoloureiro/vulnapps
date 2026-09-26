@@ -116,16 +116,17 @@ def test_entries_are_newest_first(repo):
     assert minors == sorted(minors, reverse=True)
 
 
-def test_body_is_kept_separate_from_subject(repo):
+def test_body_becomes_bullets_separate_from_subject(repo):
     (repo / "file.txt").write_text("x")
     git(repo, "add", "-A")
     git(repo, "commit", "--no-gpg-sign", "-m", "Short subject",
-        "-m", "A longer explanation\nover two lines.")
+        "-m", "A longer explanation that runs on for a while over two lines.")
 
     newest = changelog.build_entries()[0]
 
     assert newest["subject"] == "Short subject"
-    assert newest["body"] == "A longer explanation\nover two lines."
+    assert newest["bullets"] == ["A longer explanation that runs on for a while over two lines."]
+    assert "body" not in newest, "raw prose is what made the page a wall of text"
 
 
 def test_multiline_message_does_not_break_parsing(repo):
@@ -138,8 +139,83 @@ def test_multiline_message_does_not_break_parsing(repo):
     entries = changelog.build_entries()
 
     assert entries[0]["subject"] == 'Weird | "quoted" | subject'
-    assert "blank lines" in entries[0]["body"]
+    assert any("blank lines" in b for b in entries[0]["bullets"])
     assert len(entries) == 2, "the odd message must not swallow the commit below it"
+
+
+# --- summarise() ------------------------------------------------------------
+
+def test_one_bullet_per_paragraph():
+    body = (
+        "The first point, stated at some length so it clears the lead floor.\n"
+        "It wraps across lines the way git wraps a commit body.\n"
+        "\n"
+        "The second point, also long enough to stand on its own as a bullet."
+    )
+
+    assert changelog.summarise(body) == [
+        "The first point, stated at some length so it clears the lead floor.",
+        "The second point, also long enough to stand on its own as a bullet.",
+    ]
+
+
+def test_hard_wrapped_lines_are_rejoined():
+    """Git wraps bodies at ~72 chars; those breaks are not sentence breaks."""
+    body = "A single sentence that git split\nacross two source lines entirely."
+
+    assert changelog.summarise(body) == [
+        "A single sentence that git split across two source lines entirely."
+    ]
+
+
+def test_short_lead_sentence_absorbs_the_next_one():
+    """A transitional opener ('Three producers had to agree.') is not the
+    point of its paragraph, so it is merged rather than emitted alone."""
+    body = "Two things here. The actual substance lives in this second sentence."
+
+    assert changelog.summarise(body) == [
+        "Two things here. The actual substance lives in this second sentence."
+    ]
+
+
+def test_bullets_are_capped_in_number_and_length():
+    body = "\n\n".join(
+        f"Paragraph number {n} written out at a length that clears the floor."
+        for n in range(8)
+    )
+
+    bullets = changelog.summarise(body)
+
+    assert len(bullets) == changelog.MAX_BULLETS
+    assert all(len(b) <= changelog.MAX_BULLET_CHARS + 1 for b in bullets)
+
+
+def test_long_bullet_is_truncated_on_a_word_boundary():
+    body = "word " * 80
+
+    bullet = changelog.summarise(body)[0]
+
+    assert bullet.endswith("…")
+    assert "  " not in bullet and not bullet[:-1].endswith(" ")
+
+
+def test_trailers_are_not_bullets():
+    """Co-Authored-By and friends are metadata, not a summary point."""
+    body = (
+        "The real explanation, long enough to survive the lead floor check.\n"
+        "\n"
+        "Co-Authored-By: Someone <someone@example.com>\n"
+        "Signed-off-by: Someone Else <else@example.com>"
+    )
+
+    assert changelog.summarise(body) == [
+        "The real explanation, long enough to survive the lead floor check."
+    ]
+
+
+def test_empty_body_has_no_bullets():
+    assert changelog.summarise("") == []
+    assert changelog.summarise("\n\n  \n") == []
 
 
 def test_baked_file_is_preferred_over_git(repo):
