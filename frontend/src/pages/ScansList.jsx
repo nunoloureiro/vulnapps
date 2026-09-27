@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import { SearchableFilter } from '../components/SearchableFilter';
 import { groupScans, scanGroupOptions } from '../utils/scanGroups';
 import { initialScanRequest, scanRequestReducer, scanResultForKey } from '../utils/scanRequest';
+import { SeverityBreakdown } from '../components/SeverityBreakdown';
 import { scanStatistics, scanQuality, canonicalScanCounts, metricExtremes } from '../utils/scanStatistics';
 import { ScanPerformanceChart } from '../components/ScanPerformanceChart';
 import { chartMetrics, chartResources } from '../utils/scanChart';
@@ -193,29 +194,13 @@ export default function ScansList() {
     </>
   );
 
-  // The distinct matched vulns behind the TP number, split by the CATALOG's
-  // severity, so they sum to the figure they sit beside. Deliberately not
-  // `sev-pill`: the Severity column next door already owns that shape and
-  // counts something else (findings), so two identical pill groups side by
-  // side would read as peers. `info` is dropped when zero — it nearly always
-  // is, and the row is already wide.
-  const TpBreakdown = ({ s }) => {
-    const buckets = ['critical', 'high', 'medium', 'low', 'info']
-      .map(sev => [sev, s?.[`tp_${sev}`] ?? 0])
-      .filter(([sev, n]) => sev !== 'info' || n > 0);
-    if (buckets.every(([, n]) => n === 0)) return null;
-    return (
-      <span className="tp-split">
-        {buckets.map(([sev, n]) => (
-          <span key={sev}
-            className={`tp-split-${sev}${n === 0 ? ' tp-split-zero' : ''}`}
-            title={`${n} true positive${n === 1 ? '' : 's'} at ground-truth severity ${sev}`}>
-            {n}{sev[0].toUpperCase()}
-          </span>
-        ))}
-      </span>
-    );
-  };
+  // The distinct matched vulns behind the TP number, by catalog severity, so
+  // they sum to the figure beside them. Rows carry them as flat tp_* columns.
+  const TpBreakdown = ({ s }) => (
+    <SeverityBreakdown label="true positives" counts={s && {
+      critical: s.tp_critical, high: s.tp_high, medium: s.tp_medium, low: s.tp_low, info: s.tp_info,
+    }} />
+  );
 
   const toggleSort = (key) => {
     if (sortKey === key) {

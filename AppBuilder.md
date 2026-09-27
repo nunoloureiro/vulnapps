@@ -1377,6 +1377,14 @@ Normative rules:
   payload. `info` is hidden in the UI when zero.
 - Counted per distinct vuln, not per finding: two findings hitting one vuln is one TP.
 
+The scan detail page's **Difficulty Tiers** table shows the same split in its Found
+column, per tier: each bucket in `metrics.tiers` carries `found_by_severity`, summing to that
+tier's `found`. Chains have no severity column, only `impact_weight`, so the Chained row maps
+the weight back (27→critical, 9→high, 3→medium, 1→low). The Weighted-total row uses
+`tp_by_severity`, so it sums to `tp` (vulns only) like the number beside it — not to the tier
+rows, whose Chained row counts chains. All three surfaces render through
+`components/SeverityBreakdown.jsx`.
+
 Three producers, kept deliberately in agreement (`tests/test_tp_severity_and_ignore.py`
 pins this):
 

@@ -254,3 +254,19 @@ async def test_ignore_audit_names_what_it_discarded(db):
     )
     message = (await cursor.fetchone())["message"]
     assert "dropped 1 existing match" in message
+
+
+def test_chained_tier_split_derives_severity_from_weight():
+    """Chains have no severity column, only impact_weight, which maps 1:1 back
+    to a severity — so a found 27-point chain lands in the critical bucket."""
+    from app.scoring import compute_metrics
+
+    member = {"id": 1, "severity": "high", "impact_weight": 9, "difficulty_tier": "commodity"}
+    chain = {"id": 50, "impact_weight": 27, "members": [1],
+             "existed_since_revision": 1, "invalidated_at_revision": None}
+    finding = {"id": 1, "matched_vuln_ids": [], "matched_chain_ids": [50]}
+
+    tiers = compute_metrics([finding], [member], [chain])["tiers"]
+
+    assert tiers["chained"]["found"] == 1
+    assert tiers["chained"]["found_by_severity"]["critical"] == 1

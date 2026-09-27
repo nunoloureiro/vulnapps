@@ -140,11 +140,21 @@ def test_tier_matrix_shape():
 
     tiers = compute_metrics(_findings_for(vulns, found), vulns)["tiers"]
 
+    by_severity = tiers["commodity"].pop("found_by_severity")
     assert tiers["commodity"] == {
         "count": 12, "found": 12,
         "weighted_total": 40.0, "weighted_found": 40.0,
         "rate": 1.0, "weighted_rate": 1.0,
     }
+    # The per-tier severity split sums to that tier's `found`, by catalog severity.
+    expected = {sev: 0 for sev in ("critical", "high", "medium", "low", "info")}
+    for v in vulns:
+        if v["difficulty_tier"] == "commodity":
+            # Labels outside the scale (this corpus uses "informational") fold into info.
+            sev = v["severity"] if v["severity"] in expected else "info"
+            expected[sev] += 1
+    assert by_severity == expected
+    assert sum(tiers["business_logic"]["found_by_severity"].values()) == 4
     assert tiers["business_logic"]["count"] == 14
     assert tiers["business_logic"]["found"] == 4
     assert round(tiers["business_logic"]["rate"], 2) == 0.29

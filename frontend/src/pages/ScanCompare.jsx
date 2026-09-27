@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { SeverityBreakdown } from '../components/SeverityBreakdown';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge } from '../components/Badge';
@@ -407,17 +408,10 @@ function ComparisonView({ data, appId }) {
                       style={winnerStyle(i)}
                     >
                       {m[k]}
-                      {k === 'tp' && m.tp > 0 && (
-                        <div className="tp-split" style={{ justifyContent: 'center', marginTop: 2 }}>
-                          {['critical', 'high', 'medium', 'low', 'info']
-                            .filter(sev => sev !== 'info' || m.tp_by_severity[sev] > 0)
-                            .map(sev => (
-                              <span key={sev}
-                                className={`tp-split-${sev}${m.tp_by_severity[sev] === 0 ? ' tp-split-zero' : ''}`}
-                                title={`${m.tp_by_severity[sev]} at ground-truth severity ${sev}`}>
-                                {m.tp_by_severity[sev]}{sev[0].toUpperCase()}
-                              </span>
-                            ))}
+                      {k === 'tp' && (
+                        <div style={{ marginTop: 2 }}>
+                          <SeverityBreakdown counts={m.tp_by_severity} label="true positives"
+                            style={{ justifyContent: 'center' }} />
                         </div>
                       )}
                       {k === 'fp_groups' && m.fp !== m.fp_groups && (

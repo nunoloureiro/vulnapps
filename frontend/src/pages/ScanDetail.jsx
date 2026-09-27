@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { SeverityBreakdown } from '../components/SeverityBreakdown';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
@@ -449,8 +450,13 @@ function TierMatrix({ tiers, metrics }) {
                   <td data-label="Tier">{TIER_LABELS[t]}</td>
                   <td data-label="Ground truth" className="text-center font-mono">{row.count}</td>
                   <td data-label="Found" className={`text-center font-mono ${row.rate >= 0.7 ? 'text-success' : row.rate >= 0.4 ? 'text-warning' : 'text-error'}`}>
-                    {row.found}
-                    <span className="text-muted text-xs"> ({pct(row.rate)})</span>
+                    <span className="tp-cell">
+                      <span>
+                        {row.found}
+                        <span className="text-muted text-xs"> ({pct(row.rate)})</span>
+                      </span>
+                      <SeverityBreakdown counts={row.found_by_severity} />
+                    </span>
                   </td>
                   <td data-label="Weighted rate" className={`text-center font-mono ${row.weighted_rate >= 0.7 ? 'text-success' : row.weighted_rate >= 0.4 ? 'text-warning' : 'text-error'}`}>
                     {pct(row.weighted_rate)}
@@ -464,7 +470,14 @@ function TierMatrix({ tiers, metrics }) {
             <tr>
               <td className="detail-label">Weighted total</td>
               <td className="text-center font-mono">{metrics.tp + metrics.fn}</td>
-              <td className="text-center font-mono">{metrics.tp}</td>
+              {/* Vulns only, like the tp beside it — so this sums to tp and not to
+                  the tier rows above, whose Chained row counts chains. */}
+              <td className="text-center font-mono">
+                <span className="tp-cell">
+                  {metrics.tp}
+                  <SeverityBreakdown counts={metrics.tp_by_severity} label="true positives" />
+                </span>
+              </td>
               <td className={`text-center font-mono ${metrics.weighted_rate >= 0.7 ? 'text-success' : metrics.weighted_rate >= 0.4 ? 'text-warning' : 'text-error'}`}>
                 {pct(metrics.weighted_rate)}
               </td>

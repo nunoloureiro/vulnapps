@@ -41,6 +41,10 @@ SEVERITY_WEIGHTS = {
 
 DEFAULT_WEIGHT = 3
 
+# Reverse of SEVERITY_WEIGHTS for rows that only carry a weight (chains).
+# 1 is ambiguous between low and info; low is the one the catalog uses.
+_SEVERITY_BY_WEIGHT = {27: "critical", 9: "high", 3: "medium", 1: "low"}
+
 # A reporting axis, never a multiplier. Blending difficulty into the weight
 # produces one opaque number and destroys the diagnostic: the point of the tier
 # is to see *where on the difficulty curve* a configuration improved.
@@ -352,7 +356,10 @@ def compute_metrics(
 
     # --- weighted totals and the tier matrix ------------------------------
     tiers = {
-        t: {"count": 0, "found": 0, "weighted_total": 0.0, "weighted_found": 0.0}
+        t: {"count": 0, "found": 0, "weighted_total": 0.0, "weighted_found": 0.0,
+            # What was found in this tier, by catalog severity. Chains have no
+            # severity column, only impact_weight, which maps 1:1 back to one.
+            "found_by_severity": {sev: 0 for sev in SEVERITY_WEIGHTS}}
         for t in DIFFICULTY_TIERS
     }
 
@@ -370,6 +377,8 @@ def compute_metrics(
         bucket["weighted_found"] += weight * credit
         if credit > 0:
             bucket["found"] += 1
+            sev = vuln_severity.get(vid, "")
+            bucket["found_by_severity"][sev if sev in SEVERITY_WEIGHTS else "info"] += 1
 
     for c in chains:
         pk = field(c, "id")
@@ -383,6 +392,7 @@ def compute_metrics(
         bucket["weighted_found"] += weight * credit
         if credit > 0:
             bucket["found"] += 1
+            bucket["found_by_severity"][_SEVERITY_BY_WEIGHT.get(weight, "info")] += 1
 
     for bucket in tiers.values():
         bucket["rate"] = bucket["found"] / bucket["count"] if bucket["count"] else 0.0
