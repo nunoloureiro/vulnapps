@@ -1718,6 +1718,18 @@ write-ups can trip safety classifiers, and a declined request is re-run on the r
 model rather than failing the import. A final `stop_reason: "refusal"` raises instead of being
 read as an empty result.
 
+**KPIs in the CLI output.** Every import ends with the scan's headline numbers — weighted
+detection (points found / total), TP with its C/H/M/L split, FP groups (and raw FP count when
+they differ), FN, pending, precision (a lower–upper range while anything is pending, never the
+flattering bound alone), recall, F1, severity accuracy, and the per-tier found / total with
+weighted rate and severity split. After a real import they are **vulnapps' own** numbers for the
+new scan (`GET /api/scans/{id}`); with `--dry-run`, where nothing is submitted, the importer
+computes them locally with `app.scoring.compute_metrics` against the current catalog
+(`local_metrics`) and labels them a preview. `tests/test_cli_kpis.py` submits the same mapped
+findings through the real service and asserts every KPI, per-tier and per-severity split
+included, is identical — the preview is only worth showing if it is the number the scan page
+will show.
+
 **Provenance.** Every scan records who imported and mapped it (migration 042):
 `imported_by` ("vulnapps import_scan", or "vulnapps web form" from the submit page),
 `importer_version` (v`VERSION`.`commit count` of the importer's own checkout — the app's

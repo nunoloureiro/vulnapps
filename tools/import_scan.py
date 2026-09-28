@@ -856,6 +856,86 @@ def merge_mappings(findings: list[dict], batch: list[tuple[int, dict]], response
         f["is_false_positive"] = bool(f.get("is_false_positive")) or entry.get("is_false_positive") is True
 
 
+def local_metrics(mapping: dict, vulns: list, chains: list | None) -> dict | None:
+    """Score a mapping locally, with the app's own scoring code -- for --dry-run,
+    where nothing reaches vulnapps to score it.
+
+    Scoped like the scan list: the current catalog (not invalidated). A real
+    import prints vulnapps' own numbers instead, which are authoritative; the
+    two agree because the importer's corrections make the server's matches
+    exactly the LLM's, and a new scan has no hand-confirmed chains yet.
+    Returns None if the scoring module cannot be imported (a copy of this
+    script outside the repo).
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from app.scoring import compute_metrics
+    except ImportError:
+        return None
+    findings = []
+    for f in mapping.get("findings", []) or []:
+        vids = [f["matched_vuln_db_id"]] if f.get("matched_vuln_db_id") else []
+        vids += [v for v in (f.get("additional_vuln_db_ids") or []) if v not in vids]
+        findings.append({
+            **f,
+            "matched_vuln_ids": vids,
+            "matched_chain_ids": [f["matched_chain_db_id"]] if f.get("matched_chain_db_id") else [],
+            "is_false_positive": 1 if f.get("is_false_positive") else 0,
+            "is_ignored": 0,
+        })
+    current = lambda rows: [r for r in (rows or []) if not r.get("invalidated_at_revision")]
+    return compute_metrics(findings, current(vulns), current(chains))
+
+
+def print_kpis(metrics: dict | None, source: str) -> None:
+    """The scan's headline numbers, the same ones the scan page shows."""
+    if not metrics:
+        print(f"\n  {C.DIM}(KPIs unavailable: {source}){C.RESET}")
+        return
+    pct = lambda x: f"{(x or 0) * 100:.1f}%"
+    sev = lambda d: " ".join(f"{(d or {}).get(k, 0)}{k[0].upper()}" for k in ("critical", "high", "medium", "low")) \
+        + (f" {(d or {}).get('info')}I" if (d or {}).get("info") else "")
+    m = metrics
+    print(f"\n  {colored('KPIs', 'BOLD')} {C.DIM}({source}){C.RESET}")
+    print(f"    Weighted detection  {colored(pct(m.get('weighted_rate')), 'BOLD')}  "
+          f"{C.DIM}{m.get('weighted_found', 0):g} / {m.get('weighted_total', 0):g} pts{C.RESET}")
+    print(f"    True positives      {m.get('tp', 0):<4} {C.DIM}{sev(m.get('tp_by_severity'))}{C.RESET}")
+    fp_note = f" ({m.get('fp')} findings)" if m.get("fp") != m.get("fp_groups") else ""
+    print(f"    False positives     {m.get('fp_groups', 0)}{C.DIM}{fp_note}{C.RESET}")
+    print(f"    False negatives     {m.get('fn', 0)}")
+    print(f"    Pending             {m.get('pending', 0)}")
+    if m.get("adjudication_complete") or not m.get("pending"):
+        precision = pct(m.get("precision_upper"))
+    else:  # a range until every finding is adjudicated -- never the flattering bound alone
+        precision = f"{pct(m.get('precision_lower'))}–{pct(m.get('precision_upper'))}"
+    print(f"    Precision           {precision}")
+    print(f"    Recall              {pct(m.get('recall'))}")
+    print(f"    F1                  {pct(m.get('f1'))}")
+    if m.get("severity_checked"):
+        print(f"    Severity accuracy   {pct(m.get('severity_accuracy'))}  "
+              f"{C.DIM}{m.get('severity_correct', 0)} / {m.get('severity_checked', 0)} rated as the catalog does{C.RESET}")
+    tiers = m.get("tiers") or {}
+    labels = {"commodity": "Commodity", "business_logic": "Business logic", "chained": "Chained"}
+    if tiers:
+        print(f"    {C.DIM}Tier{' ' * 14}found / total   weighted{C.RESET}")
+        for key, label in labels.items():
+            tr = tiers.get(key)
+            if not tr or not tr.get("count"):
+                continue
+            print(f"    {label:<18}{tr.get('found', 0):>5} / {tr.get('count', 0):<5}  {pct(tr.get('weighted_rate')):>7}  "
+                  f"{C.DIM}{sev(tr.get('found_by_severity'))}{C.RESET}")
+
+
+def print_server_kpis(client, scan_id) -> None:
+    """After a real import: vulnapps' own numbers for the scan just created."""
+    try:
+        metrics = client.get_scan(scan_id).get("metrics")
+    except httpx.HTTPError as e:
+        print_kpis(None, f"could not fetch them from vulnapps: {e}")
+        return
+    print_kpis(metrics, "from vulnapps")
+
+
 def format_duration(seconds: float) -> str:
     """Human-friendly elapsed time, e.g. '47s' or '2m 7s'."""
     secs = int(round(seconds))
@@ -2359,6 +2439,7 @@ def main():
                 print(f"    {colored('!', 'YELLOW')} {w}")
 
         if args.dry_run:
+            print_kpis(local_metrics(mapping, vulns, chains), "preview, computed locally — nothing submitted")
             print(f"\n  {colored('⚑', 'YELLOW')} Dry run — skipping submission\n")
             return
 
@@ -2376,12 +2457,14 @@ def main():
             scan_model = llm_out.get("scan_model")
             if scan_model and scan_model not in label_names:
                 label_names.append(scan_model)
-            scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, cost, tokens, duration, args.scanner_version)
+            scan_id = submit_to_vulnapps(client, args.app_id, mapping, is_public, args.notes, cost, tokens, duration,
+                                         args.scanner_version, _scan_config(args, scan_model))
             for label_name in label_names:
                 client.add_label(scan_id, label_name)
             if label_names:
                 print(f"  {colored('✓', 'GREEN')} Labels: {colored(', '.join(label_names), 'CYAN')}")
             print(f"  {colored('🔗', 'BLUE')} {args.url}/scans/{scan_id}")
+            print_server_kpis(client, scan_id)
         except httpx.HTTPStatusError as e:
             print(f"  {colored('✗', 'RED')} Submit failed: {e.response.status_code} {e.response.text}", file=sys.stderr)
             sys.exit(1)
@@ -2608,6 +2691,7 @@ def main():
                   f"the run may have been interrupted.")
 
     if args.dry_run:
+        print_kpis(local_metrics(mapping, vulns, chains), "preview, computed locally — nothing submitted")
         print(f"\n  {colored('⚑', 'YELLOW')} Dry run — skipping submission\n")
         return
 
@@ -2691,6 +2775,7 @@ def main():
         if label_names:
             print(f"  {colored('✓', 'GREEN')} Labels: {colored(', '.join(label_names), 'CYAN')}")
         print(f"  {colored('🔗', 'BLUE')} {args.url}/scans/{scan_id}")
+        print_server_kpis(client, scan_id)
     except httpx.HTTPStatusError as e:
         print(f"  {colored('✗', 'RED')} Submit failed: {e.response.status_code} {e.response.text}", file=sys.stderr)
         sys.exit(1)
