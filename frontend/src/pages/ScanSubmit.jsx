@@ -56,6 +56,12 @@ export default function ScanSubmit() {
       if (form.cost) body.cost = parseFloat(form.cost);
       if (form.tokens) body.tokens = parseInt(form.tokens);
       if (form.duration) body.duration = parseInt(form.duration);
+      // Provenance: a scan typed into this form was not mapped by the CLI
+      // importer, and the scan page says so. The version is the app's own.
+      body.imported_by = 'vulnapps web form';
+      try {
+        body.importer_version = (await api.get('/version')).version;
+      } catch { /* provenance is best-effort; never block a submission on it */ }
 
       const result = await api.post(`/apps/${appId}/scans`, body);
       navigate(`/scans/${result.scan_id}`);

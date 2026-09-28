@@ -524,6 +524,7 @@ async def submit_scan(request: Request, app_id: int):
             duration=duration,
             findings_data=findings_data,
             labels=scan_labels,
+            run_details=body,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

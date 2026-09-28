@@ -555,6 +555,33 @@ async def get_scan(db, user, scan_id: int) -> dict:
     }
 
 
+# Who imported/mapped a scan and how it was run (migration 042). Text fields
+# are stored as given (trimmed, capped); the integer ones must parse or are
+# dropped. Anything else in a submission body is still ignored.
+RUN_TEXT_FIELDS = (
+    "imported_by", "importer_version", "importer_commit",
+    "extractor_version", "extractor_prompt_sha256",
+    "matcher_version", "matcher_prompt_sha256",
+    "model", "model_version", "reasoning_effort", "harness_version", "run_group",
+)
+RUN_INT_FIELDS = ("token_budget", "seed", "trial_index")
+
+
+def clean_run_details(body: dict) -> dict:
+    out = {}
+    for key in RUN_TEXT_FIELDS:
+        value = body.get(key)
+        if isinstance(value, (str, int, float)) and str(value).strip():
+            out[key] = str(value).strip()[:200]
+    for key in RUN_INT_FIELDS:
+        try:
+            if body.get(key) not in (None, ""):
+                out[key] = int(body[key])
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
 async def submit_scan(
     db, user,
     app_id: int,
@@ -568,8 +595,13 @@ async def submit_scan(
     findings_data: list[dict],
     labels: list[str] | None = None,
     scanner_version: str | None = None,
+    run_details: dict | None = None,
 ) -> int:
-    """Create a scan, auto-match findings, apply labels. Returns scan_id."""
+    """Create a scan, auto-match findings, apply labels. Returns scan_id.
+
+    *run_details* is provenance and run configuration (``clean_run_details``);
+    omitted keys stay NULL, which is what "imported by: unknown" means.
+    """
     cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))
     app = await cursor.fetchone()
     if not app:
@@ -597,6 +629,11 @@ async def submit_scan(
         ),
     )
     scan_id = cursor.lastrowid
+
+    details = clean_run_details(run_details or {})
+    if details:
+        cols = ", ".join(f"{k} = ?" for k in details)
+        await db.execute(f"UPDATE scans SET {cols} WHERE id = ?", (*details.values(), scan_id))
 
     cursor = await db.execute(
         "SELECT * FROM vulnerabilities WHERE app_id = ?", (app_id,)

@@ -248,6 +248,29 @@ function ScanMeta({ scan, app, labels, canEdit, canViewCost, scanId, onUpdate })
         <EditableField label="Scan Date" value={scan.scan_date} canEdit={canEdit} type="date" onSave={v => updateField('scan_date', v)} />
         <span className="detail-label">Submitted By</span>
         <span className="detail-value text-secondary">{scan.submitter_name || scan.submitted_by}</span>
+        {/* Which tool put these findings in and mapped them. Unknown means
+            nothing identified itself -- e.g. a scanner's own publishing step,
+            which is how ten TaintedPort scans arrived pre-mapped to the
+            catalog without anything on the scan saying so. */}
+        <span className="detail-label">Imported By</span>
+        <span className="detail-value text-secondary">
+          {scan.imported_by ? (
+            <>
+              {scan.imported_by}
+              {scan.importer_version && <span className="font-mono"> {scan.importer_version}</span>}
+              {scan.importer_commit && <span className="text-muted font-mono text-xs"> ({scan.importer_commit})</span>}
+              {(scan.extractor_version || scan.matcher_version) && (
+                <div className="text-muted text-xs">
+                  {scan.extractor_version && <>extracted by <span className="font-mono">{scan.extractor_version}</span></>}
+                  {scan.extractor_version && scan.matcher_version && ' · '}
+                  {scan.matcher_version && <>mapped by <span className="font-mono">{scan.matcher_version}</span></>}
+                </div>
+              )}
+            </>
+          ) : (
+            <span className="text-warning" title="No importer identified itself for this scan, so how its findings were extracted and mapped is not recorded.">unknown</span>
+          )}
+        </span>
         <span className="detail-label">Labels</span>
         <span className="detail-value">
           <div className="scan-labels-cell">
