@@ -114,3 +114,58 @@ async def test_coverage_reaches_the_http_response(tmp_path, monkeypatch):
         assert one["coverage"] is not None and one["coverage"]["scan_count"] == 1
         both = (await client.get("/api/scans")).json()
         assert "coverage" in both and both["coverage"] is None, "two app versions = two apps = no row"
+
+
+async def test_submission_stores_provenance_and_run_details(tmp_path, monkeypatch):
+    """Through the real submit route: the importer's provenance and run
+    details land in the scan row. Before migration 042 the route read eight
+    named fields and silently dropped every one of these."""
+    path = tmp_path / "prov.db"
+
+    async def connect():
+        db = await aiosqlite.connect(path)
+        db.row_factory = aiosqlite.Row
+        return db
+
+    db = await connect()
+    try:
+        await run_migrations(db)
+        await db.execute("INSERT INTO users (id, name, email, password_hash, role) VALUES (1, 'Demo', 'demo@example.invalid', 'x', 'admin')")
+        await db.execute("INSERT INTO apps (id, name, version, created_by, visibility) VALUES (1, 'Demo', '1', 1, 'public')")
+        await db.commit()
+    finally:
+        await db.close()
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def authenticate(request: Request, call_next):
+        request.state.user = {"sub": 1, "role": "admin"}
+        return await call_next(request)
+
+    app.include_router(scans_api.submit_router, prefix="/api/apps")
+    monkeypatch.setattr(scans_api, "get_connection", connect)
+    body = {
+        "scanner_name": "S", "scan_date": "2026-09-28", "findings": [],
+        "imported_by": "vulnapps import_scan", "importer_version": "v1.198", "importer_commit": "abc123-dirty",
+        "extractor_version": "llm-api:claude-sonnet-5", "matcher_version": "llm-api:claude-opus-5",
+        "seed": "42", "trial_index": 3, "token_budget": "not-a-number", "run_group": "g1",
+        "submitted_by": 999,  # not a run-detail field: must be ignored, never written
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post("/api/apps/1/scans", json=body)
+        assert r.status_code == 200, r.text
+        scan_id = r.json()["scan_id"]
+
+    db = await connect()
+    try:
+        cur = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
+        row = dict(await cur.fetchone())
+    finally:
+        await db.close()
+    assert (row["imported_by"], row["importer_version"], row["importer_commit"]) == \
+        ("vulnapps import_scan", "v1.198", "abc123-dirty")
+    assert (row["extractor_version"], row["matcher_version"]) == ("llm-api:claude-sonnet-5", "llm-api:claude-opus-5")
+    assert (row["seed"], row["trial_index"], row["run_group"]) == (42, 3, "g1")
+    assert row["token_budget"] is None, "an unparseable integer is dropped, not stored as text"
+    assert row["submitted_by"] == 1, "only whitelisted fields are taken from the body"
