@@ -449,6 +449,15 @@ be marked FP (3 of its 5 FP groups). Decisions with the user:
       open a revision, map the finding to it.
 - [x] Chain editor on the app page: severity/title/members, plus Add chain.
 - [x] Rename scan page "Chains" -> "Chain Credit" (it is the ground-truth scorecard).
-- [ ] Catalog: CHAIN-013/014 in KnownVulnerabilities.txt; register + map on scan 330;
+- [x] Catalog: CHAIN-013/014 in KnownVulnerabilities.txt; register + map on scan 330;
       reconcile counts per CLAUDE.md.
-- [ ] Tests, AppBuilder, deploy, verify on prod.
+- [x] Tests, AppBuilder, deploy, verify on prod.
+
+Review: live on v1.192. Migration 041 backfilled all 12 chains to critical. On scan 330 the
+three FP'd COS chains were re-triaged: financial fraud credits TP-054 + TP-019 + TP-021 (not
+a chain); the two takeovers credit every vuln they show and are registered as CHAIN-013
+(TP-017 -> TP-024 -> TP-020) and CHAIN-014 (TP-053 -> TP-024 -> TP-028), both High. Scan 330:
+TP 45 -> 46 (TP-028), FP groups 5 -> 2, precision 90.0% -> 95.8%, chained 4 -> 6 found.
+Counts reconcile: 14 chains / 57 vulns in both catalog and vulnapps; finding counts
+unchanged (70 / 44 / 32). Scans 331 and 332 now score against 14 chains rather than 12 —
+the revision mechanism doing its job, not a regression.
