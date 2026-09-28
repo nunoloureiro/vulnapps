@@ -123,3 +123,32 @@ top of a test file, where correctness depends on filename sort order. When a
 seemingly unrelated new test file breaks an existing one, suspect import order
 before suspecting the new test, and fix the ordering dependency rather than
 renaming the file to dodge it.
+
+## "Don't rely on the published credentials" is narrow — don't widen it
+
+**Mistake:** The user said no chain may rely on the TaintedPort test credentials,
+which are printed on the login page on purpose. I stretched that into "no chain
+may involve a weak password", and argued for two rounds that the COS takeover
+chains were not chains because each one cracks a leaked bcrypt hash. Those are
+different things: reading a password off the login page is using information
+the app hands out deliberately; cracking a hash the chain itself leaked is real
+attacker work on stolen data. The user had to spell it out.
+
+**Rule:** When the user states a constraint, apply it at the scope they stated
+it, and if a case is near the edge, ask which side it falls on instead of
+deciding and arguing. Here the test is *where the attacker got the secret*: off
+the published login page = excluded; out of data the chain leaked = fine (its
+difficulty informs severity, e.g. a length-only password policy makes a crack
+likely). The same wrong reasoning was already written into the catalog (the
+"Deliberately not a chain: #28" note) — after correcting a principle, grep for
+the places it was already applied.
+
+## Gate a commit on the test command's own exit status
+
+**Mistake:** Ran `pytest ... | tail -1 && git commit && git push`. The pipeline's
+exit status is `tail`'s, which always succeeds, so a failing test was committed
+and pushed to main (and deployed). Caught only because I read the output line.
+
+**Rule:** Never put a pipe between a verification command and `&&`. Capture the
+status first — `pytest > log; rc=$?; tail log; [ $rc -eq 0 ] && git commit ...` —
+or use `set -o pipefail`. Applies to any check that gates a commit, push or deploy.
