@@ -1112,7 +1112,16 @@ The point is to see *where on the difficulty curve* a configuration improved.
 be.** `commodity` is a technical/input-handling flaw — injection, protocol,
 crypto-implementation, config — a bug that exists independent of what this particular
 app does. `business_logic` is a missing or client-trusted authorization/business-rule
-check. This was corrected mid-session after TaintedPort's own BOLA/BFLA/BOPLA/mass-
+check.
+
+One refinement, settled 2026-09-28 for TaintedPort #53/#54 (SHA-256 length
+extension on the tracking link, CBC bit-flip on the gift card): a crypto flaw in a token
+**whose exploitation needs knowing what the app put inside it** is `business_logic`. A
+scanner can flag the weak construction but not what to forge — which order id to
+append, which bytes are the amount. What decides the tier is whether exploiting it needs
+knowledge of this app, not the CWE family.
+
+The business-logic side was corrected mid-session after TaintedPort's own BOLA/BFLA/BOPLA/mass-
 assignment vulns (#17/18/20/22/24/25) were initially left `commodity` on the reasoning
 that "a dedicated tool exists that checks for this OWASP API category" — that reasoning
 doesn't hold: every such tool still has to be told, per endpoint, what's self-scoped and
