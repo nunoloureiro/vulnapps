@@ -354,7 +354,12 @@ def test_folder_is_only_a_hint_in_the_extraction_prompt():
 
 def test_system_prompt_defines_chain_by_content_not_folder():
     prompt = import_scan.SYSTEM_PROMPT_MAP
-    assert "never" in prompt and "from which file or folder" in prompt
+    # Content decides; none of the presentation signals does.
+    assert "from the \\\ncontent alone" in prompt or "content alone" in prompt
+    for signal in ("title", "filename", "folder", "tag"):
+        assert signal in prompt.split("is_chain says")[1].split("Two shapes")[0], signal
+    # The case that flipped between two runs: a one-flaw headline over a chain PoC.
+    assert "headline is one" in prompt and "flaw but whose own proof of concept walks a chain" in prompt
     # The two non-chain shapes settled with the user on scan 330.
     assert "INDEPENDENT ways to the same" in prompt
     # Attacker work (cracking a leaked hash) is not a disqualifier.

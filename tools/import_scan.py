@@ -241,11 +241,18 @@ separate finding titled "Hardcoded JWT Secret", with neither finding mentioning 
 other — that is two unrelated findings, not a demonstrated chain, regardless of \
 whether both underlying vulnerabilities are real. Map each to its own \
 matched_vuln_db_id in that case and leave matched_chain_db_id null on both.
-- is_chain says whether the finding PRESENTS ITSELF as an exploit chain: a sequence \
-of distinct flaws where each step hands the next what it needs, ending in an outcome \
-none of the steps reaches on its own. Decide it from what the finding says, never \
-from which file or folder of the report it came from — scanners mix chain write-ups \
-in with single-vuln findings, and a chain is a chain wherever it is filed. Two shapes \
+- is_chain says whether the finding's own CONTENT describes and demonstrates an \
+exploit chain: a sequence of distinct flaws where each step hands the next what it \
+needs, ending in an outcome none of the steps reaches on its own. Decide it from the \
+content alone -- never from the finding's title, filename, folder or tag. Scanners \
+mix chain write-ups in with single-vuln findings, and a chain is a chain wherever it \
+is filed and whatever it is called. That includes a finding whose headline is one \
+flaw but whose own proof of concept walks a chain end to end (e.g. titled "JWT exp \
+claim not required", while its PoC reads the JWT source through the directory \
+listing, quotes the hardcoded secret, and forges an admin token that the admin \
+endpoints accept): that finding is a chain, and its headline flaw, if it matches a \
+known vulnerability, goes in additional_vuln_db_ids. The demonstration bar below \
+still applies to every step. Two shapes \
 that are NOT chains, so is_chain=false: (1) several INDEPENDENT ways to the same \
 outcome ("each of these alone drives the order total to zero") — the steps do not \
 depend on each other; (2) one flaw with a consequence described after it ("…which \
