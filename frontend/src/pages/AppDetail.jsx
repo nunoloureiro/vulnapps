@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Badge } from '../components/Badge';
+import { ChainForm } from '../components/ChainForm';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
@@ -417,47 +419,97 @@ export default function AppDetail() {
         </div>
       )}
 
-      {chains.length > 0 && (
-        <>
-          <div className="page-header">
-            <h2 className="page-title">Chains <span className="text-muted text-sm">({chains.length})</span></h2>
-          </div>
-          <div className="card">
-            <p className="text-muted text-sm mb-2">
-              A chain is separate ground truth that links two or more of the vulnerabilities
-              above into one bigger exploit — it earns its own weight only when a scan
-              demonstrates the whole thing, not just each member individually. See a scan's own
-              detail page to review and credit one.
-            </p>
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>Chain</th><th>Weight</th><th>Members</th></tr></thead>
-                <tbody>
-                  {chains.map(chain => (
-                    <tr key={chain.id}>
-                      <td>
-                        <strong>{chain.chain_id}</strong>
-                        <div className="text-muted text-sm">{chain.title}</div>
-                      </td>
-                      <td className="font-mono text-sm">{chain.impact_weight}p</td>
-                      <td>
-                        {chain.members.map(m => (
-                          <div key={m.vuln_id}>
-                            <Link to={'/apps/' + id + '/vulns/' + m.vuln_id}>{m.vuln_code} — {m.vuln_title}</Link>
-                          </div>
-                        ))}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
+      {(chains.length > 0 || can_edit) && (
+        <Chains appId={id} chains={chains} vulns={vulns} canEdit={can_edit} onChange={fetchApp} />
       )}
 
       <HistoryLog appId={id} canView={can_edit} />
     </div>
+  );
+}
+
+// Chains on the app page: the catalog view, where a chain's severity, title
+// and steps are edited. Before this there was no way to edit a chain in the
+// UI at all, and no severity to edit — every chain read as Critical.
+function Chains({ appId, chains, vulns, canEdit, onChange }) {
+  const [editing, setEditing] = useState(null); // chain id, 'new', or null
+
+  const save = async (chain, data) => {
+    if (chain) await api.put(`/apps/${appId}/chains/${chain.id}`, data);
+    else await api.post(`/apps/${appId}/chains`, data);
+    setEditing(null);
+    onChange();
+  };
+
+  return (
+    <>
+      <div className="page-header">
+        <h2 className="page-title">Chains <span className="text-muted text-sm">({chains.length})</span></h2>
+        {canEdit && editing !== 'new' && (
+          <button type="button" className="btn btn-outline" onClick={() => setEditing('new')}>Add Chain</button>
+        )}
+      </div>
+      <div className="card">
+        <p className="text-muted text-sm mb-2">
+          A chain is separate ground truth that links two or more of the vulnerabilities
+          above into one bigger exploit, where each step hands the next what it needs — it earns
+          its own points only when a scan demonstrates the whole thing, not just each step
+          individually. Points follow the chain's severity. See a scan's own detail page to
+          review and credit one.
+        </p>
+        {editing === 'new' && (
+          <div className="card mb-2">
+            <ChainForm vulns={vulns} submitLabel="Add chain"
+              onSubmit={data => save(null, data)} onCancel={() => setEditing(null)} />
+          </div>
+        )}
+        {chains.length > 0 && (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Chain</th><th>Severity</th><th>Members</th>{canEdit && <th style={{ width: 60 }}></th>}</tr></thead>
+              <tbody>
+                {chains.map(chain => editing === chain.id ? (
+                  <tr key={chain.id}>
+                    <td colSpan={canEdit ? 4 : 3}>
+                      <ChainForm vulns={vulns} submitLabel="Save chain"
+                        intro={`Editing ${chain.chain_id}. Changing severity changes its points, which opens a new ground-truth revision.`}
+                        initial={{
+                          title: chain.title, severity: chain.severity, description: chain.description,
+                          member_vuln_ids: chain.members.map(m => m.vuln_id),
+                        }}
+                        onSubmit={data => save(chain, data)} onCancel={() => setEditing(null)} />
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={chain.id}>
+                    <td>
+                      <strong>{chain.chain_id}</strong>
+                      <div className="text-muted text-sm">{chain.title}</div>
+                    </td>
+                    <td>
+                      <Badge severity={chain.severity}>{chain.severity}</Badge>
+                      <div className="text-muted text-xs font-mono">{chain.impact_weight}p</div>
+                    </td>
+                    <td>
+                      {chain.members.map(m => (
+                        <div key={m.vuln_id}>
+                          <Link to={'/apps/' + appId + '/vulns/' + m.vuln_id}>{m.vuln_code} — {m.vuln_title}</Link>
+                        </div>
+                      ))}
+                    </td>
+                    {canEdit && (
+                      <td>
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditing(chain.id)}>Edit</button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 

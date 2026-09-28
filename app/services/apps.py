@@ -343,10 +343,10 @@ async def create_app(
             source_chains = await cursor.fetchall()
             for c in source_chains:
                 cursor = await db.execute(
-                    """INSERT INTO chains (app_id, chain_id, title, impact_weight,
+                    """INSERT INTO chains (app_id, chain_id, title, severity, impact_weight,
                        description, existed_since_revision)
-                       VALUES (?, ?, ?, ?, ?, 1)""",
-                    (app_id, c["chain_id"], c["title"], c["impact_weight"], c["description"]),
+                       VALUES (?, ?, ?, ?, ?, ?, 1)""",
+                    (app_id, c["chain_id"], c["title"], c["severity"], c["impact_weight"], c["description"]),
                 )
                 new_chain_pk = cursor.lastrowid
                 cursor = await db.execute(

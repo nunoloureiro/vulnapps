@@ -244,7 +244,11 @@ Angles to discuss (not decided):
 - Is there a way to flag "these N chains are siblings for outcome X" so scoring or
   the UI can present/credit them as one conceptual unit?
 
-## Findings vs. chains list-naming asymmetry on the scan detail page
+## Findings vs. chains list-naming asymmetry on the scan detail page — RESOLVED 2026-09-28
+
+Resolved: chain reports appear in Findings (with a `chain` marker, `is_chain`), and the
+ground-truth section is renamed **Chain Credit**. Original note kept below.
+
 
 For individual vulnerabilities, the scan detail page's "Findings" list shows the
 scanner's own raw submitted findings (the scanner's claims). But for chains, the
@@ -419,3 +423,32 @@ message that now names what was discarded. 197 backend tests, 14 frontend, build
 - [x] Admin-only: commit messages describe internals the app's own pages do not.
 - [x] Verified against real history — 186 entries, newest `v1.186`, matching what
       `/api/version` reports; 401 unauthenticated, correct payload as admin.
+
+## Chains: severity, content-based chain findings, Promote -> Chain (2026-09-28)
+
+Triggered by scan 330: COS reported 4 chains; the 3 not in the catalog could only
+be marked FP (3 of its 5 FP groups). Decisions with the user:
+- A chain is steps that each enable the next, reaching an outcome none reaches
+  alone. "Three independent ways to $0" (COS financial fraud) is NOT a chain:
+  credit all the vulns it shows (done live: TP-054 + TP-019 + TP-021).
+- Cracking a LEAKED hash is attacker work, not "using the published test login";
+  a weak password policy (strlen >= 8 only) affects likelihood/severity, it is not
+  a disqualifier. So both COS takeovers are chains -> CHAIN-013 / CHAIN-014, High.
+- Chain-ness comes from what the finding says, never from which folder it was in.
+- Chains get their own severity; weight derives from it, like vulns.
+
+- [x] Migration 041: `chains.severity` (backfill from impact_weight) and
+      `scan_findings.is_chain` (backfill 1 where a finding already matches a chain).
+- [x] Chain create/update take severity, derive impact_weight; weight-only callers
+      still work (severity derived back). Scoring's Chained-tier split uses it.
+- [x] Importer: model returns `is_chain` from content; chain matches allowed only on
+      is_chain findings, from any file. Folder name drops to a soft prompt hint; the
+      folder-based hard backstop (`_enforce_source_kind`) goes.
+- [x] Submit stores `is_chain`; Findings list shows a "chain" marker.
+- [x] Promote -> Chain: create chain (title, severity, member vulns) from a finding,
+      open a revision, map the finding to it.
+- [x] Chain editor on the app page: severity/title/members, plus Add chain.
+- [x] Rename scan page "Chains" -> "Chain Credit" (it is the ground-truth scorecard).
+- [ ] Catalog: CHAIN-013/014 in KnownVulnerabilities.txt; register + map on scan 330;
+      reconcile counts per CLAUDE.md.
+- [ ] Tests, AppBuilder, deploy, verify on prod.

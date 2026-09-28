@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { ChainForm } from '../components/ChainForm';
 import { SeverityBreakdown } from '../components/SeverityBreakdown';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -90,7 +91,7 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
 
   return (
     <div className="card mb-2">
-      <h3 className="card-title mb-2">Chains</h3>
+      <h3 className="card-title mb-2">Chain Credit</h3>
       <p className="text-muted text-sm mb-2">
         A chain earns its weight when a finding above is matched to it directly (the scanner's
         own report named the chain), or otherwise once a reviewer confirms this scan's findings
@@ -108,6 +109,7 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
                 <tr key={chain.id}>
                   <td>
                     <strong>{chain.chain_id}</strong>
+                    {chain.severity && <> <Badge severity={chain.severity} /></>}
                     <div className="text-muted text-sm">{chain.title}</div>
                   </td>
                   <td>
@@ -533,6 +535,7 @@ function FpGroup({ scanId, finding, canEdit, onUpdate }) {
 function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpdate }) {
   const [promoting, setPromoting] = useState(null);
   const [promoteError, setPromoteError] = useState('');
+  const [promotingChain, setPromotingChain] = useState(null);
   const [expanded, setExpanded] = useState(() => new Set());
 
   useEffect(() => {
@@ -693,6 +696,14 @@ function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpda
                         )}
                         <span>{f.vuln_type}</span>
                         {f.severity && <Badge severity={f.severity.toLowerCase()} />}
+                        {/* The finding presents itself as a multi-step chain —
+                            decided from its content, not from where it sat in
+                            the report. Without this a chain report reads like
+                            any other finding, which is how three real chains
+                            ended up marked FP on scan 330. */}
+                        {!!f.is_chain && (
+                          <span className="badge badge-info" title="This finding reports a multi-step exploit chain">chain</span>
+                        )}
                       </div>
                       {f.title && f.title !== f.vuln_type && (
                         <div className="text-muted text-xs" style={{ marginTop: 2, marginLeft: hasDetails ? 18 : 0 }}>{f.title}</div>
@@ -805,6 +816,16 @@ function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpda
                             <IconPromote />Vuln
                           </button>
                         )}
+                        {/* A chain the catalog is missing. Offered on any finding
+                            not already matched to a chain — including one that
+                            already credits the vulns it walked through. */}
+                        {canEdit && !(f.matched_chain_ids || []).length && (
+                          <button className="fa-btn fa-promote"
+                            onClick={() => setPromotingChain(f)}
+                            title="Register the chain this finding reports, and credit it">
+                            <IconPromote />Chain
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -825,6 +846,34 @@ function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpda
           </div>
         </div>
       ) : <div className="empty-state"><p>No findings in this scan.</p></div>}
+
+      {promotingChain && (
+        <div className="modal-backdrop" onClick={() => setPromotingChain(null)}>
+          <div className="modal" style={{ maxWidth: 720, maxHeight: '90vh', overflowY: 'auto' }}
+            onClick={e => e.stopPropagation()}>
+            <button type="button" className="modal-close" onClick={() => setPromotingChain(null)} aria-label="Close">×</button>
+            <h3 className="card-title mb-2">Promote to Chain</h3>
+            <ChainForm
+              vulns={knownVulns}
+              submitLabel="Register chain"
+              intro="Registers a new chain in this app's catalog, opens a ground-truth revision, and credits it to this finding. Steps must already be catalog vulns — promote a missing step as a vuln first. The vulns this finding already credits are pre-filled."
+              initial={{
+                title: promotingChain.title || promotingChain.vuln_type || '',
+                severity: (promotingChain.severity || 'critical').toLowerCase() === 'info'
+                  ? 'low' : (promotingChain.severity || 'critical').toLowerCase(),
+                member_vuln_ids: promotingChain.matched_vuln_ids || [],
+                description: promotingChain.description || '',
+              }}
+              onSubmit={async data => {
+                await api.post(`/scans/${scanId}/findings/${promotingChain.id}/promote-chain`, data);
+                setPromotingChain(null);
+                onUpdate();
+              }}
+              onCancel={() => setPromotingChain(null)}
+            />
+          </div>
+        </div>
+      )}
 
       {promoting && (
         <div className="modal-backdrop" onClick={() => setPromoting(null)}>

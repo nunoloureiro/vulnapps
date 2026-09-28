@@ -1143,7 +1143,51 @@ next to `41` known vulns without that context reads as a bug.
 ### Exploit chains
 
 A chain is its own ground-truth entity with its own weight; its members keep their
-individual weights. The partial double-count is deliberate: demonstrating a chain end to
+individual weights.
+
+**What counts as a chain (normative, settled on scan 330):** a sequence of distinct flaws
+where each step hands the next what it needs, ending in an outcome none of the steps reaches
+alone. *Several independent ways to the same outcome* is not a chain ("each of these alone
+drives the order total to zero") — credit every vuln the finding shows instead. A step that
+is attacker work rather than a flaw (cracking a hash the chain leaked, computing a TOTP code
+from a stolen seed, self-registering) does not disqualify a chain; it is simply not a member,
+and how likely it is to succeed (e.g. a weak password policy) informs the chain's severity.
+No chain may depend on the app's deliberately published test credentials.
+
+**Severity (migration 041).** `chains.severity` is what a curator sets; `impact_weight`
+derives from it 1:1 exactly as for vulns (critical 27, high 9, medium 3, low 1). Before 041
+chains stored only a weight, so every chain read as Critical by construction; the migration
+backfills severity from the weight. `chains._severity_and_weight` resolves a write: severity
+wins, a weight-only (pre-041) caller gets the severity derived back, an update with neither
+keeps the chain's own. A severity change is a weight change and opens a `weight_change`
+revision. The Chained tier's `found_by_severity` uses the chain's severity.
+
+**Chain reports (`scan_findings.is_chain`, migration 041).** Whether a finding presents
+itself as a chain, decided from its CONTENT, never from which folder of the report it came
+from — scanners mix chain write-ups in with single-vuln findings. The importer's model sets
+`is_chain`; `_enforce_chain_flag` is the mechanical backstop (an unflagged finding can never
+be chain-credited; a flagged one matched to a chain keeps the chain as primary and any stray
+primary vuln moves into `additional_vuln_db_ids`). The folder name survives only as a prompt
+hint, which still helps against splitting one chain write-up into a finding per step. It
+replaced `_enforce_source_kind`, which hard-cleared chain matches outside the chains folder.
+A flagged finding whose chain is not registered still credits every vuln it demonstrates.
+Mapping a finding to a chain sets the flag; unmapping never clears it. The Findings list
+shows a `chain` marker.
+
+**Promote → Chain** (`POST /api/scans/{id}/findings/{fid}/promote-chain`,
+`scans.promote_finding_to_chain`). For a real chain the catalog is missing: registers it via
+`chains.create_chain` (title defaults from the finding, severity, ≥2 existing member vulns in
+step order), which opens a revision, then maps the finding to it while keeping any vulns it
+already credits, flags it `is_chain`, and clears FP/ignored. A step the catalog lacks is
+promoted as a vuln first, so every member is a flaw some scan showed. Before this, a novel
+chain could only be marked FP — scan 330 lost three that way (3 of its 5 FP groups).
+Offered on any finding not already matched to a chain.
+
+**Editing.** The app page's Chains section (`AppDetail.jsx` `Chains`, sharing
+`components/ChainForm.jsx` with Promote → Chain) shows severity and edits severity, title,
+steps and description, and adds new chains. The scan page's chain section is titled
+**Chain Credit**: it is the ground-truth scorecard (every chain, with found / confirmable /
+missing status), whereas the scanner's own chain reports appear in Findings. The partial double-count is deliberate: demonstrating a chain end to
 end is worth more than finding its parts separately.
 
 **Vulns and chains are asymmetric on purpose:**

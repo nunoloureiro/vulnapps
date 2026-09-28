@@ -228,6 +228,25 @@ separate finding titled "Hardcoded JWT Secret", with neither finding mentioning 
 other — that is two unrelated findings, not a demonstrated chain, regardless of \
 whether both underlying vulnerabilities are real. Map each to its own \
 matched_vuln_db_id in that case and leave matched_chain_db_id null on both.
+- is_chain says whether the finding PRESENTS ITSELF as an exploit chain: a sequence \
+of distinct flaws where each step hands the next what it needs, ending in an outcome \
+none of the steps reaches on its own. Decide it from what the finding says, never \
+from which file or folder of the report it came from — scanners mix chain write-ups \
+in with single-vuln findings, and a chain is a chain wherever it is filed. Two shapes \
+that are NOT chains, so is_chain=false: (1) several INDEPENDENT ways to the same \
+outcome ("each of these alone drives the order total to zero") — the steps do not \
+depend on each other; (2) one flaw with a consequence described after it ("…which \
+could then be used to…") without that next step actually performed. A step that is \
+attacker work rather than a flaw (cracking a hash the chain leaked, generating a TOTP \
+code from a stolen seed, self-registering an account) does not stop it being a chain; \
+it just is not a member. \
+- When is_chain is true: if a registered chain's members are all demonstrated, set \
+matched_chain_db_id and put the demonstrated members in additional_vuln_db_ids. If NO \
+registered chain fits, still credit every known vulnerability the finding demonstrates \
+— primary in matched_vuln_db_id, the rest in additional_vuln_db_ids — and leave \
+matched_chain_db_id null; a reviewer can then register the chain from this finding. \
+Never leave a demonstrated vulnerability uncredited just because the chain it belongs \
+to is not registered yet. The same holds for shape (1) above: credit each vuln shown. \
 - A finding with a non-null matched_chain_db_id must have matched_vuln_db_id null, and \
 vice versa — the PRIMARY match is one or the other, never both.
 - additional_vuln_db_ids is for everything ELSE the same finding explicitly \
@@ -348,6 +367,7 @@ Respond with ONLY valid JSON (no markdown fencing) in this exact format:
             "matched_vuln_db_id": 123 or null,
             "matched_chain_db_id": 456 or null,
             "additional_vuln_db_ids": [124, 125] or [],
+            "is_chain": false,
             "is_false_positive": false,
             "fp_group": "string - shared slug for false positives describing the same non-issue, else empty",
             "reasoning": "string - brief explanation of why this maps (or doesn't) to the known vuln or chain",
@@ -597,48 +617,27 @@ def _build_user_message(scan_content: str, vulns: list, chains: list | None,
 {format_chains_for_prompt(chains)}"""
             if chains else ""
         )
-        # Real incident (2026-09-21). The PRIMARY rule (above, in this
-        # system prompt) is content-based and applies no matter how a scan
-        # organizes its files: chain credit requires the finding to
-        # DEMONSTRATE every member step, not merely explain, defer, or
-        # disclaim one. That rule alone was not enough -- the model still
-        # over-credited standalone findings as chains, and under-credited a
-        # genuine chain finding it split into one sub-finding per mechanism,
-        # each individually vuln-matched. `is_chain_source` is a SECONDARY,
-        # report-specific signal, not a replacement for the content rule: a
-        # scan that separates dedicated chain write-ups from standalone
-        # findings into different directories (this one does; not every
-        # scan will) is telling you, structurally, which of the two a given
-        # file was AUTHORED to be -- useful context for the content
-        # judgement above, and cheap enough to also enforce mechanically as
-        # a backstop after this call returns (see _enforce_source_kind):
-        # since it can only ever downgrade a wrong credit to "unmatched",
-        # never manufacture a wrong one, enforcing it costs nothing even in
-        # the case this signal turns out misleading for some other scan.
+        # Where the file sits in the report is a HINT about what it was
+        # authored as, never a rule. The first version enforced it: a finding
+        # from outside the chains folder could never be chain-credited. That
+        # fought reports that mix chain write-ups in with single-vuln findings
+        # (TaintedPort scan 330 did), so chain-ness is now the content-based
+        # is_chain flag in SYSTEM_PROMPT_MAP, backstopped by
+        # _enforce_chain_flag. The hint stays because it still helps with the
+        # original failure: a chain write-up split into one finding per step.
         source_kind_section = (
             f"""
 
-## Source File Type (secondary signal — the content rule above still governs)
+## Where This File Sits In The Report (a hint only — content decides)
 
-{"This file is from the scan's dedicated exploit-chain findings, not its "
-  "standalone vulnerabilities directory, so it was authored as a chain "
-  "write-up. If its own narrative genuinely demonstrates every member step "
-  "(per the content rule above), extract it as ONE finding describing the "
-  "whole chain and map it via matched_chain_db_id to a registered chain -- "
-  "do not split one connected chain narrative into several findings, one "
-  "per mechanism, each matched to an individual vuln; that discards the "
-  "chain credit the file was written to earn. matched_vuln_db_id must stay "
-  "null on findings from this file. If no registered chain fits, or the "
-  "narrative does not actually demonstrate every step, leave both null "
-  "rather than falling back to an individual vuln match."
+{"This file sits in a folder the report uses for exploit-chain write-ups, "
+  "so it was probably authored as one. Judge is_chain from its content all "
+  "the same (see the is_chain rule above), and if it is a chain, extract it "
+  "as ONE finding for the whole chain rather than one finding per step."
   if is_chain_source else
-  "This file is from the scan's standalone vulnerability findings, not its "
-  "dedicated exploit-chain directory, so it was authored as a single-vuln "
-  "write-up. Map each finding you extract from it via matched_vuln_db_id "
-  "only; matched_chain_db_id must stay null here regardless of what the "
-  "finding's text says about further consequences (see the content rule "
-  "above for the exact phrasings that mean \\\"do not credit a chain "
-  "here\\\")."}"""
+  "This file sits in the report's single-vulnerability folder. That is only "
+  "a hint: judge is_chain from its content (see the is_chain rule above) — "
+  "chain write-ups do turn up here, and they are treated the same as any other."}"""
             if is_chain_source is not None else ""
         )
         extra_section = (
@@ -678,30 +677,35 @@ above.)
 {scan_content}"""
 
 
-def _enforce_source_kind(result: dict, is_chain_source: bool | None) -> None:
-    """Mechanical backstop for the source-file-type rule in
-    `_build_user_message` — never rely on the model alone to keep this
-    straight (it didn't, on a real scan). `is_chain_source` None means the
-    distinction doesn't apply (extraction-only mode, or no directory
-    context to derive it from) and nothing is touched.
+def _enforce_chain_flag(result: dict) -> None:
+    """Mechanical backstop for the is_chain rule in SYSTEM_PROMPT_MAP.
 
-    A finding from the standalone-vulnerabilities directory can never end up
-    chain-credited: its matched_chain_db_id is force-cleared regardless of
-    what the model returned. The worst outcome that can produce is an
-    unmatched (pending) finding, never a wrongly-credited chain.
+    Chain credit follows what a finding SAYS, not which folder it came from.
+    The folder-based version of this check (``_enforce_source_kind``) cleared
+    chain matches on any file outside the chains folder, which fought reports
+    that mix chain write-ups in with everything else.
 
-    The reverse is no longer symmetrical. A finding from the dedicated chain
-    directory may now ALSO credit the member vulns it walked through (via
-    additional_vuln_db_ids, see SYSTEM_PROMPT_MAP) — that is the whole point
-    of a chain write-up being able to earn its members' credit too, so only
-    its PRIMARY vuln match is cleared, keeping the chain the primary target.
+    - A finding not flagged ``is_chain`` can never be chain-credited: its
+      matched_chain_db_id is cleared. Worst case is a missed chain, never a
+      wrongly awarded one.
+    - A flagged finding matched to a chain keeps the chain as its primary; any
+      primary vuln the model also set is moved into additional_vuln_db_ids
+      rather than dropped, since a chain finding still credits the members it
+      demonstrates.
     """
-    if is_chain_source is None:
-        return
-    clear = "matched_vuln_db_id" if is_chain_source else "matched_chain_db_id"
     for f in result.get("findings", []) or []:
-        if isinstance(f, dict):
-            f[clear] = None
+        if not isinstance(f, dict):
+            continue
+        f["is_chain"] = f.get("is_chain") is True
+        if not f["is_chain"]:
+            f["matched_chain_db_id"] = None
+        elif f.get("matched_chain_db_id") and f.get("matched_vuln_db_id"):
+            extra = f.get("additional_vuln_db_ids")
+            extra = list(extra) if isinstance(extra, list) else []
+            if f["matched_vuln_db_id"] not in extra:
+                extra.insert(0, f["matched_vuln_db_id"])
+            f["additional_vuln_db_ids"] = extra
+            f["matched_vuln_db_id"] = None
 
 
 def _extract_json_text(text: str) -> str:
@@ -767,7 +771,7 @@ def run_llm_mapping(scan_content: str, vulns: list, model: str, client, spinner_
     text (--extra-info-mapping / --extra-info-extract); only the one
     matching the active mode is used. `is_chain_source` says which of the
     scan's own report directories this file came from (mapping mode only) —
-    see `_build_user_message` and `_enforce_source_kind`.
+    see `_build_user_message` and `_enforce_chain_flag`.
     """
     system = SYSTEM_PROMPT_MAP if vulns else SYSTEM_PROMPT_EXTRACT
     extra_info = extra_info_mapping if vulns else extra_info_extract
@@ -806,7 +810,7 @@ def run_llm_mapping_cli(scan_content: str, vulns: list, spinner_msg: str | None 
     text (--extra-info-mapping / --extra-info-extract); only the one
     matching the active mode is used. `is_chain_source` says which of the
     scan's own report directories this file came from (mapping mode only) —
-    see `_build_user_message` and `_enforce_source_kind`.
+    see `_build_user_message` and `_enforce_chain_flag`.
     """
     import subprocess
     import shutil
@@ -1115,6 +1119,8 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
             v = f.get(k)
             if v:
                 item[k] = v
+        if f.get("is_chain"):
+            item["is_chain"] = True
         findings_payload.append(item)
 
     scan_data = {
@@ -2300,9 +2306,9 @@ def main():
     # Read all files into (name, content, is_chain_source) tuples; drop
     # empties. is_chain_source comes from the containing directory's own
     # name (e.g. `vulnerability_chains/` vs `vulnerabilities/`) — a scan's
-    # own report layout already commits each file to one or the other, and
-    # that commitment is enforced later regardless of what the LLM returns
-    # (see _enforce_source_kind).
+    # own report layout says what each file was probably authored as. It is
+    # passed to the prompt as a hint only; chain credit is decided from
+    # content (the is_chain flag, see _enforce_chain_flag).
     file_parts: list[tuple[str, str, bool]] = []
     for md_file in md_files:
         content = md_file.read_text()
@@ -2346,7 +2352,7 @@ def main():
             label = "Claude API error" if "anthropic" in mod else "LLM error"
             raise LLMCallError(f"{label}: {e}")
         if vulns:
-            _enforce_source_kind(result, is_chain_source)
+            _enforce_chain_flag(result)
         return result
 
     def _call_llm(content: str, is_chain_source: bool | None = None, spinner_msg: str | None = None) -> dict:

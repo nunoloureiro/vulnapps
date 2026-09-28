@@ -85,10 +85,36 @@ async def _resolve_members(db, app_id: int, member_vuln_ids: list) -> list[int]:
     return ids
 
 
+def _severity_and_weight(chain_data: dict, existing=None) -> tuple[str, int]:
+    """Resolve a chain's (severity, impact_weight) from a write.
+
+    Severity is what a curator sets; the weight derives from it 1:1, exactly as
+    for vulns (see vulns.update_vuln). A caller that still sends only
+    impact_weight (the pre-041 API) gets the matching severity derived back, so
+    it keeps working. With neither, an update keeps what the chain had.
+    """
+    raw = chain_data.get("severity")
+    if raw not in (None, ""):
+        severity = str(raw).strip().lower()
+        if severity not in scoring.CHAIN_SEVERITIES:
+            raise ValueError(f"severity must be one of {list(scoring.CHAIN_SEVERITIES)}")
+        return severity, scoring.weight_from_severity(severity)
+
+    weight = scoring.validate_weight(chain_data.get("impact_weight"))
+    if weight is not None:
+        return scoring.severity_from_weight(weight), weight
+
+    if existing is not None:
+        weight = existing["impact_weight"]
+        return (existing["severity"] or scoring.severity_from_weight(weight)), weight
+    raise ValueError("severity is required for a chain")
+
+
 async def create_chain(db, user, app_id: int, chain_data: dict) -> dict:
     """Register a new chain. Returns the created row (with ``members``).
 
-    *chain_data* keys: chain_id, title, description, impact_weight,
+    *chain_data* keys: chain_id, title, description, severity (or, pre-041,
+    impact_weight — see ``_severity_and_weight``),
     member_vuln_ids (ordered list of vuln PKs, >= 2), existed_since_revision.
 
     Mirrors ``vulns.create_vuln``: adding a chain changes ground truth, so on
@@ -100,9 +126,7 @@ async def create_chain(db, user, app_id: int, chain_data: dict) -> dict:
     app = await _get_visible_app(db, user, app_id)
     await _require_app_write(db, user, app)
 
-    weight = scoring.validate_weight(chain_data.get("impact_weight"))
-    if weight is None:
-        raise ValueError("impact_weight is required for a chain")
+    severity, weight = _severity_and_weight(chain_data)
 
     member_ids = await _resolve_members(db, app_id, chain_data.get("member_vuln_ids"))
 
@@ -130,9 +154,9 @@ async def create_chain(db, user, app_id: int, chain_data: dict) -> dict:
 
     try:
         cursor = await db.execute(
-            """INSERT INTO chains (app_id, chain_id, title, impact_weight, description,
-               existed_since_revision) VALUES (?, ?, ?, ?, ?, ?)""",
-            (app_id, chain_id, title, weight, chain_data.get("description"), existed_since),
+            """INSERT INTO chains (app_id, chain_id, title, severity, impact_weight, description,
+               existed_since_revision) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (app_id, chain_id, title, severity, weight, chain_data.get("description"), existed_since),
         )
     except Exception as e:
         if "UNIQUE" in str(e):
@@ -174,9 +198,7 @@ async def update_chain(db, user, app_id: int, chain_pk: int, chain_data: dict) -
     if not existing:
         raise ValueError("Chain not found")
 
-    weight = scoring.validate_weight(chain_data.get("impact_weight"))
-    if weight is None:
-        weight = existing["impact_weight"]
+    severity, weight = _severity_and_weight(chain_data, existing)
 
     if chain_data.get("member_vuln_ids") is not None:
         member_ids = await _resolve_members(db, app_id, chain_data.get("member_vuln_ids"))
@@ -192,13 +214,14 @@ async def update_chain(db, user, app_id: int, chain_pk: int, chain_data: dict) -
     if weight != existing["impact_weight"]:
         await scoring_service.revision_for_corpus_change(
             db, app_id, "weight_change",
-            notes=f"{existing['chain_id']} impact_weight {existing['impact_weight']} → {weight}",
+            notes=f"{existing['chain_id']} severity {existing['severity']} → {severity} "
+                  f"(impact_weight {existing['impact_weight']} → {weight})",
             user=user,
         )
 
     await db.execute(
-        "UPDATE chains SET title = ?, description = ?, impact_weight = ? WHERE id = ?",
-        (title, chain_data.get("description", existing["description"]), weight, chain_pk),
+        "UPDATE chains SET title = ?, description = ?, severity = ?, impact_weight = ? WHERE id = ?",
+        (title, chain_data.get("description", existing["description"]), severity, weight, chain_pk),
     )
     await db.execute("DELETE FROM chain_members WHERE chain_pk = ?", (chain_pk,))
     for step_order, vuln_id in enumerate(member_ids, start=1):

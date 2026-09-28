@@ -104,6 +104,18 @@ def tier_of(row) -> str:
     return tier if tier in DIFFICULTY_TIERS else DEFAULT_TIER
 
 
+def severity_from_weight(weight) -> str:
+    """Inverse of weight_from_severity, for rows that historically carried only
+    a weight (chains before migration 041). 1 maps to low, not info."""
+    try:
+        return _SEVERITY_BY_WEIGHT.get(int(weight), "low")
+    except (TypeError, ValueError):
+        return "low"
+
+
+CHAIN_SEVERITIES = ("critical", "high", "medium", "low")
+
+
 def validate_weight(value):
     """Return *value* as a valid weight, or raise ``ValueError``.
 
@@ -392,7 +404,10 @@ def compute_metrics(
         bucket["weighted_found"] += weight * credit
         if credit > 0:
             bucket["found"] += 1
-            bucket["found_by_severity"][_SEVERITY_BY_WEIGHT.get(weight, "info")] += 1
+            # Chains carry a severity since migration 041; older rows (and test
+            # fixtures) may only have a weight, which maps 1:1 back to one.
+            sev = str(field(c, "severity", "") or "").strip().lower() or severity_from_weight(weight)
+            bucket["found_by_severity"][sev if sev in SEVERITY_WEIGHTS else "info"] += 1
 
     for bucket in tiers.values():
         bucket["rate"] = bucket["found"] / bucket["count"] if bucket["count"] else 0.0

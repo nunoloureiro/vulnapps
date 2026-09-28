@@ -309,6 +309,30 @@ async def promote_finding(request: Request, scan_id: int, finding_id: int):
     return result
 
 
+@router.post("/{scan_id}/findings/{finding_id}/promote-chain")
+async def promote_finding_to_chain(request: Request, scan_id: int, finding_id: int):
+    """Register a missing chain from a finding that reports it, and map the
+    finding to it. Body: {title?, severity, member_vuln_ids, description?}."""
+    user = await require_user(request)
+    require_scope(user, "vuln-mapper")
+    body = await request.json()
+
+    db = await get_connection()
+    try:
+        result = await scans_service.promote_finding_to_chain(
+            db, user, scan_id, finding_id, body or {},
+        )
+    except ValueError as e:
+        msg = str(e)
+        status = 404 if msg in ("Finding not found", "Scan not found") else 400
+        raise HTTPException(status_code=status, detail=msg)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+    return result
+
+
 @router.post("/{scan_id}/rematch")
 async def rematch_scan(request: Request, scan_id: int):
     user = await require_user(request)

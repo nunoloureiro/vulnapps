@@ -556,8 +556,8 @@ async def submit_scan(
                (scan_id, vuln_type, http_method, url, parameter, filename,
                 is_false_positive, fp_group,
                 title, severity, description, poc, remediation, code_location,
-                reasoning)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                reasoning, is_chain)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 scan_id,
                 f.get("vuln_type", ""),
@@ -574,6 +574,9 @@ async def submit_scan(
                 f.get("remediation"),
                 f.get("code_location"),
                 f.get("reasoning"),
+                # Whether the finding presents itself as a chain — the
+                # importer decides from content, never from report layout.
+                1 if f.get("is_chain") in (True, 1, "1", "true") else 0,
             ),
         )
         # The heuristic matcher proposes at most one vuln; the importer's LLM
@@ -747,6 +750,11 @@ async def match_finding(db, user, scan_id: int, finding_id: int, vuln_ids, chain
         "WHERE id = ? AND scan_id = ?",
         (is_false_positive, finding_id, scan_id),
     )
+    # A reviewer mapping a finding to a chain is saying it IS a chain report,
+    # which corrects the importer when it missed that. Unmapping never clears
+    # the flag: it describes what the finding says, not what it matched.
+    if new_chain_ids:
+        await db.execute("UPDATE scan_findings SET is_chain = 1 WHERE id = ?", (finding_id,))
 
     if set(new_vuln_ids) != set(old_vuln_ids) or set(new_chain_ids) != set(old_chain_ids):
         new_labels = ", ".join(
@@ -1125,6 +1133,67 @@ async def promote_finding(
         "revision": new_revision,
         "existed_since_revision": existed_since,
     }
+
+
+async def promote_finding_to_chain(
+    db, user, scan_id: int, finding_id: int, chain_data: dict,
+) -> dict:
+    """Register a chain the catalog is missing, from a finding that reports it.
+
+    The counterpart of ``promote_finding`` for chain reports. Before it, a scan
+    that demonstrated a real chain the catalog did not have could only mark it
+    FP (charging the scanner for a true discovery), ignore it, or promote it as
+    a single flat vuln with no members — scan 330 lost three chains that way.
+
+    *chain_data* is what ``chains.create_chain`` takes: title, severity,
+    member_vuln_ids (>= 2, existing vulns on this app, in step order),
+    description, and optionally existed_since_revision (default 1 — a chain is
+    made of flaws that were already there). A member the catalog lacks must be
+    promoted as a vuln first; that keeps every member a flaw some scan
+    actually showed, rather than inventing ground truth from a narrative.
+
+    The finding keeps any vulns it already credits and gains the chain, and is
+    flagged ``is_chain``. Returns {ok, chain, finding_id}.
+    """
+    from app.services import chains as chains_service
+
+    scan, app = await _get_scan_and_app(db, scan_id)
+    await _check_app_write(db, user, app)
+
+    cursor = await db.execute(
+        "SELECT * FROM scan_findings WHERE id = ? AND scan_id = ?", (finding_id, scan_id)
+    )
+    finding = await cursor.fetchone()
+    if not finding:
+        raise ValueError("Finding not found")
+
+    data = dict(chain_data or {})
+    data.setdefault("title", finding["title"] or finding["vuln_type"] or "Untitled chain")
+    data.setdefault("description", finding["description"])
+
+    chain = await chains_service.create_chain(db, user, app["id"], data)
+
+    existing = (await finding_matches.load(db, [finding_id]))[finding_id]
+    await finding_matches.replace(
+        db, finding_id, existing["vuln_ids"], existing["chain_ids"] + [chain["id"]]
+    )
+    await db.execute(
+        "UPDATE scan_findings SET is_chain = 1, is_false_positive = 0, is_ignored = 0, "
+        "fp_group = NULL WHERE id = ?",
+        (finding_id,),
+    )
+
+    finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
+    was = " (was marked false positive)" if finding["is_false_positive"] else \
+          " (was ignored)" if finding["is_ignored"] else ""
+    await audit_service.record_audit_event(
+        db, entity_type="scan_finding", action="finding_promoted_chain", actor=user,
+        message=f"{user['name']} promoted \"{finding_label}\" to new chain "
+                f"{chain['chain_id']}{was}",
+        entity_id=finding_id, scan_id=scan_id, details={"chain_pk": chain["id"]},
+    )
+    await db.commit()
+    return {"ok": True, "chain": chain, "finding_id": finding_id}
 
 
 async def rematch_scan(db, user, scan_id: int) -> dict:

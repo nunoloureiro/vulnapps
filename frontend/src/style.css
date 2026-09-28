@@ -1060,3 +1060,9 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
     .changelog-subject { white-space: normal; }
     .changelog-detail { padding-left: 1.3rem; }
 }
+
+/* Chain form: steps are an ordered list because order is part of a chain. */
+.chain-steps { margin: 0 0 0.5rem 1.2rem; padding: 0; }
+.chain-steps li { font-size: 0.85rem; padding: 0.15rem 0; }
+.chain-steps li > span:first-child { margin-right: 0.5rem; }
+.chain-step-actions { display: inline-flex; gap: 0.1rem; vertical-align: middle; }

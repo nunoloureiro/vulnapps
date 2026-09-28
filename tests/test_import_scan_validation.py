@@ -216,60 +216,77 @@ def test_run_llm_mapping_picks_extra_info_by_mode():
 # disclaimer, once by ignoring an explicit "scored separately" disclaimer --
 # and separately under-credited a genuine chain finding by splitting it
 # into one sub-finding per mechanism, each matched to an individual vuln
-# instead of the chain. _enforce_source_kind is the mechanical backstop:
-# a file's own directory (when the scan separates dedicated chain write-ups
-# from standalone findings) hard-caps which field its findings can ever
-# populate, regardless of what the model returns.
+# instead of the chain. The first backstop keyed on the file's folder; it
+# was replaced (2026-09-28) because reports mix chain write-ups in with
+# single-vuln findings. Chain-ness is now the finding's own is_chain flag,
+# decided from content, and _enforce_chain_flag keys on that.
 
-def test_enforce_source_kind_clears_vuln_match_on_a_chain_source_file():
-    result = {"findings": [{"matched_vuln_db_id": 55987, "matched_chain_db_id": None}]}
-    import_scan._enforce_source_kind(result, is_chain_source=True)
-    assert result["findings"][0]["matched_vuln_db_id"] is None
-
-
-def test_enforce_source_kind_clears_chain_match_on_a_standalone_source_file():
-    """The exact real-incident shape: a standalone SSRF finding that only
-    claimed (never demonstrated) a further token-forgery step got
-    matched_chain_db_id set anyway."""
-    result = {"findings": [{"matched_vuln_db_id": None, "matched_chain_db_id": 15}]}
-    import_scan._enforce_source_kind(result, is_chain_source=False)
+def test_unflagged_finding_can_never_be_chain_credited():
+    """The real-incident shape: a standalone SSRF finding that only claimed a
+    further token-forgery step got matched_chain_db_id set anyway."""
+    result = {"findings": [{"matched_vuln_db_id": 5, "matched_chain_db_id": 15, "is_chain": False}]}
+    import_scan._enforce_chain_flag(result)
     assert result["findings"][0]["matched_chain_db_id"] is None
+    assert result["findings"][0]["matched_vuln_db_id"] == 5
 
 
-def test_enforce_source_kind_is_a_noop_without_a_directory_signal():
-    """No directory-based signal (e.g. a single combined report, or --file)
-    -- the content rule in SYSTEM_PROMPT_MAP still applies, but there is
-    nothing here to enforce mechanically."""
-    result = {"findings": [{"matched_vuln_db_id": 1, "matched_chain_db_id": 2}]}
-    import_scan._enforce_source_kind(result, is_chain_source=None)
-    assert result["findings"][0] == {"matched_vuln_db_id": 1, "matched_chain_db_id": 2}
+def test_missing_flag_counts_as_not_a_chain():
+    """Only an explicit True earns chain credit — a model that omits the field
+    must not get the benefit of the doubt."""
+    result = {"findings": [{"matched_chain_db_id": 15}, {"matched_chain_db_id": 16, "is_chain": "yes"}]}
+    import_scan._enforce_chain_flag(result)
+    assert [f["matched_chain_db_id"] for f in result["findings"]] == [None, None]
+    assert [f["is_chain"] for f in result["findings"]] == [False, False]
 
 
-def test_enforce_source_kind_handles_multiple_findings_and_missing_keys():
-    result = {"findings": [
-        {"matched_vuln_db_id": 1, "matched_chain_db_id": None},
-        {"matched_vuln_db_id": 2},  # matched_chain_db_id absent entirely
-    ]}
-    import_scan._enforce_source_kind(result, is_chain_source=True)
-    assert all(f["matched_vuln_db_id"] is None for f in result["findings"])
+def test_chain_finding_keeps_chain_primary_and_moves_vuln_to_additional():
+    """A chain finding still credits the members it walked through, so a
+    stray primary vuln is moved, not dropped."""
+    result = {"findings": [{
+        "matched_vuln_db_id": 7, "matched_chain_db_id": 15,
+        "additional_vuln_db_ids": [8], "is_chain": True,
+    }]}
+    import_scan._enforce_chain_flag(result)
+    f = result["findings"][0]
+    assert (f["matched_chain_db_id"], f["matched_vuln_db_id"]) == (15, None)
+    assert f["additional_vuln_db_ids"] == [7, 8]
 
 
-def test_source_kind_prompt_section_matches_content_rule_wording():
-    """The per-file source-type note must frame itself as secondary to the
-    content-based rule in SYSTEM_PROMPT_MAP, not a replacement for it, and
-    for a chain file must warn against splitting one narrative into
-    per-mechanism findings (the exact way a genuine chain lost its credit)."""
+def test_unregistered_chain_keeps_its_vuln_credit():
+    """A chain report with no registered chain to match still credits the vulns
+    it demonstrates — the case that used to end up marked FP."""
+    result = {"findings": [{
+        "matched_vuln_db_id": 7, "matched_chain_db_id": None,
+        "additional_vuln_db_ids": [8, 9], "is_chain": True,
+    }]}
+    import_scan._enforce_chain_flag(result)
+    f = result["findings"][0]
+    assert (f["matched_vuln_db_id"], f["additional_vuln_db_ids"], f["is_chain"]) == (7, [8, 9], True)
+
+
+def test_folder_is_only_a_hint_in_the_prompt():
+    """Where the file sits may inform the model but never forbid a chain match:
+    the old wording ("must stay null") is gone in both directions, and the
+    content rule is what the note points back to."""
     vulns = [{"id": 1, "vuln_id": "TP-001", "title": "SQLi", "severity": "high"}]
+    for is_chain_source in (True, False):
+        msg = import_scan._build_user_message("REPORT", vulns, None, None, is_chain_source)
+        assert "must stay null" not in msg
+        assert "judge is_chain from its content" in msg.lower()
+    assert "rather than one finding per step" in import_scan._build_user_message(
+        "REPORT", vulns, None, None, True)
+    assert "Where This File Sits" not in import_scan._build_user_message(
+        "REPORT", vulns, None, None, None)
 
-    chain_msg = import_scan._build_user_message("REPORT", vulns, None, None, True)
-    assert "do not split one connected chain narrative" in chain_msg
-    assert "matched_vuln_db_id must stay null" in chain_msg
 
-    standalone_msg = import_scan._build_user_message("REPORT", vulns, None, None, False)
-    assert "matched_chain_db_id must stay null" in standalone_msg
-
-    no_signal_msg = import_scan._build_user_message("REPORT", vulns, None, None, None)
-    assert "Source File Type" not in no_signal_msg
+def test_system_prompt_defines_chain_by_content_not_folder():
+    prompt = import_scan.SYSTEM_PROMPT_MAP
+    assert "never" in prompt and "from which file or folder" in prompt
+    # The two non-chain shapes settled with the user on scan 330.
+    assert "INDEPENDENT ways to the same" in prompt
+    # Attacker work (cracking a leaked hash) is not a disqualifier.
+    assert "cracking a hash the chain leaked" in prompt
+    assert "Never leave a demonstrated vulnerability uncredited" in prompt
 
 
 def test_system_prompt_map_rejects_claim_without_demonstration():
@@ -575,32 +592,6 @@ def test_validate_tolerates_a_non_list_additional_field():
     warnings = import_scan.validate_llm_matches(mapping, [_JWT_NONE_ALG_VULN | {"id": 42}])
     assert mapping["findings"][0]["additional_vuln_db_ids"] == []
     assert any("isn't a list" in w for w in warnings)
-
-
-def test_chain_source_keeps_member_credit_but_loses_the_primary_vuln():
-    """A chain write-up may now credit the members it walked through, so only
-    its PRIMARY vuln match is cleared — the chain stays the primary target."""
-    result = {"findings": [{
-        "matched_vuln_db_id": 42, "matched_chain_db_id": 7,
-        "additional_vuln_db_ids": [99],
-    }]}
-    import_scan._enforce_source_kind(result, is_chain_source=True)
-    f = result["findings"][0]
-    assert f["matched_vuln_db_id"] is None
-    assert f["matched_chain_db_id"] == 7
-    assert f["additional_vuln_db_ids"] == [99]
-
-
-def test_standalone_source_still_cannot_claim_a_chain():
-    result = {"findings": [{
-        "matched_vuln_db_id": 42, "matched_chain_db_id": 7,
-        "additional_vuln_db_ids": [99],
-    }]}
-    import_scan._enforce_source_kind(result, is_chain_source=False)
-    f = result["findings"][0]
-    assert f["matched_chain_db_id"] is None
-    assert f["matched_vuln_db_id"] == 42
-    assert f["additional_vuln_db_ids"] == [99]
 
 
 def test_prompt_documents_when_to_use_additional_ids():
