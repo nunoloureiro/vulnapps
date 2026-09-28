@@ -7,6 +7,8 @@ importer-side defense-in-depth added alongside that fix.
 
 import importlib.util
 import json
+
+import pytest
 import pathlib
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -127,76 +129,150 @@ def test_extract_json_text_prose_around_unfenced_json():
     assert json.loads(import_scan._extract_json_text(text)) == {"a": 1}
 
 
-# ── --extra-info-mapping / --extra-info-extract ─────────────────────────
+# ── two-phase import: extract (no catalog) then map ─────────────────────
 #
-# _build_user_message is shared by the streaming-API path and the CLI
-# subprocess path specifically so these two flags can't drift between them.
+# Found on ten TaintedPort scans that were pre-mapped by a scanner's own
+# publishing step: when one call writes the findings while looking at the
+# catalog, findings get merged and reshaped to fit it. Phase 1 therefore never
+# sees the catalog, and phase 2 can only attach matches to findings that
+# already exist.
 
-def test_build_user_message_omits_extra_section_when_not_given():
-    """No behavior change for every existing caller that doesn't pass it."""
-    mapping_msg = import_scan._build_user_message("REPORT", [_JWT_NONE_ALG_VULN], None, None)
-    assert "Additional Instructions" not in mapping_msg
-
-    extract_msg = import_scan._build_user_message("REPORT", [], None, None)
-    assert "Additional Instructions" not in extract_msg
-    assert extract_msg == "## Scan Report\n\nREPORT"
+_FINDING = {"title": "SQLi in login", "vuln_type": "SQLi", "url": "/auth/login",
+            "severity": "critical", "description": "D", "poc": "P"}
 
 
-def test_build_user_message_includes_extra_info_in_mapping_mode():
-    msg = import_scan._build_user_message(
-        "REPORT", [_JWT_NONE_ALG_VULN], None, "Only trust findings with a concrete PoC."
-    )
-    assert "Additional Instructions From The Operator" in msg
-    assert "Only trust findings with a concrete PoC." in msg
-    # Comes after the known-vulns section, before the scan report.
-    assert msg.index("Known Vulnerabilities") < msg.index("Additional Instructions") < msg.index("Scan Report")
+class _FakeStream:
+    def __init__(self, text): self.text = text
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def get_final_message(self):
+        text = self.text
+        class R:
+            usage = None
+            stop_reason = "end_turn"
+            content = [_FakeBlock("text", text)]
+        return R()
 
 
-def test_build_user_message_includes_extra_info_in_extract_mode():
-    msg = import_scan._build_user_message("REPORT", [], None, "Be conservative about severity.")
-    assert "Additional Instructions From The Operator" in msg
-    assert "Be conservative about severity." in msg
-    assert msg.index("Additional Instructions") < msg.index("Scan Report")
+def _fake_client(captured, reply):
+    class _Messages:
+        def stream(self, **kwargs):
+            captured.append(kwargs)
+            return _FakeStream(reply)
+    class _Beta:
+        messages = _Messages()
+    class _Client:
+        messages = _Messages()
+        beta = _Beta()
+    return _Client()
 
 
-def test_run_llm_mapping_picks_extra_info_by_mode():
-    """Mapping mode uses extra_info_mapping; extraction mode uses
-    extra_info_extract -- never the other one, even if both are set."""
-    captured = {}
+def test_extraction_prompt_never_contains_the_catalog():
+    captured = []
+    import_scan.run_extract("REPORT", model="claude-sonnet-5", client=_fake_client(captured, '{"findings": []}'),
+                            use_cli=False, provider="anthropic", extra_info="EXTRACT STEER",
+                            is_chain_source=None, spinner_msg="x")
+    msg = captured[0]["messages"][0]["content"]
+    assert captured[0]["system"] == import_scan.SYSTEM_PROMPT_EXTRACT
+    assert "Known Vulnerabilities" not in msg and "EXTRACT STEER" in msg
+    assert "known vulnerabilit" not in import_scan.SYSTEM_PROMPT_EXTRACT.split("RULES:")[1].lower().replace(
+        "you are not told what the application's known vulnerabilities are", ""), \
+        "the extractor must not be steered toward any catalog"
 
-    class _FakeStream:
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+
+def test_mapping_prompt_carries_catalog_and_numbered_findings_only():
+    captured = []
+    batch = [(0, dict(_FINDING, remediation="REMEDIATION TEXT")), (1, dict(_FINDING, title="Other"))]
+    import_scan.run_map(batch, [_JWT_NONE_ALG_VULN], None, model="claude-opus-5",
+                        client=_fake_client(captured, '{"mappings": []}'), use_cli=False, provider="anthropic",
+                        extra_info="MAPPING STEER", spinner_msg="x")
+    msg = captured[0]["messages"][0]["content"]
+    assert captured[0]["system"] == import_scan.SYSTEM_PROMPT_MAP
+    assert "Known Vulnerabilities" in msg and "MAPPING STEER" in msg
+    assert '"index": 0' in msg and '"index": 1' in msg
+    assert "REMEDIATION TEXT" not in msg, "the mapper gets only what it needs to judge"
+
+
+def test_opus_calls_opt_into_refusal_fallbacks_and_others_do_not():
+    captured = []
+    client = _fake_client(captured, '{"findings": []}')
+    for model in ("claude-opus-5", "claude-sonnet-5"):
+        import_scan.run_extract("R", model=model, client=client, use_cli=False, provider="anthropic",
+                                extra_info=None, is_chain_source=None, spinner_msg="x")
+    assert captured[0].get("fallbacks") == "default" and captured[0]["betas"] == [import_scan.FALLBACK_BETA]
+    assert "fallbacks" not in captured[1]
+    captured.clear()
+    import_scan.run_extract("R", model="claude-opus-5", client=client, use_cli=False, provider="vertex",
+                            extra_info=None, is_chain_source=None, spinner_msg="x")
+    assert "fallbacks" not in captured[0], "server-side fallbacks are not available on Vertex"
+
+
+def test_refusal_is_an_error_not_an_empty_result():
+    class _Refusing(_FakeStream):
         def get_final_message(self):
             class R:
                 usage = None
-                content = [_FakeBlock("text", '{"findings": []}')]
+                stop_reason = "refusal"
+                content = []
             return R()
+    class _M:
+        def stream(self, **kw): return _Refusing("")
+    class _C:
+        messages = _M()
+        beta = type("B", (), {"messages": _M()})()
+    with pytest.raises(import_scan.LLMCallError, match="refusal"):
+        import_scan.run_extract("R", model="claude-sonnet-5", client=_C(), use_cli=False, provider="anthropic",
+                                extra_info=None, is_chain_source=None, spinner_msg="x")
 
-    class _FakeMessages:
-        def stream(self, **kwargs):
-            captured["system"] = kwargs["system"]
-            captured["user_message"] = kwargs["messages"][0]["content"]
-            return _FakeStream()
 
-    class _FakeClient:
-        messages = _FakeMessages()
+def test_merge_takes_only_mapping_fields():
+    """The guarantee: nothing the mapper returns can rewrite a finding."""
+    findings = [dict(_FINDING)]
+    import_scan.merge_mappings(findings, [(0, findings[0])], {"mappings": [{
+        "index": 0, "matched_vuln_db_id": 7, "additional_vuln_db_ids": [8], "is_chain": False,
+        "reasoning": "r", "title": "RENAMED", "description": "REWRITTEN", "severity": "low",
+    }]})
+    f = findings[0]
+    assert (f["title"], f["description"], f["severity"]) == ("SQLi in login", "D", "critical")
+    assert (f["matched_vuln_db_id"], f["additional_vuln_db_ids"]) == (7, [8])
 
-    import_scan.run_llm_mapping(
-        "REPORT", [_JWT_NONE_ALG_VULN], "fake-model", _FakeClient(),
-        extra_info_mapping="MAPPING STEER", extra_info_extract="EXTRACT STEER",
-    )
-    assert captured["system"] == import_scan.SYSTEM_PROMPT_MAP
-    assert "MAPPING STEER" in captured["user_message"]
-    assert "EXTRACT STEER" not in captured["user_message"]
 
-    import_scan.run_llm_mapping(
-        "REPORT", [], "fake-model", _FakeClient(),
-        extra_info_mapping="MAPPING STEER", extra_info_extract="EXTRACT STEER",
-    )
-    assert captured["system"] == import_scan.SYSTEM_PROMPT_EXTRACT
-    assert "EXTRACT STEER" in captured["user_message"]
-    assert "MAPPING STEER" not in captured["user_message"]
+@pytest.mark.parametrize("returned, problem", [
+    ([0], "missing"),              # dropped a finding
+    ([0, 1, 2], "unexpected"),     # invented one
+    ([0, 0, 1], "duplicated"),     # merged two onto one number
+])
+def test_merge_refuses_answers_that_do_not_line_up(returned, problem):
+    findings = [dict(_FINDING), dict(_FINDING, title="B")]
+    batch = list(enumerate(findings))
+    with pytest.raises(import_scan.MappingMismatch, match=problem):
+        import_scan.merge_mappings(findings, batch, {"mappings": [{"index": i} for i in returned]})
+    assert "matched_vuln_db_id" not in findings[0], "nothing is applied from a bad answer"
+
+
+def test_mapper_can_flag_but_never_unflag_a_false_positive():
+    findings = [dict(_FINDING, is_false_positive=True), dict(_FINDING)]
+    import_scan.merge_mappings(findings, list(enumerate(findings)), {"mappings": [
+        {"index": 0, "is_false_positive": False}, {"index": 1, "is_false_positive": True}]})
+    assert [f["is_false_positive"] for f in findings] == [True, True]
+
+
+def test_importer_identifies_itself():
+    ident = import_scan._importer_identity()
+    assert ident["imported_by"] == "vulnapps import_scan"
+    assert ident["importer_version"] and ident["importer_version"].startswith("v")
+    assert ident["importer_commit"]
+
+
+def test_scan_config_carries_provenance_for_both_phases():
+    class A:
+        use_cli = False; extract_model = "claude-sonnet-5"; map_model = "claude-opus-5"
+        model_version = reasoning_effort = harness_version = token_budget = seed = run_group = trial_index = None
+    cfg = import_scan._scan_config(A(), None)
+    assert cfg["extractor_version"] == "llm-api:claude-sonnet-5"
+    assert cfg["matcher_version"] == "llm-api:claude-opus-5"
+    assert cfg["imported_by"] == "vulnapps import_scan"
+    assert cfg["extractor_prompt_sha256"] != cfg["matcher_prompt_sha256"]
 
 
 # ── Correction-loop behavior (submit_to_vulnapps) ───────────────────────
@@ -264,19 +340,16 @@ def test_unregistered_chain_keeps_its_vuln_credit():
     assert (f["matched_vuln_db_id"], f["additional_vuln_db_ids"], f["is_chain"]) == (7, [8, 9], True)
 
 
-def test_folder_is_only_a_hint_in_the_prompt():
-    """Where the file sits may inform the model but never forbid a chain match:
-    the old wording ("must stay null") is gone in both directions, and the
-    content rule is what the note points back to."""
-    vulns = [{"id": 1, "vuln_id": "TP-001", "title": "SQLi", "severity": "high"}]
+def test_folder_is_only_a_hint_in_the_extraction_prompt():
+    """Where the file sits may shape extraction (keep a chain write-up whole)
+    but never forbids anything, and the mapping prompt no longer sees it."""
     for is_chain_source in (True, False):
-        msg = import_scan._build_user_message("REPORT", vulns, None, None, is_chain_source)
-        assert "must stay null" not in msg
-        assert "judge is_chain from its content" in msg.lower()
-    assert "rather than one finding per step" in import_scan._build_user_message(
-        "REPORT", vulns, None, None, True)
-    assert "Where This File Sits" not in import_scan._build_user_message(
-        "REPORT", vulns, None, None, None)
+        msg = import_scan._build_extract_message("REPORT", None, is_chain_source)
+        assert "must stay null" not in msg and "a hint" in msg
+    assert "rather than one finding per step" in import_scan._build_extract_message("R", None, True)
+    assert "Where This File Sits" not in import_scan._build_extract_message("R", None, None)
+    assert "Where This File Sits" not in import_scan._build_map_message(
+        [(0, _FINDING)], [_JWT_NONE_ALG_VULN], None, None)
 
 
 def test_system_prompt_defines_chain_by_content_not_folder():

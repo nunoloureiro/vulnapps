@@ -261,7 +261,17 @@ Uses `python-dotenv` to load `.env` file.
 
 ---
 
-## Database Schema (migrations 001-036)
+## Database Schema (migrations 001-042)
+
+**Migration runner** (`app/database.py`): files run in order, tracked by filename in
+`_migrations`, each with `executescript`. A `duplicate column name` error means that column
+already exists (an earlier edited version of the file, or a manual reconciliation) — the runner
+then resumes with the statements **after** the failing one (`_run_migration_script`; the error
+names the column, statements are split with `sqlite3.complete_statement`). It used to record the
+file as applied and silently skip everything after the duplicate. It deliberately does not run
+statement by statement: table-rebuild migrations bracket their work in
+`PRAGMA foreign_keys=OFF/ON`, which only takes effect between transactions, and a rebuild with
+foreign keys still on cascades deletes.
 
 ```sql
 PRAGMA journal_mode=WAL;
@@ -1675,6 +1685,50 @@ LLM-assisted CLI tool to import scan results (.md files) into Vulnapps.
 python tools/import_scan.py --url https://vulnapps.example.com \
     --api-key va_... --app-id 1 --dir ./scan-results/
 ```
+
+**Two phases, and why (normative, 2026-09-28).**
+1. **Extract** — one call per report file with `SYSTEM_PROMPT_EXTRACT`, which **never contains
+   the catalog**. One entry per finding the file reports: never merged, split, invented or
+   dropped; the report's own title verbatim; severity as the report assigns it; the PoC's
+   evidence (requests, responses, values, steps) kept rather than summarised. The file's
+   folder is a soft hint here only (keep a chain write-up as one finding). Default model
+   `claude-sonnet-5` (`--extract-model`).
+2. **Map** — `SYSTEM_PROMPT_MAP` gets the catalog plus a **numbered** batch of extracted
+   findings (`--map-batch-size`, default 20) and returns only `mappings[]` keyed by `index`.
+   `merge_mappings` enforces the guarantee: the answer must cover exactly the numbers it was
+   given (missing / extra / duplicated → `MappingMismatch`, one retry, then the import stops
+   with extraction checkpointed), and only `MAPPING_FIELDS` (vuln / chain / additional ids,
+   `is_chain`, `fp_group`, `reasoning`) are taken — nothing the mapper returns can rewrite a
+   title, description, PoC or severity. `is_false_positive` is OR-ed: the mapper can flag,
+   never un-flag, what the report called false. `_enforce_chain_flag` then runs on the merged
+   result. Default model `claude-opus-5` (`--map-model`); `--model` sets both.
+
+Why: ten TaintedPort scans arrived pre-mapped by a scanner's own publishing step, which wrote
+one finding per catalog entry while looking at the catalog — duplicates vanished and bodies
+were copied from the wrong source finding. The importer used to have the same shape (one call
+per file extracting AND mapping with the catalog in view). Measured on the scan-330 report
+(61 files) the split is also cheaper: ~481k input tokens vs ~1,064k, because the catalog and
+rules (~11.5k tokens) go out once per mapping batch instead of once per file. Per-phase token
+use is printed after every import ("LLM usage — this import, not the scan"). The mapping
+prompt also dropped its dead "milestones" block (nothing read it since the scoring prune).
+
+API calls to `claude-opus-5` / `claude-fable-5-1` on the first-party API opt into server-side
+refusal fallbacks (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`): exploit
+write-ups can trip safety classifiers, and a declined request is re-run on the recommended
+model rather than failing the import. A final `stop_reason: "refusal"` raises instead of being
+read as an empty result.
+
+**Provenance.** Every scan records who imported and mapped it (migration 042):
+`imported_by` ("vulnapps import_scan", or "vulnapps web form" from the submit page),
+`importer_version` (v`VERSION`.`commit count` of the importer's own checkout — the app's
+version scheme), `importer_commit` (short sha, `-dirty` when the tree has uncommitted changes),
+`extractor_version` / `matcher_version` (`llm-api:<model>`) and the sha256 of each phase's
+prompt, plus the run details the importer always sent and the server used to drop
+(model_version, reasoning_effort, harness_version, token_budget, seed, run_group,
+trial_index). `clean_run_details` whitelists and types them. The scan page shows
+"Imported By"; a null `imported_by` renders as **unknown**, which is exactly what the
+pre-mapped scans would have shown. The scan's `tokens` never falls back to the importer's own
+LLM usage (it used to): that is the cost of importing, not of the scan.
 
 **Features:**
 - Reads one or more `.md` scan result files (combines into single scan via `--dir`)

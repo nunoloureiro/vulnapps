@@ -461,3 +461,35 @@ TP 45 -> 46 (TP-028), FP groups 5 -> 2, precision 90.0% -> 95.8%, chained 4 -> 6
 Counts reconcile: 14 chains / 57 vulns in both catalog and vulnapps; finding counts
 unchanged (70 / 44 / 32). Scans 331 and 332 now score against 14 chains rather than 12 —
 the revision mechanism doing its job, not a regression.
+
+## Importer: extract first, map second; provenance on every scan (2026-09-28)
+
+Triggered by 10 TaintedPort scans that arrived pre-mapped by COS's own publishing
+step (one finding per catalog entry, bodies copied from the wrong source finding).
+Those 10 are ON HOLD pending the user's talk with whoever imported them -- no changes.
+
+Found while scoping:
+- Extraction and mapping are ONE LLM call per file today, with the catalog in view,
+  so the model can reshape findings to fit the answer key (the COS failure shape).
+- The importer sends matcher identity + run details; the server stores none of it.
+  The columns exist only on prod (leftovers of the scoring prune), not in migrations.
+- The migration runner marks a whole file applied on the first "duplicate column",
+  silently skipping every later statement in that file.
+
+- [x] Runner: on "duplicate column", replay the file statement by statement
+      (split with sqlite3.complete_statement), skipping only existing columns.
+- [x] Migration 042: provenance (imported_by, importer_version, importer_commit,
+      extractor_version, extractor_prompt_sha256) + the prod-only run-detail columns
+      (matcher_version, matcher_prompt_sha256, model, model_version, reasoning_effort,
+      harness_version, token_budget, seed, run_group, trial_index).
+- [x] Submit route + service store them; web-form submissions say "vulnapps web form".
+- [x] Scan page shows provenance ("imported by: unknown" when absent).
+- [x] Importer phase 1 EXTRACT per file, no catalog in the prompt.
+- [x] Importer phase 2 MAP: catalog + numbered extracted findings -> mapping fields
+      only, batched. Text fields always come from phase 1; mapper output must line
+      up 1:1 with the extracted list or the import stops.
+- [x] Defaults: extract claude-sonnet-5, map claude-opus-5; --extract-model /
+      --map-model; per-phase token counts printed.
+- [x] Importer reports its version: vulnapps v<major>.<commits> of its checkout,
+      commit, dirty flag.
+- [ ] Tests, AppBuilder, deploy, verify a real dry-run import.
