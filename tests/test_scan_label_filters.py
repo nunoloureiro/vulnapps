@@ -145,6 +145,12 @@ async def test_submission_stores_provenance_and_run_details(tmp_path, monkeypatc
 
     app.include_router(scans_api.submit_router, prefix="/api/apps")
     monkeypatch.setattr(scans_api, "get_connection", connect)
+
+    # The submit route authenticates from the Authorization header, not
+    # request.state.user; stand in for it with the same admin.
+    async def _admin(request):
+        return {"sub": 1, "role": "admin"}
+    monkeypatch.setattr(scans_api, "require_user", _admin)
     body = {
         "scanner_name": "S", "scan_date": "2026-09-28", "findings": [],
         "imported_by": "vulnapps import_scan", "importer_version": "v1.198", "importer_commit": "abc123-dirty",
