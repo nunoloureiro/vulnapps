@@ -72,3 +72,45 @@ async def test_label_filters_support_all_any_and_single_label_urls(tmp_path, mon
         scored = (await client.get('/api/scans?include_metrics=true&label=blackbox')).json()["scans"]
         assert {scan["id"] for scan in scored} == {1, 2}
         assert all(scan["metrics"]["weighted_total"] == 0 for scan in scored)
+
+
+async def test_coverage_reaches_the_http_response(tmp_path, monkeypatch):
+    """The list route copies an explicit set of keys from the service result.
+    Coverage was computed but not on that list, so the page never showed it —
+    service-level tests could not see that; this one goes through the route."""
+    path = tmp_path / "coverage.db"
+
+    async def connect():
+        db = await aiosqlite.connect(path)
+        db.row_factory = aiosqlite.Row
+        return db
+
+    db = await connect()
+    try:
+        await run_migrations(db)
+        await db.execute("INSERT INTO users (id, name, email, password_hash, role) VALUES (1, 'Demo', 'demo@example.invalid', 'x', 'admin')")
+        await db.execute("INSERT INTO apps (id, name, version, created_by, visibility) VALUES (1, 'Demo', '1', 1, 'public')")
+        await db.execute("INSERT INTO apps (id, name, version, created_by, visibility) VALUES (2, 'Demo', '2', 1, 'public')")
+        for scan_id, app_id in ((1, 1), (2, 2)):
+            await db.execute(
+                "INSERT INTO scans (id, app_id, scanner_name, scan_date, submitted_by) VALUES (?, ?, 'S', '2026-09-28', 1)",
+                (scan_id, app_id),
+            )
+        await db.commit()
+    finally:
+        await db.close()
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def authenticate(request: Request, call_next):
+        request.state.user = {"sub": 1, "role": "admin"}
+        return await call_next(request)
+
+    app.include_router(scans_api.router, prefix="/api/scans")
+    monkeypatch.setattr(scans_api, "get_connection", connect)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        one = (await client.get("/api/scans?app_id=1")).json()
+        assert one["coverage"] is not None and one["coverage"]["scan_count"] == 1
+        both = (await client.get("/api/scans")).json()
+        assert "coverage" in both and both["coverage"] is None, "two app versions = two apps = no row"

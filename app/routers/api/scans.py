@@ -62,6 +62,7 @@ async def list_scans(
 
     return {
         "scans": [dict(s) for s in result["scans"]],
+        "coverage": result.get("coverage"),
         "scan_labels_map": result["scan_labels_map"],
         "scanners": result["scanners"],
         "apps_list": [dict(a) for a in result["apps_list"]],
