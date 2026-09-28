@@ -270,3 +270,37 @@ def test_chained_tier_split_derives_severity_from_weight():
 
     assert tiers["chained"]["found"] == 1
     assert tiers["chained"]["found_by_severity"]["critical"] == 1
+
+
+# --- combined coverage (replaces the summed totals row) ----------------------
+
+async def test_coverage_counts_each_vuln_once_across_scans(db):
+    """The bug the old totals row had: two scans finding the same vuln summed
+    to 2. Coverage is distinct vulns found by at least one listed scan."""
+    app_id = await make_app(db)
+    a = await add_vuln(db, app_id, "TP-001", severity="critical", url="/1")
+    b = await add_vuln(db, app_id, "TP-002", severity="high", url="/2")
+    await add_vuln(db, app_id, "TP-003", severity="low", url="/3")  # nobody finds it
+    s1 = await submit(db, app_id, [{"vuln_type": "SQLi", "title": "x"}])
+    s2 = await submit(db, app_id, [{"vuln_type": "SQLi", "title": "x"}, {"vuln_type": "SQLi", "title": "y"}])
+    await scans_service.match_finding(db, ADMIN, s1, (await findings_of(db, s1))[0], [a], [])
+    f2 = await findings_of(db, s2)
+    await scans_service.match_finding(db, ADMIN, s2, f2[0], [a], [])
+    await scans_service.match_finding(db, ADMIN, s2, f2[1], [b], [])
+
+    cov = (await scans_service.list_scans(db, ADMIN))["coverage"]
+
+    assert (cov["found"], cov["total"], cov["scan_count"]) == (2, 3, 2)
+    assert cov["found_by_severity"]["critical"] == 1 and cov["found_by_severity"]["high"] == 1
+    assert [v["vuln_id"] for v in cov["missed"]] == ["TP-003"]
+
+
+async def test_no_coverage_when_the_list_spans_apps(db):
+    """Different apps (a new version of an app is a new app id) have no single
+    catalog to be covered, so there is no row at all."""
+    one = await make_app(db, "One")
+    two = await make_app(db, "Two")
+    await submit(db, one, [])
+    await submit(db, two, [])
+
+    assert (await scans_service.list_scans(db, ADMIN))["coverage"] is None

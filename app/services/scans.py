@@ -381,14 +381,69 @@ async def list_scans(
         scan_out.pop("app_team_id")
         visible_scans.append(scan_out)
 
+    # Combined coverage replaces the old summed totals row, which added TP/FN
+    # across scans and so double-counted every vuln two scans both found.
+    # Only defined when every listed scan is for the same app: a different
+    # version of an app is a different app id, so "one app" is exact, and
+    # across apps there is no single catalog to be covered.
+    coverage = None
+    listed_apps = {s["app_id"] for s in visible_scans}
+    if len(listed_apps) == 1:
+        coverage = await _coverage(db, next(iter(listed_apps)), [s["id"] for s in visible_scans])
+
     return {
         "scans": visible_scans,
+        "coverage": coverage,
         "app": app,
         "scan_labels_map": scan_labels_map,
         "scanners": scanners,
         "apps_list": apps_list,
         "all_labels": all_labels,
         "user_teams": user_teams,
+    }
+
+
+async def _coverage(db, app_id: int, scan_ids: list[int]) -> dict:
+    """What the listed scans found between them: distinct catalog vulns that
+    at least one of them matched, and the ones none of them did.
+
+    Scored against the app's current catalog -- the same scope as the list's
+    own tp_count (``invalidated_at_revision IS NULL``), so this row and the
+    rows above it never disagree about what counts. One query, not per-scan
+    ids shipped to the client.
+    """
+    cursor = await db.execute(
+        "SELECT id, vuln_id, title, severity FROM vulnerabilities "
+        "WHERE app_id = ? AND invalidated_at_revision IS NULL "
+        "ORDER BY vuln_id",
+        (app_id,),
+    )
+    catalog = [dict(r) for r in await cursor.fetchall()]
+
+    placeholders = ",".join("?" * len(scan_ids))
+    cursor = await db.execute(
+        f"SELECT DISTINCT fm.vuln_id FROM scan_findings sf "
+        f"JOIN finding_matches fm ON fm.finding_id = sf.id "
+        f"WHERE sf.scan_id IN ({placeholders}) AND fm.vuln_id IS NOT NULL",
+        scan_ids,
+    )
+    found_ids = {r["vuln_id"] for r in await cursor.fetchall()}
+
+    found = [v for v in catalog if v["id"] in found_ids]
+    by_severity = {sev: 0 for sev in scoring.SEVERITY_WEIGHTS}
+    for v in found:
+        sev = (v["severity"] or "").lower()
+        by_severity[sev if sev in by_severity else "info"] += 1
+    return {
+        "app_id": app_id,
+        "scan_count": len(scan_ids),
+        "found": len(found),
+        "total": len(catalog),
+        "found_by_severity": by_severity,
+        "missed": [
+            {"id": v["id"], "vuln_id": v["vuln_id"], "title": v["title"], "severity": v["severity"]}
+            for v in catalog if v["id"] not in found_ids
+        ],
     }
 
 

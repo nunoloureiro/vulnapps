@@ -118,6 +118,7 @@ export default function ScansList() {
 
   const hasFilters = labelValues.length > 0 || Object.values(params).some(v => v);
   const rawScans = useMemo(() => (resultData?.scans || []).map(canonicalScanCounts), [resultData]);
+  const coverage = resultData?.coverage || null;
   const labelsMap = resultData?.scan_labels_map || {};
 
   const appId = params.app_id;
@@ -152,31 +153,6 @@ export default function ScansList() {
     return next;
   });
 
-  const totals = useMemo(() => scans.reduce(
-    (acc, s) => ({
-      tp: acc.tp + (s.tp_count ?? 0),
-      fp: acc.fp + (s.fp_count ?? 0),
-      pending: acc.pending + (s.pending_count ?? 0),
-      fn: acc.fn + (s.fn_count ?? 0),
-      critical: acc.critical + (s.sev_critical ?? 0),
-      high: acc.high + (s.sev_high ?? 0),
-      medium: acc.medium + (s.sev_medium ?? 0),
-      low: acc.low + (s.sev_low ?? 0),
-      // Summed across scans, so the same vuln found by two scanners counts
-      // twice — exactly like the `tp` total it sits under.
-      tpSplit: {
-        tp_critical: acc.tpSplit.tp_critical + (s.tp_critical ?? 0),
-        tp_high: acc.tpSplit.tp_high + (s.tp_high ?? 0),
-        tp_medium: acc.tpSplit.tp_medium + (s.tp_medium ?? 0),
-        tp_low: acc.tpSplit.tp_low + (s.tp_low ?? 0),
-        tp_info: acc.tpSplit.tp_info + (s.tp_info ?? 0),
-      },
-    }),
-    {
-      tp: 0, fp: 0, pending: 0, fn: 0, critical: 0, high: 0, medium: 0, low: 0,
-      tpSplit: { tp_critical: 0, tp_high: 0, tp_medium: 0, tp_low: 0, tp_info: 0 },
-    },
-  ), [scans]);
 
   const SeverityCells = ({ s }) => (
     <>
@@ -344,30 +320,41 @@ export default function ScansList() {
                   );
                 })}
               </tbody>
-              {!groupBy && <tfoot>
+              {/* Combined coverage, only when every listed scan is for one app.
+                  It replaces a summed "Total" row that added TP and FN across
+                  scans, double-counting every vuln two scans both found. */}
+              {!groupBy && coverage && <tfoot>
                 <tr className="scans-totals-row">
                   {user && <td></td>}
-                  <td className="text-muted" data-label="">Total</td>
-                  {!appId && <td></td>}
-                  <td></td>
-                  <td className="text-success" data-label="TP">
+                  <td className="text-muted" data-label="" colSpan={appId ? 2 : 3}>
+                    Any of these {coverage.scan_count} scan{coverage.scan_count === 1 ? '' : 's'}
+                  </td>
+                  <td className="text-success" data-label="Found by any">
                     <span className="tp-cell">
-                      {totals.tp}
-                      <TpBreakdown s={totals.tpSplit} />
+                      <span title="Distinct catalog vulns found by at least one listed scan">
+                        {coverage.found} / {coverage.total}
+                      </span>
+                      <SeverityBreakdown counts={coverage.found_by_severity} label="found by at least one scan" />
                     </span>
                   </td>
-                  <td className="text-error" data-label="FP">{totals.fp}</td>
-                  <td className="text-muted" data-label="Pending">{totals.pending}</td>
-                  <td className="text-warn" data-label="FN">{totals.fn}</td>
-                  <td data-label="Severity"><span className="sev-pill-group"><SeverityCells s={{
-                    sev_critical: totals.critical,
-                    sev_high: totals.high,
-                    sev_medium: totals.medium,
-                    sev_low: totals.low,
-                  }} /></span></td>
                   <td></td>
-                  {user && <td></td>}
+                  <td></td>
+                  <td className="text-warn" data-label="Missed by all">{coverage.missed.length}</td>
+                  <td colSpan={user ? 3 : 2}></td>
                 </tr>
+                {coverage.missed.length > 0 && (
+                  <tr className="scans-coverage-missed">
+                    <td colSpan={99} className="text-sm">
+                      <span className="text-muted">Missed by all: </span>
+                      {coverage.missed.map((v, i) => (
+                        <span key={v.id}>
+                          {i > 0 && ', '}
+                          <Link to={`/apps/${coverage.app_id}/vulns/${v.id}`} title={`${v.title} (${v.severity})`}>{v.vuln_id}</Link>
+                        </span>
+                      ))}
+                    </td>
+                  </tr>
+                )}
               </tfoot>}
             </table>
           </div>

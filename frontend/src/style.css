@@ -1066,3 +1066,4 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .chain-steps li { font-size: 0.85rem; padding: 0.15rem 0; }
 .chain-steps li > span:first-child { margin-right: 0.5rem; }
 .chain-step-actions { display: inline-flex; gap: 0.1rem; vertical-align: middle; }
+.scans-coverage-missed td { padding-top: 0; color: var(--text-secondary); }

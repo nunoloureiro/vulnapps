@@ -1413,6 +1413,17 @@ informational badges on the App page today — no export/aggregation feature cur
 them (see `tasks/scorings-table.md` and `tasks/config-fingerprinting.md` for the deferred
 work that would).
 
+### Scan list coverage row
+
+The scan list has no summed "Total" row: it added TP and FN across scans, so a vuln found by
+five scans counted five times and FN repeated the catalog once per scan. In its place, when
+**every listed scan is for the same app** (a new version of an app is a new app id, so this
+is exact), `list_scans` returns `coverage` and the list shows "Any of these N scans":
+distinct catalog vulns found by at least one of them (`found / total`, with the C/H/M/L
+split), and the ones missed by all, linked. Computed server-side in one query over the
+listed scan ids (`_coverage`), against the current catalog -- the same scope as the rows'
+own `tp_count`. With more than one app listed, `coverage` is null and there is no row.
+
 ### TP split by severity
 
 `tp` alone is ambiguous — 45 true positives reads very differently as 8 criticals than as 8
