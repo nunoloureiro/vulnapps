@@ -1730,6 +1730,18 @@ findings through the real service and asserts every KPI, per-tier and per-severi
 included, is identical — the preview is only worth showing if it is the number the scan page
 will show.
 
+**`--format json` (a.k.a. `--output json`), with `--dry-run`.** Prints the whole import
+grounding as one JSON object on stdout, so a sweep can be scripted: each finding carries its
+display fields (title/severity/description/poc/...), its raw mapping decision
+(`matched_vuln_db_id`, `additional_vuln_db_ids`, `matched_chain_db_id`, `is_chain`, fp) and
+the resolved catalog identifiers (`catalog_ids`/`catalog_chain_ids` as codes like TP-014 /
+CHAIN-011, `catalog_db_ids`/`catalog_chain_db_ids` as numbers), plus the `metrics` KPI block
+from `local_metrics`. In this mode all human output is rerouted to stderr (sys.stdout is
+pointed at stderr for the run), so stdout is clean JSON safe to pipe into jq; the metrics are
+passed through `_json_safe` because `compute_metrics` returns some fields as sets. It requires
+`--dry-run` today (a real import has interactive prompts that would block a piped run) and
+errors otherwise.
+
 **Provenance.** Every scan records who imported and mapped it (migration 042):
 `imported_by` ("vulnapps import_scan", or "vulnapps web form" from the submit page),
 `importer_version` (v`VERSION`.`commit count` of the importer's own checkout — the app's

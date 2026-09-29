@@ -898,6 +898,64 @@ def local_metrics(mapping: dict, vulns: list, chains: list | None) -> dict | Non
     return compute_metrics(findings, current(vulns), current(chains))
 
 
+def _json_safe(obj):
+    """Recursively make a value JSON-serializable: compute_metrics returns some
+    fields (e.g. matched_vuln_ids) as sets, which json.dumps rejects."""
+    if isinstance(obj, set):
+        return sorted(obj)
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
+def build_import_json(mapping: dict, vulns: list, chains: list | None, metrics: dict | None,
+                     args, *, dry_run: bool, scan_id=None) -> dict:
+    """The machine-readable result of an import, for --format json.
+
+    Each finding carries its display fields (title/severity/description/poc/...),
+    its raw mapping decision (matched_vuln_db_id, additional_vuln_db_ids,
+    matched_chain_db_id, is_chain, fp), AND the resolved catalog identifiers:
+    catalog_ids / catalog_chain_ids are the human vuln codes (TP-014, CHAIN-011),
+    catalog_db_ids / catalog_chain_db_ids the numeric ids. `metrics` is the KPI
+    block -- computed locally on a dry run, from vulnapps on a real import.
+    """
+    vby = {v["id"]: v for v in vulns}
+    cby = {c["id"]: c for c in (chains or [])}
+    out_findings = []
+    for f in mapping.get("findings", []) or []:
+        vids = ([f["matched_vuln_db_id"]] if f.get("matched_vuln_db_id") else []) + \
+               [v for v in (f.get("additional_vuln_db_ids") or []) if v != f.get("matched_vuln_db_id")]
+        cids = [f["matched_chain_db_id"]] if f.get("matched_chain_db_id") else []
+        out_findings.append({
+            **{k: f.get(k) for k in ("vuln_type", "title", "http_method", "url", "parameter",
+                                     "filename", "severity", "description", "poc", "remediation",
+                                     "code_location")},
+            "is_chain": bool(f.get("is_chain")),
+            "is_false_positive": bool(f.get("is_false_positive")),
+            "fp_group": f.get("fp_group") or None,
+            "reasoning": f.get("reasoning") or None,
+            "matched_vuln_db_id": f.get("matched_vuln_db_id"),
+            "additional_vuln_db_ids": f.get("additional_vuln_db_ids") or [],
+            "matched_chain_db_id": f.get("matched_chain_db_id"),
+            "catalog_db_ids": vids,
+            "catalog_ids": [vby[v]["vuln_id"] for v in vids if v in vby],
+            "catalog_chain_db_ids": cids,
+            "catalog_chain_ids": [cby[c]["chain_id"] for c in cids if c in cby],
+        })
+    return {
+        "dry_run": dry_run,
+        "app_id": args.app_id,
+        "scan_id": scan_id,
+        "url": (f"{args.url}/scans/{scan_id}" if scan_id and args.url else None),
+        "scanner_name": mapping.get("scanner_name"),
+        "scan_date": mapping.get("scan_date"),
+        "findings": out_findings,
+        "metrics": _json_safe(metrics),
+    }
+
+
 def print_kpis(metrics: dict | None, source: str) -> None:
     """The scan's headline numbers, the same ones the scan page shows."""
     if not metrics:
@@ -2032,6 +2090,10 @@ def main():
                              "thinking budget — thinking-medium, thinking-high; "
                              "tools — used-dast, used-sast.")
     parser.add_argument("--confirm", action="store_true", help="Ask for confirmation before submitting each scan")
+    parser.add_argument("--format", "--output", dest="format", choices=["text", "json"], default="text",
+                        help="Output format (default: text). With 'json' (requires --dry-run), the "
+                             "mappings and KPIs are printed as one JSON object on stdout and all "
+                             "progress goes to stderr, so the output is safe to pipe.")
     parser.add_argument("--cost", type=float, default=None, help="Scan cost in USD (optional, private). Overrides any cost the LLM reads from the report.")
     parser.add_argument("--tokens", type=int, default=None, help="Scan token count (optional, private). Overrides the report's value. Never falls back to the importer's own LLM usage, which is the cost of importing, not of the scan.")
     parser.add_argument("--duration", type=float, default=None, help="Scan duration in minutes (optional, private). Overrides the report's duration.")
@@ -2086,6 +2148,17 @@ def main():
                              "chunk in multi-file mode and deleted on successful "
                              "submission. Already-processed files are skipped.")
     args = parser.parse_args()
+
+    # Machine output on stdout, everything human on stderr, so a caller can pipe
+    # stdout straight into jq. Reassigning sys.stdout reroutes every print()/
+    # Spinner (they look it up at call time) without touching each call site;
+    # the one deliberate write to real stdout is the JSON object below.
+    _real_stdout = sys.stdout
+    if args.format == "json":
+        if not args.dry_run:
+            print("  Error: --format json currently requires --dry-run.", file=sys.stderr)
+            sys.exit(2)
+        sys.stdout = sys.stderr
 
     if not args.url:
         print(f"  {colored('Error:', 'RED')} --url or VULNAPPS_URL environment variable required", file=sys.stderr)
@@ -2450,7 +2523,12 @@ def main():
                 print(f"    {colored('!', 'YELLOW')} {w}")
 
         if args.dry_run:
-            print_kpis(local_metrics(mapping, vulns, chains), "preview, computed locally — nothing submitted")
+            metrics = local_metrics(mapping, vulns, chains)
+            if args.format == "json":
+                print(json.dumps(build_import_json(mapping, vulns, chains, metrics, args, dry_run=True),
+                                 indent=2), file=_real_stdout)
+                return
+            print_kpis(metrics, "preview, computed locally — nothing submitted")
             print(f"\n  {colored('⚑', 'YELLOW')} Dry run — skipping submission\n")
             return
 
@@ -2702,7 +2780,12 @@ def main():
                   f"the run may have been interrupted.")
 
     if args.dry_run:
-        print_kpis(local_metrics(mapping, vulns, chains), "preview, computed locally — nothing submitted")
+        metrics = local_metrics(mapping, vulns, chains)
+        if args.format == "json":
+            print(json.dumps(build_import_json(mapping, vulns, chains, metrics, args, dry_run=True),
+                             indent=2), file=_real_stdout)
+            return
+        print_kpis(metrics, "preview, computed locally — nothing submitted")
         print(f"\n  {colored('⚑', 'YELLOW')} Dry run — skipping submission\n")
         return
 

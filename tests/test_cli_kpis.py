@@ -116,3 +116,34 @@ def test_precision_is_a_single_number_once_nothing_is_pending(capsys):
     import_scan.print_kpis({"precision_upper": 0.9, "precision_lower": 0.9, "pending": 0,
                             "adjudication_complete": True}, "t")
     assert "90.0%–" not in capsys.readouterr().out
+
+
+def test_build_import_json_shape():
+    """--format json output: display fields + raw mapping + resolved catalog ids,
+    with a JSON-safe metrics block (compute_metrics returns some sets)."""
+    class A:
+        app_id = 305
+        url = "https://vulnapps.net"
+    vulns = [{"id": 55989, "vuln_id": "TP-014", "title": "Path Traversal"},
+             {"id": 56006, "vuln_id": "CODE-001", "title": "Hardcoded JWT secret"}]
+    chains = [{"id": 23, "chain_id": "CHAIN-012", "title": "CSRF -> XSS"}]
+    mapping = {"scanner_name": "S", "scan_date": "2026-09-29", "findings": [
+        {"title": "Dir listing", "vuln_type": "Info Disclosure", "severity": "critical",
+         "description": "d", "poc": "p", "reasoning": "r",
+         "matched_vuln_db_id": 55989, "additional_vuln_db_ids": [56006],
+         "matched_chain_db_id": None, "is_chain": False},
+        {"title": "Chain", "vuln_type": "Chain", "severity": "critical", "is_chain": True,
+         "matched_vuln_db_id": None, "additional_vuln_db_ids": [], "matched_chain_db_id": 23},
+    ]}
+    metrics = {"tp": 2, "matched_vuln_ids": {55989, 56006}, "tiers": {}}  # a set, as compute_metrics returns
+    out = import_scan.build_import_json(mapping, vulns, chains, metrics, A(), dry_run=True)
+
+    assert out["dry_run"] is True and out["app_id"] == 305
+    f0 = out["findings"][0]
+    assert f0["catalog_ids"] == ["TP-014", "CODE-001"] and f0["catalog_db_ids"] == [55989, 56006]
+    assert f0["title"] == "Dir listing" and f0["description"] == "d"  # display fields preserved
+    f1 = out["findings"][1]
+    assert f1["catalog_chain_ids"] == ["CHAIN-012"] and f1["catalog_chain_db_ids"] == [23]
+    # metrics survives json.dumps (the set is coerced)
+    import json as _j
+    assert _j.loads(_j.dumps(out))["metrics"]["matched_vuln_ids"] == [55989, 56006]
