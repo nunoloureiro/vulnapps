@@ -152,3 +152,15 @@ and pushed to main (and deployed). Caught only because I read the output line.
 **Rule:** Never put a pipe between a verification command and `&&`. Capture the
 status first — `pytest > log; rc=$?; tail log; [ $rc -eq 0 ] && git commit ...` —
 or use `set -o pipefail`. Applies to any check that gates a commit, push or deploy.
+
+## Check the stored data before predicting an edit's effect
+
+**Mistake:** Told the user adding TP-013/CODE-001/TP-023/CHAIN-011 to a scan-330 finding
+would not change the score, "each already credited elsewhere". TP-023 was not — I had
+taken that from a dry run of the importer, which was never submitted. The score moved
+46 -> 47 after the user had agreed on the basis of "no change".
+
+**Rule:** Before stating the effect of a re-credit ("no score change", "TP 30 -> 29"),
+query the stored scan for every vuln involved and check which other findings credit it.
+A dry run, an audit file, or an earlier session's numbers are not the stored state. If
+the check wasn't done, say the effect is unverified instead of asserting it.

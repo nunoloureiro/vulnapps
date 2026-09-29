@@ -538,7 +538,14 @@ Still open on the CURRENT app (305), not blocked by the above:
       TP-053 / TP-054 / CODE-001 for flaws they never showed. Decide: add two entries
       (CWE-798, High, commodity) to app 305's catalog, or leave app 305 alone and just
       re-credit those findings.
-- [ ] The 16 review items on the normal scans (330, 331, 332, 346, 347, 348, 349), one by
-      one — see the audit list (4 wrong, 10 doubtful, 2 missed credits). The ten held scans
-      (333-343, Crucible 350) stay untouched pending the user's conversation with whoever
-      imported them.
+- [x] The 16 review items on the normal scans (330, 331, 332, 346, 347, 348, 349), one by
+      one (4 wrong, 10 doubtful, 2 missed credits) — done 2026-09-29. Rules settled on the
+      way: a claimed-but-not-shown step earns no credit; a white-box scan may credit a
+      precisely identified flaw without running it; a finding the report withdrew for low
+      impact is still credited (now in the mapping prompt); a real finding outside the
+      catalog is Ignored, never FP. Net: scan 346 TP 32->29 (gift-card finding ignored;
+      TP-053/TP-054/TP-022 no longer credited), 348 TP 21->20 (TP-011), 330 TP 46->47
+      (TP-023 on the directory-listing finding). The ten held scans (333-343, Crucible
+      350) stay untouched pending the user's conversation with whoever imported them —
+      except one change made before the hold: the v940 "Hardcoded JWT signing secret"
+      finding re-credited CODE-001 -> TP-012.
