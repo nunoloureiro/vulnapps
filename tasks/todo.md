@@ -493,3 +493,52 @@ Found while scoping:
 - [x] Importer reports its version: vulnapps v<major>.<commits> of its checkout,
       commit, dirty flag.
 - [ ] Tests, AppBuilder, deploy, verify a real dry-run import.
+
+## PENDING — when the new TaintedPort version (secrets moved to env) is live
+
+Waiting on the user: they will run the TaintedPort agent with the "move three hardcoded
+secrets" prompt (JWT signing secret, gift-card AES key, tracking-link secret -> runtime env
+vars via php-fpm env[], fail closed, new values), then clone the app in vulnapps as a NEW
+version. Nothing below happens before that; the current TaintedPort app (id 305) keeps its
+catalog as-is.
+
+Before starting, confirm with the user:
+- [ ] Which vulnapps app id is the new version, and its version string.
+- [ ] The agent's verification report passed, in particular:
+  - the SSRF can still read `partner_public.pem`;
+  - HS256-with-the-PEM + `iss=partner` is still accepted as admin, via both /files/ and the
+    SSRF (CHAIN-016 depends on it);
+  - length extension (#53) and CBC bit-flip (#54) still work without the key/secret.
+
+Catalog changes for the NEW version only (vulnapps new app + KnownVulnerabilities.txt, together):
+- [ ] Remove CODE-001 (#33 Hardcoded JWT Signing Secret) — no longer present.
+- [ ] Remove CHAIN-004 (#27 SSRF + #33) and CHAIN-011 (#13 Directory Listing + #33): both
+      forged admin tokens with the stolen JWT secret, which no longer exists.
+- [ ] Add CHAIN-016: SSRF -> read partner_public.pem -> RS256->HS256 algorithm confusion ->
+      admin token forgery. Members #27 + #45, Critical (27). The SSRF sibling of CHAIN-006
+      (#13 + #45), the way CHAIN-004 was the sibling of CHAIN-011.
+- [ ] Text-only updates (drop #33 as an enabler; keep #11/#12/#45):
+  - #23 (admin trusts the is_admin claim);
+  - #58 (confused-identity password/email change — its enablers list #27+#33 / #13+#33);
+  - #13 (its Critical rating cites the JWT secret; the database dump alone still justifies Critical);
+  - #27 (its description walks through reading jwt.php);
+  - #53/#54 — must not imply the secret/key is recoverable from source, and #53 must keep
+    stating the 14-byte secret length.
+- [ ] Do NOT add catalog entries for the hardcoded gift-card key / tracking secret in the new
+      version; they no longer exist there.
+- [ ] Reconcile counts per CLAUDE.md: vulns and chains in KnownVulnerabilities.txt ==
+      the new app in vulnapps. Expected 56 vulns (57 - CODE-001) and 14 chains
+      (15 - 2 + 1), unless the clone differs.
+- [ ] Verify the new app's chain list in the UI shows CHAIN-016 with the right members and
+      severity.
+
+Still open on the CURRENT app (305), not blocked by the above:
+- [ ] Hardcoded gift-card key / tracking secret: they were real in the current version
+      but have no catalog entry, so two findings on Snyk COS a2096f0f (27 Sep) are credited
+      TP-053 / TP-054 / CODE-001 for flaws they never showed. Decide: add two entries
+      (CWE-798, High, commodity) to app 305's catalog, or leave app 305 alone and just
+      re-credit those findings.
+- [ ] The 16 review items on the normal scans (330, 331, 332, 346, 347, 348, 349), one by
+      one — see the audit list (4 wrong, 10 doubtful, 2 missed credits). The ten held scans
+      (333-343, Crucible 350) stay untouched pending the user's conversation with whoever
+      imported them.
