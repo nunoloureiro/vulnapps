@@ -208,7 +208,11 @@ three completely unrelated bugs in different code paths. When you write \
 from the JWT decoder never validating the signature"), not just the shared \
 category — if you cannot name a shared mechanism, matched_vuln_db_id must \
 be null.
-- If a finding does not match any known vulnerability, set matched_vuln_db_id to null.
+- If a finding does not match any known vulnerability, set matched_vuln_db_id to null. \
+- A finding the report itself leaves out of its confirmed results for SEVERITY or \
+IMPACT reasons ("real, but withdrawn from the confirmed count: low impact") is still \
+a finding the scanner detected: map it like any other. Only a statement that the issue \
+is NOT real makes it a false positive; a severity cut-off does not.
 - Use the database `id` field (integer) for matched_vuln_db_id, NOT the `vuln_id` string.
 - CHAINS are different from vulnerabilities and matched differently. A known chain \
 combines >=2 known vulnerabilities into one bigger exploit (e.g. "steal a secret via \

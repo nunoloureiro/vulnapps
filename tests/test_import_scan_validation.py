@@ -694,3 +694,12 @@ def test_prompt_blocks_crediting_vulns_merely_visible_in_dumped_source():
     assert "hardcoded secret, credential or key" in prompt
     assert "how the RUNNING application BEHAVES" in prompt
     assert "not evidence this scan exercised it" in prompt
+
+
+def test_withdrawn_for_low_impact_is_still_mapped_not_fp():
+    """Decided on Claude Code Security's open redirect: the report called it real
+    but withdrew it from its confirmed count for low impact. That is a severity
+    cut-off, not a false-positive verdict -- the scanner detected it."""
+    prompt = import_scan.SYSTEM_PROMPT_MAP
+    assert "withdrawn from the confirmed count" in prompt
+    assert "a severity cut-off does not" in prompt
