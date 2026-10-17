@@ -561,3 +561,28 @@ Still open on the CURRENT app (305), not blocked by the above:
 Review: 15 frontend utility tests, the existing scan-cost permission test, and production
 build passed. Desktop preview uses synthetic data because app 326 is not visible anonymously.
 User reviewed the synthetic preview and approved commit and PR publication.
+
+## Reviewed weighted F₀.₅ (2026-10-17)
+- [x] Add reviewer FP penalties and canonical weighted precision/F₀.₅.
+- [x] Gate headlines, group statistics, chart points and comparison winners on completed review.
+- [x] Keep the scan list compact and conservative estimates inside detail disclosures.
+- [x] Preserve current-main combined app coverage and chain promotion behavior.
+- [x] Verify migration/state transitions, backend/frontend checks and screenshot evidence.
+
+Validation: 225 self-contained backend tests pass on Python 3.12 (CI's production-data
+API exclusion), plus 24 affected state-transition/migration tests after the final chain
+cleanup assertion. All 18 frontend tests, production build and diff checks pass.
+Independent backend/frontend reviews completed; fixed rematch retaining an old reviewer
+penalty and covered chain promotion on current main. Real browser checks against a
+disposable migrated DB verify review/save/reset/reload, group sample eligibility, chart
+exclusions, Quality/Counts coverage footer, weighted winner and severity suppression.
+Four screenshots under docs/screenshots/weighted-f05 use synthetic data only.
+
+## Weighted F₀.₅ PR rebase (2026-10-27)
+- [x] Preserve upstream weighted detection, cost per point, and team navigation.
+- [x] Keep the compact Quality view and expose upstream diagnostics in Counts.
+- [x] Verify scoring, frontend utilities and production build before completing rebase.
+
+Validation: 229 self-contained backend tests on Python 3.12, 19 frontend utility tests,
+and the production build pass. Renumbered the new FP penalty migration to 044 after
+upstream added migration 043 for app sources.
