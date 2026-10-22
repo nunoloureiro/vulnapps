@@ -1772,6 +1772,7 @@ LLM usage (it used to): that is the cost of importing, not of the scan.
 | `--app-id` | Target app ID (required) |
 | `--dir` | Directory with `.md` files (combined into one scan) |
 | `--file` | Single `.md` file to import |
+| `--findings-json` | JSON list of findings in the `SYSTEM_PROMPT_EXTRACT` shape, checked by `load_findings_json` (unknown keys refused); replaces LLM extraction, needs `--scanner`, not with `--dir`/`--file`/`--probely`; scan records `extractor_version = "structured"` |
 | `--scanner` | Override LLM-detected scanner name |
 | `--scan-start` | Override LLM/stats-detected start time (`YYYY-MM-DD HH:MM`, plain `YYYY-MM-DD` also accepted) |
 | `--scan-model` | Model that PERFORMED the scan (overrides the value read from the report/metrics-stream file); auto-added as a label |

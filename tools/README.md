@@ -93,8 +93,9 @@ python tools/import_scan.py \
 | `--app-description` | App description — only used when creating a new app | |
 | `--app-tech` | Comma-separated tech stack — only used when creating a new app | |
 | `--app-visibility` | `public`, `private`, or `team` — only used when creating | `private` |
-| `--dir` | Directory containing `.md` scan files | (required if no `--file`/`--probely`) |
+| `--dir` | Directory containing `.md` scan files | (required if no `--file`/`--probely`/`--findings-json`) |
 | `--file` | Single `.md` file (instead of `--dir`) | |
+| `--findings-json` | JSON list of findings in the extraction shape; skips LLM extraction (needs `--scanner`) | |
 | `--scanner` | Scanner name (overrides LLM-detected name) | |
 | `--scan-date` | Scan date in YYYY-MM-DD (overrides LLM-detected date) | |
 | `--scan-model` | Model that **ran the scan**, e.g. `claude-opus-5` (overrides the value read from the report) | |
