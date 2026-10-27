@@ -561,3 +561,30 @@ Still open on the CURRENT app (305), not blocked by the above:
 Review: 15 frontend utility tests, the existing scan-cost permission test, and production
 build passed. Desktop preview uses synthetic data because app 326 is not visible anonymously.
 User reviewed the synthetic preview and approved commit and PR publication.
+
+## Reviewed weighted F₀.₅ (2026-10-17)
+- [x] Add reviewer FP penalties and canonical weighted precision/F₀.₅.
+- [x] Gate headlines, group statistics, chart points and comparison winners on completed review.
+- [x] Keep the scan list compact and conservative estimates inside detail disclosures.
+- [x] Preserve current-main combined app coverage and chain promotion behavior.
+- [x] Verify migration/state transitions, backend/frontend checks and screenshot evidence.
+
+Validation: 225 self-contained backend tests pass on Python 3.12 (CI's production-data
+API exclusion), plus 24 affected state-transition/migration tests after the final chain
+cleanup assertion. All 18 frontend tests, production build and diff checks pass.
+Independent backend/frontend reviews completed; fixed rematch retaining an old reviewer
+penalty and covered chain promotion on current main. Real browser checks against a
+disposable migrated DB verify review/save/reset/reload, group sample eligibility, chart
+exclusions, Quality/Counts coverage footer, weighted winner and severity suppression.
+Four screenshots under docs/screenshots/weighted-f05 use synthetic data only.
+
+## PR #9 rebase and individual scan layout
+- [x] Rebase reviewed weighted F₀.₅ onto main, preserving cost-per-point support.
+- [x] Restore main's full individual scan table and keep reviewed scores in other views.
+- [x] Verify 19 frontend tests, 77 focused backend tests, production build, and individual/grouped browser views.
+- [ ] Publish follow-up commit and screenshot comment on PR #9; upstream branch requires maintainer write access.
+
+Rebase review: current main includes PR #12. Preserved its full scan table and cost
+visibility while retaining reviewed F₀.₅ in grouped summaries, charts and comparisons.
+The configured GitHub account has READ access upstream, so prepared branch publication
+uses the fork; a maintainer must apply the rebased branch to PR #9.
