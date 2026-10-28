@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -31,6 +31,10 @@ async def list_scans(
     label_match: Literal["all", "any"] = "all",
     filter: str = "",
     include_metrics: bool = False,
+    page: Optional[int] = Query(default=None, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    sort: Literal["date", "scanner", "app", "tp", "fp", "pending", "fn", "weighted_found", "cost_per_point"] = "date",
+    direction: Literal["asc", "desc"] = "desc",
 ):
     user = request.state.user
     db = await get_connection()
@@ -52,6 +56,7 @@ async def list_scans(
             label_match=label_match,
             filter=filter,
             include_metrics=include_metrics,
+            page=page, page_size=page_size, sort=sort, direction=direction,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -63,6 +68,7 @@ async def list_scans(
     return {
         "scans": [dict(s) for s in result["scans"]],
         "coverage": result.get("coverage"),
+        "pagination": result.get("pagination"),
         "scan_labels_map": result["scan_labels_map"],
         "scanners": result["scanners"],
         "apps_list": [dict(a) for a in result["apps_list"]],
