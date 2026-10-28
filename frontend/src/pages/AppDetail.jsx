@@ -363,7 +363,7 @@ export default function AppDetail() {
           <div className="detail-label">Visibility</div>
           <div className="detail-value">
             <span className={'badge badge-' + (app.visibility === 'public' ? 'info' : app.visibility === 'team' ? 'medium' : 'low')}>
-              {app.visibility}
+              {app.visibility === 'team' ? (app.team_name || 'team') : app.visibility}
             </span>
           </div>
 

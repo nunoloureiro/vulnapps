@@ -306,9 +306,12 @@ async def list_scans(
             # SQL columns too — otherwise the breakdown would no longer add up
             # to the tp_count shown next to it.
             split = {f"tp_{sev}": count for sev, count in m["tp_by_severity"].items()}
+            chained = m["tiers"]["chained"]
             scored.append(dict(
                 scan,
                 metrics={key: value for key, value in m.items() if key not in detail_keys},
+                chains_found=chained["found"],
+                chains_total=chained["count"],
                 **split,
             ))
         scans = scored

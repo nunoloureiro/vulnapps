@@ -1607,6 +1607,9 @@ Apps have a `visibility` field: `public` (default), `team`, or `private`.
 
 `app/visibility.py` provides `app_visibility_filter(user)` which returns a SQL WHERE clause and params for filtering. Applied in app list and app detail queries.
 
+Both the app list and app detail queries LEFT JOIN `teams` for `team_name`; the Apps list and
+the app detail Visibility badge show the team's name (falling back to `team`) for team-visible apps.
+
 ---
 
 ## Teams
@@ -2216,7 +2219,10 @@ shows that team's apps using its current cards and team filter.
 
 The Individual scans tab retains the full diagnostic table: Scanner, App (when
 unscoped), Date, TP, FP, Pending, FN, Weighted Detection (credited / available points
-and percentage), Cost / point, Severity, and Labels. It has no Quality/Counts switch
+and percentage), Cost / point, Severity, Chains, and Labels. Chains is sortable and shows
+`chains_found / chains_total` — the scorer's `tiers.chained` found/count for the current
+revision, which `list_scans` puts on each row as flat `chains_found`/`chains_total` columns
+(like the `tp_*` split, kept out of `metrics` so grouped averaging stays scalar). It has no Quality/Counts switch
 or weighted F₀.₅ headline. Grouped summaries retain Quality/Counts controls and the
 reviewed weighted F₀.₅ metrics described below. Expanded groups use the same full
 scan table as Individual scans.

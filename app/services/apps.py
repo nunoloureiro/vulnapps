@@ -228,8 +228,9 @@ async def get_app(db, user, app_id: int) -> dict:
     """
     vis_clause, vis_params = app_visibility_filter(user)
     cursor = await db.execute(
-        f"""SELECT apps.*, users.name as creator_name
+        f"""SELECT apps.*, users.name as creator_name, teams.name as team_name
             FROM apps LEFT JOIN users ON apps.created_by=users.id
+            LEFT JOIN teams ON apps.team_id=teams.id
             WHERE apps.id = ? AND {vis_clause}""",
         [app_id] + vis_params,
     )
