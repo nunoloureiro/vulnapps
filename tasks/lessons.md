@@ -169,3 +169,9 @@ the check wasn't done, say the effect is unverified instead of asserting it.
 When updating a PR that touches the same scan table as a newly merged change, fetch
 main and rebase first. Preserve the approved individual layout while integrating
 scoring changes in their requested views.
+
+## Timestamp is a default, not a restriction on ordering
+When paginating a sortable table, preserve every existing order in both directions.
+Apply ordering globally before paging, use deterministic ties and explicit missing-value
+rules, and test non-default orders across page boundaries. Use native header buttons
+and aria-sort so keyboard and screen-reader users can operate and identify the sort.

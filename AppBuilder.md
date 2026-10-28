@@ -2261,3 +2261,39 @@ aggregates retain count metrics; weighted F₀.₅ is not inferred from pooled c
 Weights express a review policy, not dollar costs. Compare runs within the same app
 version and benchmark corpus. Mock previews use synthetic data and never modify
 production.
+
+## Scan list pagination
+
+Individual scans uses server-side pagination: 50 rows by default, with 25/50/100/200
+row choices, Previous/Next controls and a visible range and total. Store `page`,
+`page_size`, `sort` and `direction` in the URL. Filter, sort, page-size and view
+changes reset the page. Browser navigation restores the selected page and order.
+Clear row selection when the request changes; select-all applies to the displayed
+page. After deletion empties the last page, return to the last available page.
+
+`GET /api/scans` accepts optional `page` (>=1), `page_size` (1..200, default 50),
+`sort` (date/scanner/app/tp/fp/pending/fn/weighted_found/cost_per_point) and
+`direction` (asc/desc, default desc). Paginated responses include
+`pagination: {total, page, page_size, pages}`. Omitting `page` preserves complete
+results for existing API clients and the grouped/chart views. Totals count the
+authorized, filtered scans after latest-per-scanner/app selection.
+
+Default order is scan timestamp descending, falling back to creation timestamp
+when missing or unparseable, with deterministic creation timestamp and ID ties.
+Normalize timestamp representations for sorting, including existing date-only values.
+Sorting applies across the entire matching result, before pagination. SQL handles
+simple ordering and selects the requested page before scoring. Calculated metrics
+use the existing canonical backend scorer; metric sorting scores the matching set
+before selecting its page. Do not duplicate scoring rules in SQL or add a persistent
+metric cache. Hidden costs must never influence cost-per-point ordering.
+
+Grouped summaries and performance charts retain their complete filtered dataset.
+Combined app coverage also remains scoped to all matching scans and is explicitly
+labelled that way; changing pages must not change its meaning. Weighted scoring,
+chain credit, review rules and existing metric columns remain unchanged.
+
+All existing sortable scan columns remain available in both ascending and descending
+order; timestamp is only the initial default. Header controls are native buttons for
+keyboard operation, with `aria-sort` on the active column and decorative arrows hidden
+from assistive technology. Every order applies globally before page selection, with
+stable ties; unavailable calculated values sort last in either direction.

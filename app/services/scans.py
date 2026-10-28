@@ -4,6 +4,7 @@ import hashlib
 import os
 from collections import Counter
 from datetime import datetime
+from math import isfinite
 from pathlib import Path
 
 from app.config import STATE_DIR, MAX_STATE_SIZE
@@ -143,8 +144,16 @@ async def list_scans(
     db, user,
     app_id=None, scanner="", latest="", q="",
     label="", filter="", label_match="all", include_metrics=False,
+    page=None, page_size=50, sort="date", direction="desc",
 ) -> dict:
     """List scans with filters. Returns dict with scans, metadata, and filter options."""
+    if sort not in {"date", "scanner", "app", "tp", "fp", "pending", "fn", "weighted_found", "cost_per_point"}:
+        raise ValueError("Invalid scan sort")
+    if direction not in {"asc", "desc"}:
+        raise ValueError("Invalid scan sort direction")
+    if page is not None and (page < 1 or not 1 <= page_size <= 200):
+        raise ValueError("Invalid scan page or page_size")
+
     extra_filters = ""
     extra_params = []
     app = None
@@ -275,42 +284,128 @@ async def list_scans(
     SEVERITIES = ["critical", "high", "medium", "low", "info"]
     sev_params = SEVERITIES + SEVERITIES
 
+    scope_query = f"""SELECT scans.*,
+                            apps.name AS app_name, apps.version AS app_version,
+                            apps.visibility AS app_visibility, apps.team_id AS app_team_id
+                     FROM scans
+                     LEFT JOIN apps ON scans.app_id = apps.id
+                     LEFT JOIN users ON scans.submitted_by = users.id
+                     WHERE {vis_clause}{extra_filters}"""
+    timestamp = "COALESCE(julianday(scan_date), julianday(created_at))"
+    timestamp_order = f"{timestamp} DESC, julianday(created_at) DESC, id DESC"
     if latest:
-        sql = f"""WITH base AS ({base_query}),
-                  ranked AS (
-                      SELECT *, ROW_NUMBER() OVER (
-                          PARTITION BY scanner_name, app_id
-                          ORDER BY scan_date DESC, created_at DESC
-                      ) as rn FROM base
-                  )
-                  SELECT * FROM ranked WHERE rn = 1
-                  ORDER BY created_at DESC"""
-    else:
-        sql = base_query + " ORDER BY scans.created_at DESC"
+        scope_query = f"""SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY scanner_name, app_id ORDER BY {timestamp_order}
+            ) AS rn FROM ({scope_query})
+        ) WHERE rn = 1"""
+    scope_params = vis_params + extra_params
+    cursor = await db.execute(
+        f"SELECT id, app_id FROM ({scope_query})", scope_params,
+    )
+    full_scope = await cursor.fetchall()
+    pagination = None
+    if page is not None:
+        total = len(full_scope)
+        pagination = {"total": total, "page": page, "page_size": page_size,
+                      "pages": (total + page_size - 1) // page_size}
 
-    # The base query's SELECT contains the severity subqueries (which use
-    # placeholders), then the WHERE clause's visibility + extra-filter params.
-    cursor = await db.execute(sql, sev_params + vis_params + extra_params)
-    scans = await cursor.fetchall()
-    if include_metrics:
+    # User teams also govern whether cost can participate in a sort.
+    user_teams = []
+    if user:
+        cursor = await db.execute(
+            """SELECT teams.id, teams.name FROM teams
+               JOIN team_members ON team_members.team_id = teams.id
+               WHERE team_members.user_id = ? ORDER BY teams.name""",
+            (user["sub"],),
+        )
+        user_teams = await cursor.fetchall()
+    team_ids = {team["id"] for team in user_teams}
+
+    def can_view_cost(scan):
+        return bool(user and (
+            user["role"] == "admin"
+            or scan["submitted_by"] == user["sub"]
+            or (scan["app_visibility"] == "team" and scan["app_team_id"] in team_ids)
+        ))
+
+    metric_sorts = {"tp": "tp", "fp": "fp_groups", "pending": "pending", "fn": "fn",
+                    "weighted_found": "weighted_found"}
+    metrics = None
+    if page is not None and (page - 1) * page_size >= len(full_scope):
+        scans = []
+    elif sort in metric_sorts or sort == "cost_per_point":
+        cursor = await db.execute(
+            f"SELECT * FROM ({scope_query}) ORDER BY {timestamp_order}", scope_params,
+        )
+        candidates = await cursor.fetchall()
+        metrics = await scoring_service.score_many(db, candidates)
+
+        def metric_value(scan):
+            scan_metrics = metrics[scan["id"]]
+            if sort != "cost_per_point":
+                return scan_metrics[metric_sorts[sort]]
+            found = scan_metrics["weighted_found"]
+            cost = scan["cost"] if can_view_cost(scan) else None
+            return (cost / found if isinstance(cost, (int, float))
+                    and isfinite(cost) and cost >= 0 and found > 0 else None)
+
+        # Keep missing values last in either direction and retain timestamp ties.
+        valued = [(scan, metric_value(scan)) for scan in candidates]
+        ordered = sorted((item for item in valued if item[1] is not None),
+                         key=lambda item: item[1], reverse=direction == "desc")
+        ordered.extend(item for item in valued if item[1] is None)
+        if page is not None:
+            ordered = ordered[(page - 1) * page_size:page * page_size]
+        selected_ids = [scan["id"] for scan, _ in ordered]
+        if selected_ids:
+            placeholders = ",".join("?" for _ in selected_ids)
+            cursor = await db.execute(
+                base_query + f" AND scans.id IN ({placeholders})",
+                sev_params + scope_params + selected_ids,
+            )
+            by_id = {scan["id"]: scan for scan in await cursor.fetchall()}
+            scans = [by_id[scan_id] for scan_id in selected_ids if scan_id in by_id]
+        else:
+            scans = []
+    else:
+        def sql_order(prefix=""):
+            date = f"COALESCE(julianday({prefix}scan_date), julianday({prefix}created_at))"
+            tie = f"julianday({prefix}created_at) DESC, {prefix}id DESC"
+            chronological = f"{date} DESC, {tie}"
+            return {
+                "date": f"{date} {direction}, {tie}",
+                "scanner": f"lower({prefix}scanner_name) {direction}, COALESCE({prefix}scanner_version, '') {direction}, {chronological}",
+                "app": f"lower(app_name) {direction}, COALESCE(app_version, '') {direction}, {chronological}",
+            }[sort]
+
+        order = sql_order()
+        selected_query = f"SELECT id FROM ({scope_query}) ORDER BY {order}"
+        params = sev_params + scope_params + scope_params
+        if page is not None:
+            selected_query += " LIMIT ? OFFSET ?"
+            params += [page_size, (page - 1) * page_size]
+        # Select page IDs before adding the finding counts and severity columns.
+        sql = base_query + f" AND scans.id IN ({selected_query})"
+        sql += f" ORDER BY {sql_order('scans.')}"
+        cursor = await db.execute(sql, params)
+        scans = await cursor.fetchall()
+    if include_metrics and metrics is None:
         metrics = await scoring_service.score_many(db, scans)
-        # `metrics` stays scalar-only: the grouped view averages every field in
-        # it, so a nested value there would be meaningless to aggregate.
+    if metrics is not None:
         detail_keys = {"tiers", "matched_vuln_ids", "missed_vuln_ids",
                        "credit_by_vuln", "credit_by_chain", "tp_by_severity"}
         scored = []
         for scan in scans:
             m = metrics[scan["id"]]
-            # The scorer's tp supersedes the SQL one here (it also applies the
-            # existed_since_revision rule), so its split has to supersede the
-            # SQL columns too — otherwise the breakdown would no longer add up
-            # to the tp_count shown next to it.
-            split = {f"tp_{sev}": count for sev, count in m["tp_by_severity"].items()}
-            scored.append(dict(
-                scan,
-                metrics={key: value for key, value in m.items() if key not in detail_keys},
-                **split,
-            ))
+            scan_out = dict(
+                scan, tp_count=m["tp"], fp_count=m["fp_groups"],
+                pending_count=m["pending"], fn_count=m["fn"],
+                **{f"tp_{sev}": count for sev, count in m["tp_by_severity"].items()},
+            )
+            if include_metrics:
+                scan_out["metrics"] = {key: value for key, value in m.items() if key not in detail_keys}
+            scored.append(scan_out)
         scans = scored
 
     # Batch-fetch labels for all returned scans
@@ -356,27 +451,9 @@ async def list_scans(
     )
     apps_list = await cursor.fetchall()
 
-    # User's teams for filter dropdown
-    user_teams = []
-    if user:
-        cursor = await db.execute(
-            """SELECT teams.id, teams.name FROM teams
-               JOIN team_members ON team_members.team_id = teams.id
-               WHERE team_members.user_id = ?
-               ORDER BY teams.name""",
-            (user["sub"],),
-        )
-        user_teams = await cursor.fetchall()
-
-    team_ids = {team["id"] for team in user_teams}
     visible_scans = []
     for scan in scans:
-        can_view_cost = bool(user and (
-            user["role"] == "admin"
-            or scan["submitted_by"] == user["sub"]
-            or (scan["app_visibility"] == "team" and scan["app_team_id"] in team_ids)
-        ))
-        scan_out = _scan_with_cost_permission(scan, can_view_cost)
+        scan_out = _scan_with_cost_permission(scan, can_view_cost(scan))
         scan_out.pop("app_visibility")
         scan_out.pop("app_team_id")
         visible_scans.append(scan_out)
@@ -387,12 +464,13 @@ async def list_scans(
     # version of an app is a different app id, so "one app" is exact, and
     # across apps there is no single catalog to be covered.
     coverage = None
-    listed_apps = {s["app_id"] for s in visible_scans}
+    listed_apps = {s["app_id"] for s in full_scope}
     if len(listed_apps) == 1:
-        coverage = await _coverage(db, next(iter(listed_apps)), [s["id"] for s in visible_scans])
+        coverage = await _coverage(db, next(iter(listed_apps)), [s["id"] for s in full_scope])
 
     return {
         "scans": visible_scans,
+        "pagination": pagination,
         "coverage": coverage,
         "app": app,
         "scan_labels_map": scan_labels_map,

@@ -588,3 +588,32 @@ Rebase review: current main includes PR #12. Preserved its full scan table and c
 visibility while retaining reviewed F₀.₅ in grouped summaries, charts and comparisons.
 The configured GitHub account has READ access upstream, so prepared branch publication
 uses the fork; a maintainer must apply the rebased branch to PR #9.
+
+### Scan pagination (2026-10-28)
+- [x] Review upstream scan loading, scoring and timestamp ordering.
+- [x] Add optional backend pagination with stable timestamp ordering and page-only scoring for the default list.
+- [x] Move individual-list sorting and paging to the API; preserve full-scope grouped/chart/coverage behavior.
+- [x] Verify pagination boundaries, visibility, metric ordering, frontend build and UI.
+- [x] Review changes and prepare a focused PR against nunoloureiro/vulnapps main.
+
+Plan: keep the canonical backend scorer, without a new cache or duplicated scoring rules.
+SQL handles normal ordering and paging; calculated-metric ordering uses the existing scorer.
+
+Review: 233 self-contained backend tests pass on Python 3.12 (same selection as CI),
+21 frontend tests pass, and the production build, shell syntax and diff checks pass.
+Browser verification with the real API and 73 synthetic scans confirms timestamp
+ordering, 50/23-row page boundaries, sort/page-size resets, out-of-range recovery,
+and full-set grouped summaries. Coverage remains scoped to all 73 scans while the
+default request scores 50, down from 73 before pagination. Calculated-metric sorting
+still scores the matching set for correctness; no persistent cache was introduced.
+
+### Sort conventions follow-up (2026-10-28)
+- [x] Confirm all existing scan orders remain supported by the API and UI.
+- [x] Verify every order and direction across page boundaries.
+- [x] Use native keyboard-operable sort buttons with aria-sort.
+- [x] Validate and prepare the update to PR #14.
+
+Sort review: all nine existing orders pass ascending/descending checks against real
+canonical metrics, with stable ties and concatenated pages matching the global order.
+242 backend tests, 21 frontend tests and the production build pass. Browser confirms
+Enter/Space operate the Scanner sort, reset the page, and update aria-sort correctly.

@@ -10,6 +10,7 @@ import { scanStatistics, scanQuality, canonicalScanCounts, metricExtremes } from
 import { ScanPerformanceChart } from '../components/ScanPerformanceChart';
 import { chartMetrics, chartResources } from '../utils/scanChart';
 import { LabelBadge } from '../components/LabelBadge';
+import { scanPagination, scanPageSizes, changeScanParams } from '../utils/scanPagination';
 
 // Ordering for which labels survive when the cell can only show a few.
 // Lower rank = higher priority (kept). judge-* and thinking-* are dropped first.
@@ -52,8 +53,7 @@ export default function ScansList() {
   const chartX = Object.hasOwn(chartResources, searchParams.get('chart_x')) ? searchParams.get('chart_x') : 'cost';
   const chartY = Object.hasOwn(chartMetrics, searchParams.get('chart_y')) ? searchParams.get('chart_y') : 'weighted_f05';
   const setView = view => {
-    const p = new URLSearchParams(searchParams);
-    p.delete('view');
+    const p = changeScanParams(searchParams, { view: '' });
     if (view === 'chart') p.set('view', 'chart');
     else if (view === 'individual') p.delete('group_by');
     else if (!groupBy) p.set('group_by', 'scanner');
@@ -61,13 +61,13 @@ export default function ScansList() {
   };
   const resetFilters = () => {
     const p = new URLSearchParams(searchParams);
-    ['app_id', 'scanner', 'latest', 'q', 'filter', 'label', 'label_match'].forEach(key => p.delete(key));
+    ['app_id', 'scanner', 'latest', 'q', 'filter', 'label', 'label_match', 'page'].forEach(key => p.delete(key));
     setSearchParams(p);
   };
   const [teams, setTeams] = useState([]);
   const [bulkLabel, setBulkLabel] = useState('');
-  const [sortKey, setSortKey] = useState('date');
-  const [sortDir, setSortDir] = useState('desc');
+  const { page, pageSize, sort: sortKey, direction: sortDir } = scanPagination(searchParams);
+  const paginated = !groupBy && !chartView;
 
   const params = {
     app_id: searchParams.get('app_id') || '',
@@ -84,6 +84,12 @@ export default function ScansList() {
   labelValues.forEach(label => queryParams.append('label', label));
   if (labelValues.length) queryParams.set('label_match', labelMatch);
   queryParams.set('include_metrics', 'true');
+  queryParams.set('sort', sortKey);
+  queryParams.set('direction', sortDir);
+  if (paginated) {
+    queryParams.set('page', page);
+    queryParams.set('page_size', pageSize);
+  }
   const query = queryParams.toString();
   const requestKey = JSON.stringify([query, user?.id ?? null]);
   const { loading, data: resultData, error } = scanResultForKey(request, requestKey);
@@ -108,11 +114,8 @@ export default function ScansList() {
   }, [user]);
 
   const setFilter = (key, val) => {
-    const p = new URLSearchParams(searchParams);
-    p.delete(key);
+    const p = changeScanParams(searchParams, { [key]: val });
     if (key === 'app_id' && p.get('filter')?.startsWith('team:')) p.delete('filter');
-    if (Array.isArray(val)) val.forEach(value => p.append(key, value));
-    else if (val) p.set(key, val);
     setSearchParams(p);
   };
 
@@ -123,30 +126,13 @@ export default function ScansList() {
 
   const appId = params.app_id;
 
-  const scans = useMemo(() => {
-    const getVal = (s) => {
-      switch (sortKey) {
-        case 'scanner': return `${(s.scanner_name || '').toLowerCase()} ${s.scanner_version || ''}`;
-        case 'app': return `${(s.app_name || '').toLowerCase()} ${s.app_version || ''}`;
-        case 'weighted_found': return s.weighted_found ?? (sortDir === 'asc' ? Infinity : -Infinity);
-        case 'cost_per_point': return s.cost_per_point ?? (sortDir === 'asc' ? Infinity : -Infinity);
-        case 'tp': return s.tp_count ?? -1;
-        case 'fp': return s.fp_count ?? -1;
-        case 'pending': return s.pending_count ?? -1;
-        case 'fn': return s.fn_count ?? -1;
-        case 'date':
-        default: return s.scan_date || '';
-      }
-    };
-    const sorted = [...rawScans].sort((a, b) => {
-      const av = getVal(a); const bv = getVal(b);
-      if (av < bv) return -1;
-      if (av > bv) return 1;
-      return 0;
-    });
-    if (sortDir === 'desc') sorted.reverse();
-    return sorted;
-  }, [rawScans, sortKey, sortDir]);
+  const scans = rawScans;
+  const pagination = paginated ? resultData?.pagination : null;
+  useEffect(() => {
+    if (pagination && page > Math.max(1, pagination.pages)) {
+      setSearchParams(changeScanParams(searchParams, { page: Math.max(1, pagination.pages) }), { replace: true });
+    }
+  }, [pagination, page, searchParams, setSearchParams]);
 
   const groups = useMemo(() => groupScans(scans, labelsMap, groupBy), [scans, groupBy, labelsMap]);
   const toggleGroup = key => setExpanded(previous => {
@@ -180,18 +166,18 @@ export default function ScansList() {
     }} />
   );
 
-  const toggleSort = (key) => {
-    if (sortKey === key) {
-      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortKey(key);
-      setSortDir(['date','tp','fp','pending','fn','weighted_found'].includes(key) ? 'desc' : 'asc');
-    }
+  const toggleSort = key => {
+    const direction = sortKey === key
+      ? sortDir === 'asc' ? 'desc' : 'asc'
+      : ['date', 'tp', 'fp', 'pending', 'fn', 'weighted_found'].includes(key) ? 'desc' : 'asc';
+    setSearchParams(changeScanParams(searchParams, { sort: key, direction }));
   };
   const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
   const sortableTh = (key, label, extraProps = {}) => (
-    <th {...extraProps} onClick={() => toggleSort(key)} style={{ cursor: 'pointer', userSelect: 'none', ...(extraProps.style || {}) }}>
-      {label}{sortArrow(key)}
+    <th {...extraProps} aria-sort={sortKey === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}>
+      <button type="button" className="scan-sort-button" onClick={() => toggleSort(key)} aria-label={`Sort by ${label}`}>
+        {label}<span aria-hidden="true">{sortArrow(key)}</span>
+      </button>
     </th>
   );
   const toggleSelect = (id) => {
@@ -242,7 +228,7 @@ export default function ScansList() {
                 <tr>
                   {user && <th style={{ width: 36 }}>
                     <input type="checkbox"
-                      aria-label="Select all scans" checked={scanRows.length > 0 && scanRows.every(s => selected.has(s.id))}
+                      aria-label={paginated ? 'Select all scans on this page' : 'Select all scans'} checked={scanRows.length > 0 && scanRows.every(s => selected.has(s.id))}
                       onChange={() => {
                         setSelected(previous => {
                           const next = new Set(previous);
@@ -343,11 +329,11 @@ export default function ScansList() {
                 <tr className="scans-totals-row">
                   {user && <td></td>}
                   <td className="text-muted" data-label="" colSpan={appId ? 2 : 3}>
-                    Any of these {coverage.scan_count} scan{coverage.scan_count === 1 ? '' : 's'}
+                    Across all {coverage.scan_count} matching scan{coverage.scan_count === 1 ? '' : 's'}
                   </td>
                   <td className="text-success" data-label="Found by any">
                     <span className="tp-cell">
-                      <span title="Distinct catalog vulns found by at least one listed scan">
+                      <span title="Distinct catalog vulns found by at least one matching scan">
                         {coverage.found} / {coverage.total}
                       </span>
                       <SeverityBreakdown counts={coverage.found_by_severity} label="found by at least one scan" />
@@ -434,8 +420,21 @@ export default function ScansList() {
             {Object.entries(scanGroupOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>}
-        <span className="scan-result-count text-muted text-sm" role="status">{loading ? 'Loading scans…' : error ? 'Scans unavailable' : `${scans.length} ${scans.length === 1 ? 'scan' : 'scans'}${!chartView && groupBy ? ` in ${groups.length} groups` : ''}`}</span>
+        <span className="scan-result-count text-muted text-sm" role="status">{loading ? 'Loading scans…' : error ? 'Scans unavailable' : pagination ? `${pagination.total ? (pagination.page - 1) * pagination.page_size + 1 : 0}–${pagination.total ? Math.min(pagination.page * pagination.page_size, pagination.total) : 0} of ${pagination.total} scans` : `${scans.length} ${scans.length === 1 ? 'scan' : 'scans'}${!chartView && groupBy ? ` in ${groups.length} groups` : ''}`}</span>
       </div>
+
+      {paginated && <nav className="flex gap-1 items-center mb-2" aria-label="Scan pagination">
+        <label className="scan-group-control">Rows per page
+          <select className="form-select" value={pageSize} onChange={e => setFilter('page_size', e.target.value)}>
+            {scanPageSizes.map(size => <option key={size} value={size}>{size}</option>)}
+          </select>
+        </label>
+        <button className="btn btn-outline btn-sm" disabled={loading || !!error || page <= 1}
+          onClick={() => setFilter('page', page - 1)}>Previous</button>
+        <span className="text-muted text-sm">{pagination ? `Page ${pagination.page} of ${Math.max(1, pagination.pages)}` : loading ? 'Loading…' : ''}</span>
+        <button className="btn btn-outline btn-sm" disabled={loading || !!error || !pagination || page >= pagination.pages}
+          onClick={() => setFilter('page', page + 1)}>Next</button>
+      </nav>}
 
       {error && <p role="alert" className="text-error">Could not load scans: {error} <button className="btn btn-outline btn-sm" onClick={fetchScans}>Retry</button></p>}
 
