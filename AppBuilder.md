@@ -2185,25 +2185,64 @@ team restriction in app-scoped links, and remove stale team restrictions when ch
 clearing App. The team filter remains available in the cross-app list.
 
 ### Run performance chart
-The scans page has an optional Performance chart view independent of grouping. Each point
-represents one filtered scan; History still controls all runs versus latest per scanner/app.
-Default axes are cost in USD and reviewed weighted F₀.₅. X can switch to wall-clock duration in
-minutes. Y offers conservative F0.5, adjudicated precision, recall, F1, and impact-weighted
-detection (including chain credit). Conservative F0.5 uses
-1.25 TP / (1.25 TP + 0.25 FN + clustered FP + pending), prioritizes precision, and is undefined
-without a benchmark corpus. This follows testbed's unresolved-item penalty with vulnapps'
-canonical clustered FP units. Weighted F₀.₅ is the default chart score; FP penalties follow the policy below.
-Use canonical current-revision metrics. Missing or unauthorized cost/duration and undefined
-scores are excluded, counted visibly, never plotted as zero. Zero cost and zero scores remain
-valid. Colors identify scanners. Hover/focus reveals a run; clicking/selecting opens its
-metrics and a scan-detail link. Provide an accessible run selector for coincident points.
-Keep quality on a fixed 0–100% axis, resource use on a zero-based linear axis, and explain
-that the upper left is preferable. Filters and axis/view selections are shareable in the URL.
-Mixed app/corpus comparisons are descriptive; pending quality is provisional. List endpoints
-must redact cost, tokens, duration, and notes using scan-detail visibility rules.
+The scans page has an optional Performance chart view, independent of the Grouped summary
+tab. It provides Quality vs. resources and Precision vs. recall views over the same filtered
+scans. History still controls all runs versus latest per scanner/app. Selections are shareable
+in the URL: `view=chart`, `chart_plot=quality|pr`, `chart_group=scanner|runs`,
+`chart_weight=plain|shift|weighted`, repeated `chart_label=<label name>`, and the existing
+`chart_x`/`chart_y` axis selections. Defaults are quality, scanner grouping, unweighted
+precision/recall, cost in USD and reviewed weighted F₀.₅.
 
-The scatter chart includes a green dashed upper-left guide for higher quality and lower
-cost/shorter duration. This is a directional visual cue, not a scoring threshold.
+Scanner identifies the tool. Scan type is a separate dimension, read from a supported explicit
+`scan_type` or, when that field is absent, an unambiguous exact assessment label: blackbox,
+greybox/graybox or whitebox. Trim whitespace and normalize case and graybox spelling. Missing,
+conflicting or unsupported types remain unknown; never infer type from scanner name, model,
+harness or source-access labels. A scanner may operate in several types. RIFT runs recorded as
+whitebox therefore stay separate from blackbox and greybox runs.
+
+The default point groups by scanner identity and scan type. Users can select model, harness
+or other label names to split variations deliberately. Each selected label splits by membership,
+using the searchable Compare variations picker and removable chips. Group names show matched
+labels, with “Other variations” for runs matching none; unrelated labels do not fragment points. Model names
+and harness versions are not parsed or guessed. Individual runs remains available. Group means
+weight each included run equally, including when target run counts differ. Only runs with valid
+axes contribute to a point; plotted and omitted counts refer to runs, and group counts remain
+visible. Unselected model, harness and version variations are explicitly described as blended.
+
+Quality vs. resources defaults to cost in USD versus reviewed weighted F₀.₅. X can switch to
+wall-clock duration in minutes. Y also offers conservative F₀.₅, weighted precision, adjudicated
+precision, recall, F1 and impact-weighted detection including chain credit. Conservative F₀.₅
+uses 1.25 TP / (1.25 TP + 0.25 FN + clustered FP + pending), prioritizes precision, and is
+undefined without a benchmark corpus. Missing or unauthorized cost/duration and undefined
+scores are omitted and counted, never replaced with zero. Zero cost and zero scores remain valid.
+Quality is fixed at 0–100%; resource use has a zero-based linear axis. The upper left is preferable.
+
+Precision vs. recall offers Unweighted, Shift and Weighted modes. Unweighted precision is
+TP / (TP + clustered FP + pending), and recall is TP / (TP + FN). This conservative precision
+includes pending findings, unlike the adjudicated precision selectable in Quality vs. resources.
+Weighted precision uses the canonical reviewed impact score. Weighted recall is credited impact
+divided by available corpus impact, including vulnerability and confirmed-chain credit: it is
+impact coverage, not an independent severity-weighted count of findings. Weighted and Shift
+require completed finding and FP impact review. Shift uses only runs with both score variants;
+its arrows connect unweighted and weighted means for exactly the same contributing runs.
+Changing weighting can therefore change the available cohort. Both axes remain fixed at 0–100%,
+and the upper right is preferable.
+
+Quality vs. resources colors identify scanners. Precision vs. recall colors encode mean USD cost
+on a logarithmic scale; zero cost uses the low-cost color. Missing or restricted cost never removes
+a valid precision/recall point: it stays gray. A group's cost color and mean cost are unavailable
+if any contributing run lacks cost; never average only the known costs and present that as complete.
+Marker shape identifies scan type: filled circle for blackbox, open circle for greybox, triangle for
+whitebox and diamond for unknown. Group marker size grows with run count. Run counts and app-version
+counts describe coverage, not confidence or repeatability.
+
+Hover/focus previews a point; clicking or the accessible selector selects it. Point details show
+mean axes, sample standard deviation, range, run count, app-version count and mean cost. Sample SD
+is unavailable for one run and is not a confidence interval. Selected points expose contributing
+scan-detail links, dates, scanner versions and all labels. Keep overlapping points reachable through
+the selector. Use canonical current-revision metrics and preserve scan-detail visibility rules for
+cost, tokens, duration and notes. Mixed applications, catalogs and setups are descriptive averages;
+filter to the same app version, corpus and settings before comparing scanners.
 
 
 ### Team app navigation

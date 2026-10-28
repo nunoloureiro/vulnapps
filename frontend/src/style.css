@@ -992,9 +992,9 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 
 /* Run performance scatter plot */
 .scan-chart { padding: 1.5rem; }
-.scan-chart-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 2rem; }
+.scan-chart-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 1rem; }
 .scan-chart-header h2 { font-size: 1.2rem; }
-.scan-chart-controls { display: flex; gap: 1rem; }
+.scan-chart-controls { display: flex; flex-wrap: wrap; gap: 1rem; }
 .scan-chart-controls label, .scan-chart-inspector label { display: grid; gap: .35rem; font-size: .8rem; color: var(--text-secondary); }
 .scan-chart-controls select { min-width: 180px; }
 .scan-chart-coverage { margin: 1rem 0; font-size: .85rem; color: var(--text-secondary); }
@@ -1014,6 +1014,25 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .scan-chart-empty { padding: 3rem 1rem; text-align: center; color: var(--text-secondary); }
 
 .scan-chart-ideal { pointer-events: none; }
+.scan-chart-switch { display: flex; flex-wrap: wrap; gap: .35rem; }
+.scan-chart-switch button { padding: .5rem .75rem; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text-secondary); cursor: pointer; font: inherit; font-size: .85rem; }
+.scan-chart-switch button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.scan-chart-toolbar { margin-top: 1rem; }
+.scan-chart-contributors summary { cursor: pointer; font-size: .85rem; }
+.scan-chart-variations { flex: 1 1 260px; min-width: 0; max-width: 380px; }
+.scan-chart-variations .searchable-filter-label { font-size: .8rem; }
+.scan-chart-variation-help { margin-top: .65rem; color: var(--text-secondary); font-size: .8rem; }
+.scan-chart-point { cursor: pointer; }
+.scan-chart-point:focus { outline: none; }
+.scan-chart-point:focus > circle:first-of-type { stroke: var(--text); stroke-width: 1; }
+.scan-chart-legend .scan-chart-cost-scale { width: 80px; height: 8px; border-radius: 0; background: linear-gradient(90deg, hsl(210 75% 60%), hsl(25 75% 60%)); }
+.scan-chart-shift { opacity: .7; }
+.scan-chart-contributors ul { padding-left: 1.25rem; font-size: .85rem; }
+.scan-chart-contributors li { margin: .5rem 0; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .scan-chart { padding: 1rem; }
+  .scan-chart-inspector { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+}
 .scan-chart-ideal rect { fill: rgba(34, 197, 94, .045); stroke: var(--success); stroke-width: 1.5; stroke-dasharray: 6 5; }
 .scan-chart-plot .scan-chart-ideal text { fill: var(--success); font-size: 12px; }
 
