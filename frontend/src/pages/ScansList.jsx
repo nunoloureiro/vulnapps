@@ -384,8 +384,9 @@ export default function ScansList() {
       </div>
 
       {user && (
-        <section className="scan-filters mb-2" aria-label="Filter scans">
-          <div className="scan-filter-heading"><span>Filter scans</span>
+        <details className="scan-filters mb-2" aria-label="Filter scans" open={!chartView}>
+          <summary className="scan-filter-heading">Filter scans{chartView && <span className="text-muted">{hasFilters ? 'Filtered' : 'All scans'} · {scans.length} matches</span>}</summary>
+          <div className="scan-filter-actions">
             {hasFilters && <button className="scan-text-button" onClick={resetFilters}>Reset filters</button>}
           </div>
           <div className="scan-filter-primary">
@@ -420,7 +421,7 @@ export default function ScansList() {
               options={teams.map(t => ({ value: `team:${t.id}`, label: t.name }))}
               onChange={value => setFilter('filter', value)} />}
           </div>
-        </section>
+        </details>
       )}
 
       <div className="scan-view-bar mb-2">

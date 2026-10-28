@@ -25,3 +25,11 @@
 - Revised the variation UX after feedback: searchable picker, removable chips and compact
   names replace checkbox lists and repeated negative-label names.
 - Draft PR targets upstream main; screenshot previews contain synthetic data only.
+
+## UX layout review
+
+- Aligned controls independently of selected chips; made weighting choices visible.
+- Collapsed page filters in chart mode and disclosed omission reasons on request.
+- Clarified grouping labels versus scan filters; retained all filtered runs.
+- Added near-point identity and a shift-origin legend.
+- Reflowed page filters and view controls at narrow widths.

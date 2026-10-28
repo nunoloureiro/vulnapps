@@ -61,6 +61,7 @@ export function ScanPerformanceChart({ scans, labelsMap = {}, resource = 'cost',
   const xLabel = view === 'pr' ? `${weight === 'plain' ? 'Catalog' : 'Weighted'} recall` : chartResources[resource];
   const yLabel = view === 'pr' ? `${weight === 'plain' ? 'Conservative' : 'Weighted'} precision` : chartMetrics[metric];
   const xValue = value => view === 'pr' ? pct(value) : formatChartResource(value, resource);
+  const tooltipWidth = Math.min(300, W - 16);
   const mixedApps = new Set(points.flatMap(point => point.scans.map(scan => scan.app_id))).size > 1;
   const reviewed = view === 'pr' ? weight !== 'plain' : ['weighted_f05', 'weighted_precision'].includes(metric);
   const awaitingReview = reviewed ? scans.filter(scan => scan.metrics?.weighted_score_provisional !== false).length : 0;
@@ -71,7 +72,7 @@ export function ScanPerformanceChart({ scans, labelsMap = {}, resource = 'cost',
   return <section className="card scan-chart" aria-label="Run performance chart">
     <div className="scan-chart-header">
       <div><h2>Performance chart</h2><p className="text-muted">{grouped ? 'Scanner + scan type' : 'One point per run'}{grouped && splitLabels.length ? ' + chosen variations' : ''} · Better toward the {view === 'pr' ? 'upper right' : 'upper left'}</p></div>
-      <div className="scan-chart-switch" aria-label="Chart view">
+      <div className="scan-chart-switch" role="group" aria-label="Chart view">
         <button aria-pressed={view === 'quality'} onClick={() => onAxisChange('chart_plot', 'quality')}>Quality vs. resources</button>
         <button aria-pressed={view === 'pr'} onClick={() => onAxisChange('chart_plot', 'pr')}>Precision vs. recall</button>
       </div>
@@ -88,20 +89,22 @@ export function ScanPerformanceChart({ scans, labelsMap = {}, resource = 'cost',
           <label>X · Resources<select className="form-select" value={resource} onChange={e => onAxisChange('chart_x', e.target.value)}>
             {Object.entries(chartResources).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select></label>
-        </> : <label>Severity weighting<select className="form-select" value={weight} onChange={e => onAxisChange('chart_weight', e.target.value)}>
-          <option value="plain">Unweighted</option><option value="shift">Shift: unweighted → weighted</option><option value="weighted">Weighted</option>
-        </select></label>}
-        {grouped && <div className="scan-chart-variations"><SearchableFilter label="Compare variations" multiple value={splitLabels}
+        </> : <fieldset className="scan-chart-weighting"><legend>Severity weighting</legend><div>
+          {[['plain', 'Unweighted'], ['shift', 'Shift'], ['weighted', 'Weighted']].map(([value, label]) => <label key={value}>
+            <input type="radio" name={`weight-${arrowId}`} value={value} checked={weight === value} onChange={() => onAxisChange('chart_weight', value)} /><span>{label}</span>
+          </label>)}
+        </div></fieldset>}
+        {grouped && <div className="scan-chart-variations"><SearchableFilter label="Grouping labels" multiple value={splitLabels}
           options={labels.map(label => ({ value: label, label }))} onChange={values => onAxisChange('chart_label', values)}
           placeholder="Choose model or harness labels…" allLabel="Blend all variations" /></div>}
       </div>
       {grouped && <p className="scan-chart-variation-help">{splitLabels.length
-        ? 'Chosen labels separate variations. Runs with none of them appear as “Other variations”.'
-        : 'All model and harness variations are blended. Choose labels to compare them separately.'}</p>}
+        ? 'Group on these labels; keep remaining runs as “Other variations”.'
+        : 'Model and harness variations are blended. Choose grouping labels to separate them.'}</p>}
     </div>
-    <p className="scan-chart-coverage" role="status">{plotted} of {scans.length} filtered runs plotted{grouped ? ` in ${points.length} groups` : ''}{latest ? ' · Latest per scanner and app' : ' · All matching runs'}.
-      {excluded > 0 && ` ${excluded} omitted: ${view === 'quality' ? `${missingResource} missing or restricted ${resource}, ` : ''}${missingScore} unavailable scores${awaitingReview ? `, ${awaitingReview} awaiting review` : ''} (reasons can overlap).`}</p>
-    {mixedApps && <p className="scan-summary-note">Multiple app versions or catalogs may be blended. Filter to the same app and setup before comparing scanners.</p>}
+    <div className="scan-chart-status"><p role="status">{plotted} / {scans.length} runs{grouped ? ` · ${points.length} groups` : ''}{latest ? ' · Latest per scanner and app' : ''}{mixedApps ? ' · Mixed app versions' : ''}</p>
+      {excluded > 0 && <details><summary>{excluded} omitted</summary><p>{view === 'quality' ? `${missingResource} missing or restricted ${resource}; ` : ''}{missingScore} unavailable scores{awaitingReview ? `; ${awaitingReview} awaiting review` : ''}. Reasons can overlap.</p></details>}
+    </div>
     {points.length ? <>
       <div className="scan-chart-legend">
         {[...new Set(points.map(point => point.type))].sort().map(type => <span key={type}><svg width="20" height="20" aria-hidden="true"><Marker type={type} x={10} y={10} radius={5} color="var(--text-secondary)" /></svg>{types[type]}</span>)}
@@ -109,6 +112,7 @@ export function ScanPerformanceChart({ scans, labelsMap = {}, resource = 'cost',
         {view === 'quality' ? scanners.map(scanner => <span key={scanner}><i style={{ background: scannerColor(scanner) }} />{scanner}</span>)
           : <><span>Cost: {minCost === null ? costs.length === 0 && points.some(point => point.cost === 0) ? '$0' : 'unavailable' : minCost === maxCost ? formatChartResource(minCost, 'cost') : <>{formatChartResource(minCost, 'cost')}<i className="scan-chart-cost-scale" />{formatChartResource(maxCost, 'cost')} · log scale</>}</span><span>Gray = cost unavailable · $0 uses low-cost color</span></>}
       </div>
+      {view === 'pr' && weight === 'shift' && <p className="scan-chart-shift-key">Small hollow dot: unweighted · Arrow → scan-type marker: weighted</p>}
       <div className="scan-chart-plot" ref={plotRef}>
         <svg viewBox={`0 0 ${W} ${H}`} role="group" aria-label={`${yLabel} versus ${xLabel}. Select a point or use the inspector.`}>
           <defs><marker id={arrowId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" /></marker></defs>
@@ -139,6 +143,10 @@ export function ScanPerformanceChart({ scans, labelsMap = {}, resource = 'cost',
             </g>;
           })}
         </svg>
+        {active && <div className="scan-chart-tooltip" aria-hidden="true" style={{ width: tooltipWidth,
+          left: Math.max(8, Math.min(W - tooltipWidth - 8, px(active.x) + 14)), top: Math.max(36, Math.min(H - 105, py(active.y) - 78)) }}>
+          <strong>{active.name}</strong><span>{yLabel}: {pct(active.y)}</span><span>{xLabel}: {xValue(active.x)} · n={active.scans.length}</span>
+        </div>}
       </div>
       <div className="scan-chart-inspector">
         <label>Inspect {grouped ? 'a group' : 'a run'}<select className="form-select" value={selected?.id ?? ''} onChange={e => setSelectedId(e.target.value || null)}>
@@ -155,8 +163,9 @@ export function ScanPerformanceChart({ scans, labelsMap = {}, resource = 'cost',
         <ul>{selected.scans.map(scan => <li key={scan.id}><Link to={`/scans/${scan.id}`}>{runName(scan)}</Link><span className="text-muted"> · {scan.scan_date || 'Date unavailable'} · {(labelsMap[scan.id] || []).map(label => label.name).join(' · ') || 'No labels'}</span></li>)}</ul>
       </details>}
     </> : <div className="scan-chart-empty"><h3>{awaitingReview === scans.length && scans.length ? 'Awaiting review' : 'No runs to plot'}</h3><p>{view === 'pr' ? 'Precision and recall require a scored catalog. Weighted and shift views also require completed finding and FP impact review. Cost is optional.' : 'Choose another metric or resource. Runs need a score and an accessible cost or duration.'}</p></div>}
-    <p className="scan-summary-note">{grouped ? 'Each run has equal weight within its group. Unselected model, harness and version variations are blended. Counts describe coverage, not confidence. ' : ''}{reviewed ? 'Reviewed weighted scores only. ' : ''}{view === 'pr' ? 'Unknown cost stays visible in gray. Shift uses only runs with both score variants; changing the weighting can change the available cohort.' : 'Missing cost or duration omits only that resource point.'}</p>
+    <p className="scan-summary-note">{view === 'pr' && weight === 'shift' ? 'Arrows show unweighted → weighted scores for the same runs. ' : ''}{mixedApps ? 'Mixed app versions: descriptive averages, not a matched comparison. ' : ''}{reviewed ? 'Reviewed weighted scores only. ' : ''}{grouped ? 'Counts show coverage, not confidence.' : ''}</p>
     <details className="scan-stat-help"><summary>Scoring and comparison limits</summary>
+      <p>Each run has equal weight within its group; unselected model, harness and version variations are blended. Choose the same app version and setup for a matched comparison. Unknown cost stays visible in gray on precision/recall; missing cost or duration omits only that resource point. Shift uses only runs with both score variants, so switching weighting can change the available cohort.</p>
       <p>Scanner identifies the tool; labels describe model, harness and other variations. Scan type uses an explicit supported type, otherwise an unambiguous blackbox, greybox/graybox or whitebox label. Missing, conflicting or unsupported types remain unknown. Names and source-access labels never imply a type.</p>
       <p>Unweighted precision in the precision/recall view is TP / (TP + clustered FP + pending); recall is TP / (TP + FN). Pending findings count against precision. This conservative view differs from the pending-excluding precision selectable in quality versus resources.</p>
       <p>Weighted precision uses the canonical reviewed impact score. Weighted recall is credited / available impact, including vulnerability and chain credit; it is impact coverage, not an independent severity-weighted count of findings. Shift arrows connect unweighted to weighted means for the same contributing runs. Reviewer FP penalties use 1/3/9/27 impact points.</p>

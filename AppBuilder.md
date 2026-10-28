@@ -2300,3 +2300,16 @@ aggregates retain count metrics; weighted F₀.₅ is not inferred from pooled c
 Weights express a review policy, not dollar costs. Compare runs within the same app
 version and benchmark corpus. Mock previews use synthetic data and never modify
 production.
+
+### Performance chart layout
+
+Chart mode starts with the page filters collapsed to a visible match-count summary;
+other result views start with filters expanded. Chart controls align at the top of a
+responsive grid. Grouping labels keep all filtered runs and partition the points;
+they are visually separate from the page-level label filters. Precision/recall exposes
+Unweighted, Shift and Weighted as a native radio group. Omission reasons expand on
+request; comparison caveats remain available below the plot and in scoring details.
+Hover, focus or selection reveals point identity beside the marker, with the full
+inspector and contributing-run links retained below. Shift has an explicit origin/
+endpoint legend. At narrow widths, page filters and view controls reflow without
+truncating all filter values or pushing the active chart tab off screen.
