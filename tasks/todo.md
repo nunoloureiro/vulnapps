@@ -606,3 +606,14 @@ ordering, 50/23-row page boundaries, sort/page-size resets, out-of-range recover
 and full-set grouped summaries. Coverage remains scoped to all 73 scans while the
 default request scores 50, down from 73 before pagination. Calculated-metric sorting
 still scores the matching set for correctness; no persistent cache was introduced.
+
+### Sort conventions follow-up (2026-10-28)
+- [x] Confirm all existing scan orders remain supported by the API and UI.
+- [x] Verify every order and direction across page boundaries.
+- [x] Use native keyboard-operable sort buttons with aria-sort.
+- [x] Validate and prepare the update to PR #14.
+
+Sort review: all nine existing orders pass ascending/descending checks against real
+canonical metrics, with stable ties and concatenated pages matching the global order.
+242 backend tests, 21 frontend tests and the production build pass. Browser confirms
+Enter/Space operate the Scanner sort, reset the page, and update aria-sort correctly.

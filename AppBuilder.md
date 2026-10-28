@@ -2291,3 +2291,9 @@ Grouped summaries and performance charts retain their complete filtered dataset.
 Combined app coverage also remains scoped to all matching scans and is explicitly
 labelled that way; changing pages must not change its meaning. Weighted scoring,
 chain credit, review rules and existing metric columns remain unchanged.
+
+All existing sortable scan columns remain available in both ascending and descending
+order; timestamp is only the initial default. Header controls are native buttons for
+keyboard operation, with `aria-sort` on the active column and decorative arrows hidden
+from assistive technology. Every order applies globally before page selection, with
+stable ties; unavailable calculated values sort last in either direction.

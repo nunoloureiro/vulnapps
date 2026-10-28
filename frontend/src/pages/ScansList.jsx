@@ -174,8 +174,10 @@ export default function ScansList() {
   };
   const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
   const sortableTh = (key, label, extraProps = {}) => (
-    <th {...extraProps} onClick={() => toggleSort(key)} style={{ cursor: 'pointer', userSelect: 'none', ...(extraProps.style || {}) }}>
-      {label}{sortArrow(key)}
+    <th {...extraProps} aria-sort={sortKey === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}>
+      <button type="button" className="scan-sort-button" onClick={() => toggleSort(key)} aria-label={`Sort by ${label}`}>
+        {label}<span aria-hidden="true">{sortArrow(key)}</span>
+      </button>
     </th>
   );
   const toggleSelect = (id) => {

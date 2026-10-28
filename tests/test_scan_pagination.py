@@ -1,6 +1,9 @@
 """Pagination must preserve filtering, scoring scope, and full-result coverage."""
 
+from datetime import datetime, timezone
+
 import aiosqlite
+import pytest
 import pytest_asyncio
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
@@ -176,3 +179,79 @@ async def test_metric_sort_tolerates_a_scan_deleted_during_scoring(scan_db, monk
         db, None, page=1, page_size=2, sort="weighted_found", include_metrics=True,
     )
     assert [scan["id"] for scan in result["scans"]] == [3]
+
+
+@pytest.mark.parametrize("sort,ascending,descending", [
+    ("date", [4, 3, 2, 1, 5, 6, 7], [7, 6, 5, 3, 2, 1, 4]),
+    ("scanner", [6, 3, 2, 4, 7, 1, 5], [5, 7, 1, 4, 2, 6, 3]),
+    ("app", [6, 3, 2, 1, 4, 7, 5], [7, 5, 2, 1, 4, 6, 3]),
+    ("tp", [5, 6, 2, 1, 4, 7, 3], [7, 3, 6, 2, 1, 4, 5]),
+    ("fp", [7, 5, 1, 4, 6, 2, 3], [3, 6, 2, 7, 5, 1, 4]),
+    ("pending", [7, 5, 3, 1, 6, 2, 4], [4, 6, 2, 7, 5, 3, 1]),
+    ("fn", [7, 3, 6, 2, 1, 4, 5], [5, 6, 2, 1, 4, 7, 3]),
+    ("weighted_found", [5, 6, 2, 1, 4, 7, 3], [7, 3, 4, 6, 2, 1, 5]),
+    ("cost_per_point", [7, 4, 3, 6, 1, 5, 2], [6, 1, 3, 4, 7, 5, 2]),
+])
+async def test_every_sort_is_global_bidirectional_and_stable_across_pages(scan_db, sort, ascending, descending):
+    db, _ = scan_db
+    await db.execute("UPDATE apps SET name = 'Alpha', version = '2' WHERE id = 1")
+    await db.execute("UPDATE apps SET name = 'alpha', version = '1' WHERE id = 2")
+    await db.execute("INSERT INTO apps (id, name, version, visibility, created_by) VALUES (3, 'Beta', NULL, 'public', 1)")
+    await db.executemany(
+        "UPDATE scans SET app_id = ?, scanner_name = ?, scanner_version = ?, cost = ? WHERE id = ?",
+        [(1, "Bravo", "2", 2, 1), (1, "alpha", "2", None, 2),
+         (2, "Alpha", "1", 10, 3), (1, "Bravo", "1", 1, 4),
+         (3, "charlie", None, None, 5), (2, "alpha", "1", 2, 6),
+         (3, "Bravo", "2", 0, 7)],
+    )
+    for app_id in (1, 2, 3):
+        await db.executemany(
+            """INSERT INTO vulnerabilities
+               (id, app_id, vuln_id, title, severity, vuln_type, url, created_by,
+                impact_weight, weight_verified, existed_since_revision, known_since_revision)
+               VALUES (?, ?, ?, 'Example', ?, 'SQLi', '/', 1, ?, 1, 1, 1)""",
+            [(2 * app_id - 1, app_id, "low", "low", 1),
+             (2 * app_id, app_id, "high", "high", 9)],
+        )
+    for scan_id, vuln_ids in ((1, [1]), (2, [1]), (3, [3, 4]), (4, [2]), (6, [3]), (7, [5, 6])):
+        finding = await db.execute(
+            "INSERT INTO scan_findings (scan_id, vuln_type, url) VALUES (?, 'SQLi', '/')", (scan_id,),
+        )
+        await db.executemany(
+            "INSERT INTO finding_matches (finding_id, vuln_id) VALUES (?, ?)",
+            [(finding.lastrowid, vuln_id) for vuln_id in vuln_ids],
+        )
+    for scan_id, fp_count, pending_count in ((2, 1, 1), (3, 2, 0), (4, 0, 2), (6, 1, 1)):
+        await db.executemany(
+            "INSERT INTO scan_findings (scan_id, vuln_type, url, is_false_positive) VALUES (?, 'SQLi', '/', ?)",
+            [(scan_id, 1)] * fp_count + [(scan_id, 0)] * pending_count,
+        )
+    await db.commit()
+
+    def value(scan):
+        if sort == "date":
+            dt = datetime.fromisoformat(scan["scan_date"] or scan["created_at"])
+            return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp()
+        if sort == "scanner":
+            return scan["scanner_name"].lower(), scan["scanner_version"] or ""
+        if sort == "app":
+            return scan["app_name"].lower(), scan["app_version"] or ""
+        if sort == "weighted_found":
+            return scan["metrics"]["weighted_found"]
+        if sort == "cost_per_point":
+            found = scan["metrics"]["weighted_found"]
+            return scan["cost"] / found if scan["cost"] is not None and found else None
+        return scan[{"tp": "tp_count", "fp": "fp_count", "pending": "pending_count", "fn": "fn_count"}[sort]]
+
+    for direction, expected in (("asc", ascending), ("desc", descending)):
+        options = {"sort": sort, "direction": direction, "include_metrics": True}
+        full = await scans_service.list_scans(db, ADMIN, **options)
+        assert [scan["id"] for scan in full["scans"]] == expected, direction
+        values = [value(scan) for scan in full["scans"]]
+        present = [item for item in values if item is not None]
+        assert values == sorted(present, reverse=direction == "desc") + [None] * (len(values) - len(present))
+        pages = [await scans_service.list_scans(db, ADMIN, page=page, page_size=2, **options) for page in range(1, 5)]
+        assert [scan["id"] for page in pages for scan in page["scans"]] == expected
+        assert all(page["pagination"]["total"] == 7 and page["pagination"]["pages"] == 4 for page in pages)
+        repeated = await scans_service.list_scans(db, ADMIN, page=1, page_size=2, **options)
+        assert repeated["scans"] == pages[0]["scans"], "ties must retain timestamp and ID order"
