@@ -1,5 +1,11 @@
 # Lessons
 
+## Make chart variation controls searchable and keep grouping names readable
+
+Do not expose every label as a checkbox wall or build point names from repeated
+negative labels. Reuse the searchable multi-select with removable chips. Show
+matched variation names and one “Other variations” group for unselected labels.
+
 ## NEVER broad-kill the user's applications
 **Mistake:** Ran `pkill -f "Google Chrome"` to clean up headless renders. This
 killed the user's real Chrome — 100+ open tabs lost, history wiped (no restore
@@ -169,3 +175,14 @@ the check wasn't done, say the effect is unverified instead of asserting it.
 When updating a PR that touches the same scan table as a newly merged change, fetch
 main and rebase first. Preserve the approved individual layout while integrating
 scoring changes in their requested views.
+
+
+## Scan types and scanner variations are independent
+
+Scan type is recorded metadata or an unambiguous recognized assessment label. Do not infer it
+from a scanner name, model or source access. RIFT is whitebox only; the chart must still support
+scanners that have multiple recorded types, and preserve unknown or conflicting metadata.
+
+A scanner can vary by harness, model and other settings. Use existing labels for those variations
+and let users choose which labels split grouped points. Do not hardcode model parsing or group
+by every label automatically. Scanner/type averages blend unselected variations and must say so.
