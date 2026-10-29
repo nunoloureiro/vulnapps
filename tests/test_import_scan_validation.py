@@ -7,6 +7,7 @@ importer-side defense-in-depth added alongside that fix.
 
 import importlib.util
 import json
+import re
 
 import pytest
 import pathlib
@@ -703,3 +704,133 @@ def test_withdrawn_for_low_impact_is_still_mapped_not_fp():
     prompt = import_scan.SYSTEM_PROMPT_MAP
     assert "withdrawn from the confirmed count" in prompt
     assert "a severity cut-off does not" in prompt
+
+
+# ── --findings-json: phase 1 built in code from structured scanner output ──
+
+def _write_findings(tmp_path, data):
+    p = tmp_path / "findings.json"
+    p.write_text(data if isinstance(data, str) else json.dumps(data))
+    return str(p)
+
+
+@pytest.mark.parametrize("data, problem", [
+    ("[{", "cannot read"),
+    ({"findings": []}, "want a JSON list"),
+    (["x"], "finding 0: want an object"),
+    ([{"title": "t", "cwe": "CWE-89"}], "unknown field(s) ['cwe']"),
+    ([{"vuln_type": "XSS", "title": " "}], "title is required"),
+    ([{"title": "t", "severity": "High"}], "severity 'High'"),
+    ([{"title": "t", "poc": 3}], "poc must be a string"),
+    ([{"title": "t", "is_false_positive": "no"}], "is_false_positive must be"),
+])
+def test_findings_json_refuses_bad_input(tmp_path, data, problem):
+    with pytest.raises(ValueError, match=re.escape(problem)):
+        import_scan.load_findings_json(_write_findings(tmp_path, data))
+
+
+def test_findings_json_fields_are_what_the_extraction_prompt_returns():
+    shape = json.loads(import_scan.SYSTEM_PROMPT_EXTRACT.split("this exact format:\n", 1)[1]
+                       .replace(" or null", ""))
+    assert set(import_scan.FINDING_STR_FIELDS) | {"is_false_positive"} == set(shape["findings"][0])
+
+
+def test_scan_config_records_structured_extraction():
+    class A:
+        use_cli = False; extract_model = None; map_model = "claude-opus-5"; findings_json = "f.json"
+        model_version = reasoning_effort = harness_version = token_budget = seed = run_group = trial_index = None
+    cfg = import_scan._scan_config(A(), None)
+    assert cfg["extractor_version"] == "structured"
+    assert cfg["extractor_prompt_sha256"] is None
+
+
+class _StubVulnapps:
+    def __init__(self, *a, **k):
+        pass
+
+    def get_app(self, app_id):
+        return {"app": {"name": "T", "version": "1"}}
+
+    def get_vulns(self, app_id):
+        return [{"id": 7, "vuln_id": "TP-001", "title": "SQLi", "vuln_type": "SQLi", "severity": "high"}]
+
+    def get_chains(self, app_id):
+        return []
+
+    def submit_scan(self, *a, **k):
+        raise AssertionError("dry run must not submit")
+
+
+def test_findings_json_dry_run_maps_every_finding_without_extraction(tmp_path, monkeypatch, capsys):
+    data = [{"title": f"finding {i}", "vuln_type": "SQLi" if i == 0 else "XSS", "severity": "low",
+             "is_false_positive": False} for i in range(23)]
+
+    def no_extract(*a, **k):
+        raise AssertionError("--findings-json must not call the extraction LLM")
+
+    def stub_map(batch, *a, **k):
+        return {"mappings": [{"index": i, "matched_vuln_db_id": 7 if f["vuln_type"] == "SQLi" else None,
+                              "reasoning": "stub"} for i, f in batch]}, {}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
+    monkeypatch.setattr(import_scan, "VulnappsClient", _StubVulnapps)
+    monkeypatch.setattr(import_scan, "create_anthropic_client", lambda *a: object())
+    monkeypatch.setattr(import_scan, "run_extract", no_extract)
+    monkeypatch.setattr(import_scan, "run_map", stub_map)
+    monkeypatch.setattr(import_scan.sys, "argv", [
+        "import_scan.py", "--url", "http://x", "--api-key", "k", "--app-id", "1",
+        "--findings-json", _write_findings(tmp_path, data), "--scanner", "JSONL Scanner",
+        "--dry-run", "--format", "json"])
+    import_scan.main()
+    out = json.loads(capsys.readouterr().out)
+    assert [f["title"] for f in out["findings"]] == [f["title"] for f in data]
+    assert out["scanner_name"] == "JSONL Scanner"
+    assert out["findings"][0]["catalog_ids"] == ["TP-001"]
+
+
+def _map_batch(captured, reply, findings, batch):
+    return import_scan.run_map(batch, [_JWT_NONE_ALG_VULN], None, model="claude-opus-5",
+                               client=_fake_client(captured, reply), use_cli=False, provider="vertex",
+                               extra_info=None, spinner_msg="x")
+
+
+def test_short_last_batch_is_pinned_to_its_own_numbers():
+    """Taiga rep 1 (66 findings): the last batch, 60..65, came back numbered
+    0..5 on every try. The schema now only allows 60..65 and the prompt
+    names them."""
+    findings = [dict(_FINDING, title=f"F{i}") for i in range(66)]
+    batch = list(enumerate(findings))[60:]
+    captured = []
+    reply = json.dumps({"mappings": [{"index": i, "matched_vuln_db_id": None} for i in range(60, 66)]})
+    response, _ = _map_batch(captured, reply, findings, batch)
+    schema = captured[0]["output_config"]["format"]["schema"]
+    assert schema["properties"]["mappings"]["items"]["properties"]["index"]["enum"] == list(range(60, 66))
+    assert "60 to 65" in captured[0]["messages"][0]["content"]
+    import_scan.merge_mappings(findings, batch, response)
+    assert all("matched_vuln_db_id" in f for f in findings[60:])
+
+
+def test_relative_numbering_still_fails_loudly():
+    """No silent renumbering: an answer with 0..5 for findings 60..65 is
+    refused, never applied to findings 0..5."""
+    findings = [dict(_FINDING, title=f"F{i}") for i in range(66)]
+    batch = list(enumerate(findings))[60:]
+    with pytest.raises(import_scan.MappingMismatch, match=r"missing \[60, 61, 62, 63, 64, 65\]"):
+        import_scan.merge_mappings(findings, batch, {"mappings": [{"index": i} for i in range(6)]})
+    assert not any("matched_vuln_db_id" in f for f in findings)
+
+
+def test_raw_control_characters_in_reasoning_are_accepted():
+    """django-helpdesk rep 1 (55 findings): the last batch failed twice with
+    'Invalid control character' -- a raw newline inside a reasoning string."""
+    findings = [dict(_FINDING), dict(_FINDING, title="B")]
+    reply = ('{"mappings": [{"index": 0, "matched_vuln_db_id": 42, "reasoning": "line one\nline two\tend"},'
+             ' {"index": 1, "matched_vuln_db_id": null, "reasoning": "none"}]}')
+    response, _ = _map_batch([], reply, findings, list(enumerate(findings)))
+    import_scan.merge_mappings(findings, list(enumerate(findings)), response)
+    assert findings[0]["reasoning"] == "line one\nline two\tend"
+
+
+def test_truly_broken_json_still_raises():
+    with pytest.raises(json.JSONDecodeError):
+        _map_batch([], '{"mappings": [{"index": 0,}', [dict(_FINDING)], [(0, dict(_FINDING))])
