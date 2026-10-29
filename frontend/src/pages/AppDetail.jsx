@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Badge } from '../components/Badge';
 import { ChainForm } from '../components/ChainForm';
+import { KnownFpForm } from '../components/KnownFpForm';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
@@ -144,7 +145,7 @@ export default function AppDetail() {
 
   if (!data) return null;
 
-  const { app, vulns = [], chains = [], tech_stack = [], scan_count = 0, severity_counts = {}, can_edit, can_submit_scan } = data;
+  const { app, vulns = [], chains = [], known_fps = [], tech_stack = [], scan_count = 0, severity_counts = {}, can_edit, can_submit_scan } = data;
   const repositoryUrl = app.source_repository?.replace(/\/$/, '').replace(/\.git$/, '');
   const githubRepository = repositoryUrl && /^https?:\/\/github\.com\/[^/?#]+\/[^/?#]+$/i.test(repositoryUrl);
   const commitUrl = githubRepository && app.source_commit
@@ -458,6 +459,10 @@ export default function AppDetail() {
         <Chains appId={id} chains={chains} vulns={vulns} canEdit={can_edit} onChange={fetchApp} />
       )}
 
+      {(known_fps.length > 0 || can_edit) && (
+        <KnownFps appId={id} knownFps={known_fps} canEdit={can_edit} onChange={fetchApp} />
+      )}
+
       <HistoryLog appId={id} canView={can_edit} />
     </div>
   );
@@ -535,6 +540,92 @@ function Chains({ appId, chains, vulns, canEdit, onChange }) {
                     {canEdit && (
                       <td>
                         <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditing(chain.id)}>Edit</button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// Known false positives: non-issues scanners keep flagging on this app —
+// planted decoys and FPs remembered from review. A finding marked FP against
+// one takes its id as its FP group and its penalty, so every scan that hits it
+// is charged the same single FP.
+function KnownFps({ appId, knownFps, canEdit, onChange }) {
+  const [editing, setEditing] = useState(null); // known FP id, 'new', or null
+
+  const save = async (knownFp, data) => {
+    if (knownFp) await api.put(`/apps/${appId}/known-fps/${knownFp.id}`, data);
+    else await api.post(`/apps/${appId}/known-fps`, data);
+    setEditing(null);
+    onChange();
+  };
+
+  const remove = async (knownFp) => {
+    if (!confirm(`Delete ${knownFp.fp_id}? Its ${knownFp.finding_count} finding(s) stay false positives, unlinked.`)) return;
+    await api.del(`/apps/${appId}/known-fps/${knownFp.id}`);
+    onChange();
+  };
+
+  return (
+    <>
+      <div className="page-header">
+        <h2 className="page-title">Known False Positives <span className="text-muted text-sm">({knownFps.length})</span></h2>
+        {canEdit && editing !== 'new' && (
+          <button type="button" className="btn btn-outline" onClick={() => setEditing('new')}>Add Known FP</button>
+        )}
+      </div>
+      <div className="card">
+        <p className="text-muted text-sm mb-2">
+          Things scanners report on this app that are not real: planted decoys (D-ids, from the
+          app's catalog) and false positives remembered when a reviewer marked one. Marking a
+          finding FP against one of these gives it this entry's group and penalty, so every
+          scan that falls for it counts one false positive at the same cost. Editing an entry
+          updates every finding linked to it.
+        </p>
+        {editing === 'new' && (
+          <div className="card mb-2">
+            <KnownFpForm submitLabel="Add known FP" onSubmit={data => save(null, data)} onCancel={() => setEditing(null)} />
+          </div>
+        )}
+        {knownFps.length > 0 && (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Known FP</th><th>Location</th><th>Penalty</th><th>Findings</th>{canEdit && <th style={{ width: 120 }}></th>}</tr></thead>
+              <tbody>
+                {knownFps.map(k => editing === k.id ? (
+                  <tr key={k.id}>
+                    <td colSpan={canEdit ? 5 : 4}>
+                      <KnownFpForm submitLabel="Save known FP" initial={k}
+                        intro={`Editing ${k.fp_id}. Changing its id or penalty updates the ${k.finding_count} finding(s) linked to it.`}
+                        onSubmit={data => save(k, data)} onCancel={() => setEditing(null)} />
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={k.id}>
+                    <td>
+                      <strong>{k.fp_id}</strong>{' '}
+                      <span className={'badge badge-' + (k.source === 'decoy' ? 'medium' : 'low')}>{k.source}</span>
+                      <div className="text-muted text-sm">{k.title}</div>
+                      {k.description && <div className="text-muted text-xs" style={{ maxWidth: 520 }}>{k.description}</div>}
+                    </td>
+                    <td className="text-sm">
+                      {k.vuln_type && <div>{k.vuln_type}</div>}
+                      <div className="font-mono text-xs">{[k.http_method, k.url].filter(Boolean).join(' ') || k.filename || '—'}</div>
+                      {k.parameter && <div className="text-muted text-xs">param: {k.parameter}</div>}
+                    </td>
+                    <td className="text-sm">{k.penalty_weight == null ? 'unreviewed (27)' : `${k.penalty_weight} pts`}</td>
+                    <td>{k.finding_count}</td>
+                    {canEdit && (
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditing(k.id)}>Edit</button>{' '}
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => remove(k)}>Delete</button>
                       </td>
                     )}
                   </tr>

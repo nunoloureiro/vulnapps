@@ -169,3 +169,14 @@ the check wasn't done, say the effect is unverified instead of asserting it.
 When updating a PR that touches the same scan table as a newly merged change, fetch
 main and rebase first. Preserve the approved individual layout while integrating
 scoring changes in their requested views.
+
+## Don't add a metric an existing one already measures
+
+**Mistake:** Proposed a separate "decoys hit / decoys planted" metric (column, panel,
+compare row) for the known-FP corpus. Decoy hits are false positives, so FP count and
+precision already score them; the user rejected it as redundant.
+
+**Rule:** Before proposing a new metric, column or score, name which existing metric
+the same events already feed. If they already move FP/precision/recall/weighted
+detection, improve the *inputs* (consistent grouping, penalties) instead of adding a
+parallel number.

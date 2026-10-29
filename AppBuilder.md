@@ -190,6 +190,7 @@ vulnapps/
 │   ├── 038_scan_chain_credits.sql       # explicit human-adjudicated chain credit (see below)
 │   ├── 039_finding_matched_chain.sql    # scan_findings.matched_chain_id (direct chain match)
 │   ├── 040_finding_matches.sql          # finding_matches join table; one finding -> many vulns/chains
+│   ├── 044_known_false_positives.sql    # per-app known-FP corpus, scan_findings.known_fp_id, audit 'known_fp'
 │   ├── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
 │   ├── 013_api_keys.sql                 # API keys table with scopes
 │   ├── 014_scan_labels.sql              # Labels + scan_labels junction table
@@ -261,7 +262,7 @@ Uses `python-dotenv` to load `.env` file.
 
 ---
 
-## Database Schema (migrations 001-042)
+## Database Schema (migrations 001-044)
 
 **Migration runner** (`app/database.py`): files run in order, tracked by filename in
 `_migrations`, each with `executescript`. A `duplicate column name` error means that column
@@ -487,7 +488,51 @@ ALTER TABLE apps ADD COLUMN benchmark_verified INTEGER NOT NULL DEFAULT 0;
 -- weight_verified: this single vuln's contextual severity and tier have been
 -- hand-reviewed, as opposed to still carrying the 024 backfill/placeholder.
 ALTER TABLE vulnerabilities ADD COLUMN weight_verified INTEGER NOT NULL DEFAULT 0;
+
+-- Migration 044: known false positives (see "Known False Positives" below).
+CREATE TABLE known_false_positives (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    fp_id TEXT NOT NULL,                 -- D-n (decoy) or FP-NNN (reviewed); UNIQUE(app_id, fp_id)
+    title TEXT NOT NULL, vuln_type TEXT, http_method TEXT, url TEXT, parameter TEXT, filename TEXT,
+    description TEXT,                    -- what a scanner reports and why it is not real
+    penalty_weight INTEGER,              -- NULL (unreviewed, 27) or 1/3/9/27
+    source TEXT NOT NULL DEFAULT 'reviewed',   -- 'decoy' | 'reviewed'
+    created_from_finding_id INTEGER REFERENCES scan_findings(id) ON DELETE SET NULL,
+    created_by INTEGER REFERENCES users(id), created_at TEXT, updated_at TEXT
+);
+ALTER TABLE scan_findings ADD COLUMN known_fp_id INTEGER
+    REFERENCES known_false_positives(id) ON DELETE SET NULL;
+-- audit_log rebuilt so entity_type also allows 'known_fp'.
 ```
+
+### Known False Positives
+A per-app corpus of non-issues scanners keep flagging: planted decoys (`source='decoy'`,
+catalog ids `D1`…, e.g. TaintedPort's DECOYS section) and FPs a reviewer chose to remember
+(`source='reviewed'`, auto ids `FP-001`…). Service `app/services/known_fps.py`, routes
+`/api/apps/{id}/known-fps`. Returned by app detail (`known_fps`, each with `finding_count`)
+and scan detail (`known_fps`, for the picker). Cloning an app copies its known FPs (not
+their finding links).
+
+Linking a finding to a known FP (mark-fp with `known_fp_id`, or `remember: true`, which
+first creates an `FP-NNN` entry from the finding's fields at the chosen penalty) sets
+`known_fp_id` and **copies** the entry's `fp_id` into `fp_group` and its `penalty_weight`
+into `fp_impact_weight`. The scorer is unchanged: every finding on one known FP is one FP
+group at one penalty, in every scan, so it moves FP count and precision consistently (no
+separate decoy metric). Updating an entry (rename such as `FP-007 → D8`, penalty, source)
+rewrites those copies on all linked findings; deleting it only unlinks them (they stay FP
+with the copied group/penalty, so no past score moves). Every path that clears a finding's
+FP state (match, ignore, promote, chain promote, rematch) also clears `known_fp_id`. Known
+FPs are not revisioned: like reviewer FP decisions they are review state, not the ground
+truth recall is measured against. Changes are audit-logged (`entity_type='known_fp'`).
+
+UI: the app page has a **Known False Positives** section after Chains (table with id,
+source badge, title, why-not-real description, location, penalty, linked finding count;
+add/edit/delete via `KnownFpForm.jsx`). On the scan page, the FP action opens the FP
+editor with a picker defaulting to **Remember as new known FP**, then the app's known FPs,
+then **One-off (don't remember)**; the cluster-key input shows only for one-offs and the
+penalty select is replaced by the known FP's penalty when one is chosen. Linked FPs read
+"Known FP D4 · penalty …".
 
 ### Tech Stack
 Apps have a one-to-many relationship with `app_technologies`. Each row stores a single technology name (e.g., "PHP", "Next.js"). In the form, users enter comma-separated values which are parsed and stored as individual rows. The `category` column in `apps` is legacy and not used in the UI.
@@ -723,6 +768,10 @@ release versions.
 | POST | `/api/apps/{id}/chains` | App write / full | Create. See **Exploit chains** above for the full field list and modeling rule |
 | PUT | `/api/apps/{id}/chains/{pk}` | App write / full | Full update — title/description/weight/members |
 | DELETE | `/api/apps/{id}/chains/{pk}` | App write / full | Hard delete |
+| GET | `/api/apps/{id}/known-fps` | None / read (app visible) | List known false positives with `finding_count` |
+| POST | `/api/apps/{id}/known-fps` | App write / full | Create: `{fp_id, source, title, vuln_type, http_method, url, parameter, filename, description, penalty_weight}`. `fp_id` required for decoys; reviewed ones default to the next `FP-NNN` |
+| PUT | `/api/apps/{id}/known-fps/{pk}` | App write / full | Update (incl. rename); rewrites linked findings' `fp_group`/`fp_impact_weight` |
+| DELETE | `/api/apps/{id}/known-fps/{pk}` | App write / full | Delete; linked findings stay FP, unlinked |
 
 ### Scans (`/api/scans` + `/api/apps/{id}/scans`)
 | Method | Path | Auth / Scope | Description |
@@ -733,7 +782,7 @@ release versions.
 | DELETE | `/api/scans/{id}` | Scan write | Delete scan |
 | POST | `/api/apps/{id}/scans` | User+ / vuln-mapper | Submit scan. Body: `{scanner_name, scanner_version, scan_date, authenticated, is_public, notes, cost, tokens, duration, findings, labels}`. The server stamps `corpus_revision` with the app's latest revision. Each finding may include `{vuln_type, http_method, url, parameter, filename, title, severity, description, poc, remediation, code_location, fp_group}` |
 | POST | `/api/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Set a finding's complete match set: `{vuln_ids: [int], chain_ids: [int]}` (full replacement; both empty clears it to Pending). One finding may credit several vulns and/or chains — see **Exploit chains**. The legacy single-value bodies (`{vuln_id: int\|null}` / `{chain_id: int\|null}`, mutually exclusive) are still accepted for older clients |
-| POST | `/api/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive. Optional body `{fp_group}` clusters findings describing the same non-issue so precision counts them once |
+| POST | `/api/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive. Optional body `{fp_group, fp_impact_weight, known_fp_id, remember}`: `fp_group` clusters findings describing the same non-issue so precision counts them once; `known_fp_id` links one of the app's known FPs (its id/penalty override the others); `remember: true` adds the finding as a new `FP-NNN` known FP and links it. See **Known False Positives** |
 | POST | `/api/scans/{id}/findings/{fid}/ignore` | Scan write / vuln-mapper | Set/clear the "Ignored" state. Body `{ignored: bool}` (default `true`). Callable from any state — ignoring clears any match/FP; clearing returns to Pending |
 | POST | `/api/scans/{id}/findings/{fid}/promote` | App write / vuln-mapper | Promote a pending finding into a new vuln on the scan's app. Body: `{vuln_id, title, severity, vuln_type, http_method, url, parameter, filename, description, poc, remediation, code_location, impact_weight, difficulty_tier}` — missing fields fall back to the finding's stored values; `vuln_id` auto-generates as the next `DISC-NNN` slug if blank. **`existed_since` is REQUIRED** (`all_along` \| `this_revision`) — **400** without it. Always opens a `new_prior_vuln` revision. The finding is linked to the new vuln on success |
 | POST | `/api/scans/{id}/rematch` | Scan write / vuln-mapper | Re-run automatic matching for all findings (in-scope vulns only) |

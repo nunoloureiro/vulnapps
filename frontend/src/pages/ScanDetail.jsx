@@ -32,7 +32,7 @@ export default function ScanDetail() {
   if (error) return <div className="alert alert-error">{error}</div>;
   if (!data) return null;
 
-  const { scan, app, metrics, findings, missed_vulns, known_vulns, chains, labels, can_edit,
+  const { scan, app, metrics, findings, missed_vulns, known_vulns, chains, known_fps, labels, can_edit,
           can_view_cost, revision } = data;
 
   return (
@@ -44,7 +44,7 @@ export default function ScanDetail() {
 
       <ScanMeta scan={scan} app={app} labels={labels || []} canEdit={can_edit} canViewCost={can_view_cost} scanId={id} onUpdate={load} />
       <Metrics metrics={metrics} app={app} revision={revision} scan={scan} />
-      <Findings findings={findings} knownVulns={known_vulns || []} chains={chains || []} canEdit={can_edit}
+      <Findings findings={findings} knownVulns={known_vulns || []} chains={chains || []} knownFps={known_fps || []} canEdit={can_edit}
                 scanId={id} appId={app.id} onUpdate={load} />
       {missed_vulns && missed_vulns.length > 0 && <MissedVulns vulns={missed_vulns} appId={app.id} />}
       {chains && chains.length > 0 && (
@@ -532,15 +532,29 @@ function TierMatrix({ tiers, metrics }) {
   );
 }
 
-// Inline editor for the FP cluster key. Findings sharing a key count as one
-// false positive, matching how several findings on one vuln count as one TP.
-function FpGroup({ scanId, finding, canEdit, onUpdate }) {
-  const [editing, setEditing] = useState(false);
+// Inline editor for a finding's FP verdict: which known false positive it is
+// (or a new one to remember, or a one-off), its cluster key and its penalty.
+// Findings sharing a key count as one false positive, matching how several
+// findings on one vuln count as one TP. Linked to a known FP, the key and
+// penalty are the known FP's own, so every scan that hits it counts the same.
+// Marking a new FP opens this with "remember" preselected.
+function FpGroup({ scanId, finding, knownFps, canEdit, onUpdate, startEditing = false, onCancel }) {
+  const initialLink = () => finding.known_fp_id ? String(finding.known_fp_id) : (finding.is_false_positive ? '' : 'new');
+  const [editing, setEditing] = useState(startEditing);
+  const [link, setLink] = useState(initialLink);
   const [draft, setDraft] = useState(finding.fp_group || '');
   const [weight, setWeight] = useState(finding.fp_impact_weight ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const penaltyLabel = finding.fp_impact_weight == null ? 'penalty unreviewed (27 pts)' : `penalty ${finding.fp_impact_weight} pts`;
+  const linked = knownFps.find(k => k.id === finding.known_fp_id);
+  const chosen = knownFps.find(k => String(k.id) === link);
+
+  const open = () => {
+    setLink(initialLink()); setDraft(finding.fp_group || ''); setWeight(finding.fp_impact_weight ?? '');
+    setError(''); setEditing(true);
+  };
+  const cancel = () => { setEditing(false); onCancel?.(); };
 
   const save = async () => {
     if (saving) return;
@@ -548,9 +562,13 @@ function FpGroup({ scanId, finding, canEdit, onUpdate }) {
     setError('');
     try {
       await api.post(`/scans/${scanId}/findings/${finding.id}/mark-fp`, {
-        fp_group: draft.trim() || null, fp_impact_weight: weight === '' ? null : Number(weight),
+        fp_group: link === '' ? (draft.trim() || null) : null,
+        fp_impact_weight: weight === '' ? null : Number(weight),
+        known_fp_id: chosen ? chosen.id : null,
+        remember: link === 'new',
       });
       setEditing(false);
+      onCancel?.();
       onUpdate();
     } catch (err) {
       setError(err.message);
@@ -559,38 +577,59 @@ function FpGroup({ scanId, finding, canEdit, onUpdate }) {
     }
   };
 
+  const summary = finding.known_fp_id
+    ? <span title={linked?.title}>Known FP <span className="font-mono">{linked?.fp_id || finding.fp_group}</span></span>
+    : finding.fp_group ? <span className="font-mono">group: {finding.fp_group}</span> : <span className="text-muted">FP · ungrouped</span>;
+
   if (!canEdit) {
-    return <span className="text-muted text-xs">{finding.fp_group ? `group: ${finding.fp_group}` : 'FP'} · {penaltyLabel}</span>;
+    return <span className="text-muted text-xs">{summary} · {penaltyLabel}</span>;
   }
   if (editing) {
     return (
       <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input className="form-input" aria-label="False-positive cluster key" value={draft} autoFocus disabled={saving}
-               onChange={e => setDraft(e.target.value)}
-               placeholder="cluster key…"
-               style={{ width: 120, padding: '2px 6px', fontSize: '0.8rem' }}
-               onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }} />
-        <select className="form-select" aria-label="Reviewer false-positive impact penalty" value={weight} onChange={e => setWeight(e.target.value)} style={{ width: 160 }} disabled={saving}>
-          <option value="">Unreviewed (27 pts)</option>
-          {[1, 3, 9, 27].map(value => <option key={value} value={value}>{value} pts · reviewed</option>)}
+        <select className="form-select" aria-label="Known false positive" value={link} disabled={saving}
+                onChange={e => setLink(e.target.value)} style={{ width: 220 }}>
+          <option value="new">Remember as new known FP</option>
+          {knownFps.length > 0 && (
+            <optgroup label="Known false positives">
+              {knownFps.map(k => <option key={k.id} value={String(k.id)}>{k.fp_id} — {k.title}</option>)}
+            </optgroup>
+          )}
+          <option value="">One-off (don't remember)</option>
         </select>
+        {link === '' && (
+          <input className="form-input" aria-label="False-positive cluster key" value={draft} autoFocus disabled={saving}
+                 onChange={e => setDraft(e.target.value)}
+                 placeholder="cluster key…"
+                 style={{ width: 120, padding: '2px 6px', fontSize: '0.8rem' }}
+                 onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel(); }} />
+        )}
+        {chosen ? (
+          <span className="text-muted text-xs">penalty {chosen.penalty_weight ?? 'unreviewed (27)'}{chosen.penalty_weight != null && ' pts'} from {chosen.fp_id}</span>
+        ) : (
+          <select className="form-select" aria-label="Reviewer false-positive impact penalty" value={weight} onChange={e => setWeight(e.target.value)} style={{ width: 160 }} disabled={saving}>
+            <option value="">Unreviewed (27 pts)</option>
+            {[1, 3, 9, 27].map(value => <option key={value} value={value}>{value} pts · reviewed</option>)}
+          </select>
+        )}
         <button className="btn btn-primary btn-sm" onClick={save} disabled={saving}
                 style={{ height: 22, padding: '0 0.4rem', fontSize: '0.7rem' }}>{saving ? 'Saving…' : 'Set'}</button>
-        <button className="btn btn-outline btn-sm" disabled={saving} onClick={() => setEditing(false)}>Cancel</button>
+        <button className="btn btn-outline btn-sm" disabled={saving} onClick={cancel}>Cancel</button>
         {error && <span role="alert" className="text-error text-xs">{error}</span>}
       </div>
     );
   }
   return (
-    <button type="button" className="editable-field text-xs" onClick={() => { setDraft(finding.fp_group || ''); setWeight(finding.fp_impact_weight ?? ''); setError(''); setEditing(true); }}
-          title="Review the FP cluster and its impact penalty; clustered penalties use the maximum">
-      {finding.fp_group ? <span className="font-mono">group: {finding.fp_group}</span> : <span className="text-muted">FP · ungrouped</span>} · {penaltyLabel}
+    <button type="button" className="editable-field text-xs" onClick={open}
+          title="Review which known false positive this is, its cluster and its impact penalty; clustered penalties use the maximum">
+      {summary} · {penaltyLabel}
     </button>
   );
 }
 
-function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpdate }) {
+function Findings({ findings, knownVulns, chains, knownFps, canEdit, scanId, appId, onUpdate }) {
   const [promoting, setPromoting] = useState(null);
+  const [markingFp, setMarkingFp] = useState(null); // finding id whose FP verdict is being chosen
   const [promoteError, setPromoteError] = useState('');
   const [promotingChain, setPromotingChain] = useState(null);
   const [expanded, setExpanded] = useState(() => new Set());
@@ -643,10 +682,6 @@ function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpda
     await setMatches(f.id, vulnIds, chainIds);
   };
 
-  const markFP = async (findingId) => {
-    await api.post(`/scans/${scanId}/findings/${findingId}/mark-fp`, {});
-    onUpdate();
-  };
 
   const setIgnored = async (findingId, ignored) => {
     await api.post(`/scans/${scanId}/findings/${findingId}/ignore`, { ignored });
@@ -835,16 +870,18 @@ function Findings({ findings, knownVulns, chains, canEdit, scanId, appId, onUpda
                           )}
                         </div>
                       )}
-                      {!!f.is_false_positive && (
+                      {(!!f.is_false_positive || markingFp === f.id) && (
                         <div style={{ marginTop: 2 }}>
-                          <FpGroup scanId={scanId} finding={f} canEdit={canEdit} onUpdate={onUpdate} />
+                          <FpGroup key={`${f.id}-${f.is_false_positive}`} scanId={scanId} finding={f} knownFps={knownFps}
+                                   canEdit={canEdit} onUpdate={onUpdate}
+                                   startEditing={markingFp === f.id} onCancel={() => setMarkingFp(null)} />
                         </div>
                       )}
                     </td>
                     <td data-label="">
                       <div className="finding-actions">
                         {canEdit && !f.is_false_positive && (
-                          <button className="fa-btn fa-fp" onClick={() => markFP(f.id)} title="Mark as False Positive"><IconFP />FP</button>
+                          <button className="fa-btn fa-fp" onClick={() => setMarkingFp(f.id)} title="Mark as False Positive"><IconFP />FP</button>
                         )}
                         {/* Reachable from any state, not just Pending. Ignoring
                             discards whatever the finding currently holds, so the
