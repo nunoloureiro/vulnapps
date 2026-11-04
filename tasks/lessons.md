@@ -186,6 +186,12 @@ scanners that have multiple recorded types, and preserve unknown or conflicting 
 A scanner can vary by harness, model and other settings. Use existing labels for those variations
 and let users choose which labels split grouped points. Do not hardcode model parsing or group
 by every label automatically. Scanner/type averages blend unselected variations and must say so.
+
+## Timestamp is a default, not a restriction on ordering
+When paginating a sortable table, preserve every existing order in both directions.
+Apply ordering globally before paging, use deterministic ties and explicit missing-value
+rules, and test non-default orders across page boundaries. Use native header buttons
+and aria-sort so keyboard and screen-reader users can operate and identify the sort.
 ## Don't add a metric an existing one already measures
 
 **Mistake:** Proposed a separate "decoys hit / decoys planted" metric (column, panel,

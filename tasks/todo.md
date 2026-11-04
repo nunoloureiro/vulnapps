@@ -610,3 +610,42 @@ uses the fork; a maintainer must apply the rebased branch to PR #9.
 - [x] Create a signed merge commit for parent review and publication.
 
 Review: all 24 frontend utility tests and production build pass. Upstream chains column and sorting auto-merged with the grouped chart controls. Preserved both independent lessons at the sole conflict. No scoring behavior or chart defaults changed.
+
+### Scan pagination (2026-10-28)
+- [x] Review upstream scan loading, scoring and timestamp ordering.
+- [x] Add optional backend pagination with stable timestamp ordering and page-only scoring for the default list.
+- [x] Move individual-list sorting and paging to the API; preserve full-scope grouped/chart/coverage behavior.
+- [x] Verify pagination boundaries, visibility, metric ordering, frontend build and UI.
+- [x] Review changes and prepare a focused PR against nunoloureiro/vulnapps main.
+
+Plan: keep the canonical backend scorer, without a new cache or duplicated scoring rules.
+SQL handles normal ordering and paging; calculated-metric ordering uses the existing scorer.
+
+Review: 233 self-contained backend tests pass on Python 3.12 (same selection as CI),
+21 frontend tests pass, and the production build, shell syntax and diff checks pass.
+Browser verification with the real API and 73 synthetic scans confirms timestamp
+ordering, 50/23-row page boundaries, sort/page-size resets, out-of-range recovery,
+and full-set grouped summaries. Coverage remains scoped to all 73 scans while the
+default request scores 50, down from 73 before pagination. Calculated-metric sorting
+still scores the matching set for correctness; no persistent cache was introduced.
+
+### Sort conventions follow-up (2026-10-28)
+- [x] Confirm all existing scan orders remain supported by the API and UI.
+- [x] Verify every order and direction across page boundaries.
+- [x] Use native keyboard-operable sort buttons with aria-sort.
+- [x] Validate and prepare the update to PR #14.
+
+Sort review: all nine existing orders pass ascending/descending checks against real
+canonical metrics, with stable ties and concatenated pages matching the global order.
+242 backend tests, 21 frontend tests and the production build pass. Browser confirms
+Enter/Space operate the Scanner sort, reset the page, and update aria-sort correctly.
+
+## PR #14 conflict resolution (2026-11-04)
+- [x] Integrate latest main and preserve paginated server sorting plus upstream chains display.
+- [x] Verify pagination and chain ordering: 268 backend tests on Python 3.12, 21 frontend tests, production build and diff checks pass.
+- [ ] Push signed merge commit and verify CI.
+
+## PR #15 pagination integration (2026-11-04)
+- [x] Integrate main after pagination merged; retain full datasets for charts and groups.
+- [x] Run frontend tests (26 pass), production build, backend pagination checks (14 pass) and diff checks.
+- [ ] Push signed merge commit and verify CI.
