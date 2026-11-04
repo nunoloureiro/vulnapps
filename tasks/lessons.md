@@ -175,3 +175,16 @@ When paginating a sortable table, preserve every existing order in both directio
 Apply ordering globally before paging, use deterministic ties and explicit missing-value
 rules, and test non-default orders across page boundaries. Use native header buttons
 and aria-sort so keyboard and screen-reader users can operate and identify the sort.
+## Don't add a metric an existing one already measures
+
+**Mistake:** Proposed a separate "decoys hit / decoys planted" metric (column, panel,
+compare row) for the known-FP corpus. Decoy hits are false positives, so FP count and
+precision already score them; the user rejected it as redundant.
+
+**Rule:** Before proposing a new metric, column or score, name which existing metric
+the same events already feed. If they already move FP/precision/recall/weighted
+detection, improve the *inputs* (consistent grouping, penalties) instead of adding a
+parallel number.
+
+## Limit PR actions to the requested authors
+When asked to work on my PRs, verify authorship and act only on those PRs. Do not merge another author’s PR as an adjacent cleanup.

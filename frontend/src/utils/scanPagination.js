@@ -1,4 +1,4 @@
-export const scanSortKeys = ['date', 'scanner', 'app', 'tp', 'fp', 'pending', 'fn', 'weighted_found', 'cost_per_point'];
+export const scanSortKeys = ['date', 'scanner', 'app', 'tp', 'fp', 'pending', 'fn', 'weighted_found', 'cost_per_point', 'chains'];
 export const scanPageSizes = [25, 50, 100, 200];
 
 export function scanPagination(params) {

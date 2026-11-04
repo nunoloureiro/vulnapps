@@ -255,3 +255,26 @@ async def test_every_sort_is_global_bidirectional_and_stable_across_pages(scan_d
         assert all(page["pagination"]["total"] == 7 and page["pagination"]["pages"] == 4 for page in pages)
         repeated = await scans_service.list_scans(db, ADMIN, page=1, page_size=2, **options)
         assert repeated["scans"] == pages[0]["scans"], "ties must retain timestamp and ID order"
+
+
+async def test_chain_sort_uses_full_scope_before_paging(scan_db, monkeypatch):
+    db, _ = scan_db
+    real_score = scans_service.scoring_service.score_many
+
+    async def chain_scores(db, scans):
+        metrics = await real_score(db, scans)
+        for scan in scans:
+            metrics[scan["id"]]["tiers"]["chained"].update(found=scan["id"] % 3, count=3)
+        return metrics
+
+    monkeypatch.setattr(scans_service.scoring_service, "score_many", chain_scores)
+    for direction, expected in (("desc", [5, 2, 7, 1, 4, 6, 3]),
+                                ("asc", [6, 3, 7, 1, 4, 5, 2])):
+        pages = [await scans_service.list_scans(
+            db, ADMIN, page=page, page_size=2, sort="chains", direction=direction,
+            include_metrics=True,
+        ) for page in range(1, 5)]
+        scans = [scan for page in pages for scan in page["scans"]]
+        assert [scan["id"] for scan in scans] == expected
+        assert all(scan["chains_found"] == scan["id"] % 3 and scan["chains_total"] == 3
+                   for scan in scans)

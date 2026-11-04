@@ -1,3 +1,18 @@
+# Known false positives (per-app FP corpus)
+
+Plan: `tasks/known-false-positives-plan.md`. Decisions confirmed 2026-10-28.
+
+Phase 1 review (2026-10-29): 8 new service tests + full suite (269) pass; frontend builds.
+Live server on a copy of the local DB: migration 044 applied (audit_log rebuild kept rows);
+link/remember/update-propagation/duplicate/invalid-id checked over HTTP; audit rows written.
+Deviations from the plan: no revisions for known FPs (review state, like reviewer FPs); a
+single `description` field holds the debunk; no `fp_source` column yet (phase 2 decides).
+Not seen rendered in a browser (no Playwright package in the repo).
+
+- [x] Phase 1: corpus, mark-FP link/remember (migration 044, `known_fps` service/routes, app + scan UI)
+- [ ] Phase 1: seed TaintedPort D1–D7 on vulnapps (after deploy), then reconcile catalog D* count
+- [ ] Phase 2: importer + server auto-match (pending only, TP wins)
+
 # GitHub Actions deployment
 
 - [x] Prune dangling images on EC2 after successful startup, with warning-only failure.
@@ -617,3 +632,8 @@ Sort review: all nine existing orders pass ascending/descending checks against r
 canonical metrics, with stable ties and concatenated pages matching the global order.
 242 backend tests, 21 frontend tests and the production build pass. Browser confirms
 Enter/Space operate the Scanner sort, reset the page, and update aria-sort correctly.
+
+## PR #14 conflict resolution (2026-11-04)
+- [x] Integrate latest main and preserve paginated server sorting plus upstream chains display.
+- [x] Verify pagination and chain ordering: 268 backend tests on Python 3.12, 21 frontend tests, production build and diff checks pass.
+- [ ] Push signed merge commit and verify CI.
