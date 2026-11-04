@@ -184,13 +184,17 @@ async def mark_finding_fp(request: Request, scan_id: int, finding_id: int):
 
     Optional body ``{"fp_group": "..."}`` clusters findings describing the same
     non-issue so precision counts one FP instead of three — the FP-side
-    equivalent of matching several findings to one vuln.
+    equivalent of matching several findings to one vuln. ``known_fp_id`` links
+    the finding to one of the app's known false positives (its id becomes the
+    group, its penalty the finding's); ``remember: true`` instead adds the
+    finding to the app's known FPs and links it.
     """
     user = await require_user(request)
     require_scope(user, "vuln-mapper")
     raw = await request.body()
     fp_group = None
     penalty_kwargs = {}
+    link_kwargs = {}
     if raw:
         import json
         try:
@@ -205,14 +209,23 @@ async def mark_finding_fp(request: Request, scan_id: int, finding_id: int):
                 if penalty is not None and (type(penalty) is not int or penalty not in (1, 3, 9, 27)):
                     raise HTTPException(status_code=400, detail="fp_impact_weight must be null or one of 1, 3, 9, 27")
                 penalty_kwargs["fp_impact_weight"] = penalty
+            known_fp_id = body.get("known_fp_id")
+            if known_fp_id is not None and type(known_fp_id) is not int:
+                raise HTTPException(status_code=400, detail="known_fp_id must be an integer or null")
+            remember = body.get("remember", False)
+            if type(remember) is not bool:
+                raise HTTPException(status_code=400, detail="remember must be a boolean")
+            link_kwargs = {"known_fp_id": known_fp_id, "remember": remember}
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     db = await get_connection()
     try:
-        await scans_service.mark_finding_fp(db, user, scan_id, finding_id, fp_group, **penalty_kwargs)
+        await scans_service.mark_finding_fp(db, user, scan_id, finding_id, fp_group,
+                                            **penalty_kwargs, **link_kwargs)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        msg = str(e)
+        raise HTTPException(status_code=400 if "must be" in msg or "already exists" in msg else 404, detail=msg)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     finally:

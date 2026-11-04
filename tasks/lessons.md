@@ -186,3 +186,17 @@ scanners that have multiple recorded types, and preserve unknown or conflicting 
 A scanner can vary by harness, model and other settings. Use existing labels for those variations
 and let users choose which labels split grouped points. Do not hardcode model parsing or group
 by every label automatically. Scanner/type averages blend unselected variations and must say so.
+## Don't add a metric an existing one already measures
+
+**Mistake:** Proposed a separate "decoys hit / decoys planted" metric (column, panel,
+compare row) for the known-FP corpus. Decoy hits are false positives, so FP count and
+precision already score them; the user rejected it as redundant.
+
+**Rule:** Before proposing a new metric, column or score, name which existing metric
+the same events already feed. If they already move FP/precision/recall/weighted
+detection, improve the *inputs* (consistent grouping, penalties) instead of adding a
+parallel number.
+
+## Limit PR actions to the requested authors
+
+When the user scopes PR work to their own PRs, only update those branches. Do not attempt to merge another author's PR as adjacent cleanup.

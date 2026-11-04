@@ -167,3 +167,26 @@ async def test_mapping_a_finding_to_a_chain_marks_it_a_chain_report(db):
 
     cursor = await db.execute("SELECT is_chain FROM scan_findings WHERE id = ?", (fid,))
     assert (await cursor.fetchone())["is_chain"] == 1
+
+
+async def test_scan_list_counts_chains_found(db):
+    """The scan list's Chains column: credited chains over all chains."""
+    app_id, (a, b, c) = await setup(db)
+    found = await chains_service.create_chain(db, ADMIN, app_id, {
+        "title": "A to B", "severity": "high", "member_vuln_ids": [a, b],
+    })
+    await chains_service.create_chain(db, ADMIN, app_id, {
+        "title": "B to C", "severity": "high", "member_vuln_ids": [b, c],
+    })
+    scan_id = await scans_service.submit_scan(
+        db, ADMIN, app_id, scanner_name="S", scan_date="2026-10-28", is_public=0,
+        notes=None, cost=None, tokens=None, duration=None,
+        findings_data=[{"vuln_type": "x", "title": "the chain"}],
+    )
+    cursor = await db.execute("SELECT id FROM scan_findings WHERE scan_id = ?", (scan_id,))
+    fid = (await cursor.fetchone())["id"]
+    await scans_service.match_finding(db, ADMIN, scan_id, fid, [], [found["id"]])
+
+    result = await scans_service.list_scans(db, ADMIN, include_metrics=True)
+    row = next(s for s in result["scans"] if s["id"] == scan_id)
+    assert (row["chains_found"], row["chains_total"]) == (1, 2)

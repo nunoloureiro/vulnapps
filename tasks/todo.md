@@ -1,3 +1,18 @@
+# Known false positives (per-app FP corpus)
+
+Plan: `tasks/known-false-positives-plan.md`. Decisions confirmed 2026-10-28.
+
+Phase 1 review (2026-10-29): 8 new service tests + full suite (269) pass; frontend builds.
+Live server on a copy of the local DB: migration 044 applied (audit_log rebuild kept rows);
+link/remember/update-propagation/duplicate/invalid-id checked over HTTP; audit rows written.
+Deviations from the plan: no revisions for known FPs (review state, like reviewer FPs); a
+single `description` field holds the debunk; no `fp_source` column yet (phase 2 decides).
+Not seen rendered in a browser (no Playwright package in the repo).
+
+- [x] Phase 1: corpus, mark-FP link/remember (migration 044, `known_fps` service/routes, app + scan UI)
+- [ ] Phase 1: seed TaintedPort D1–D7 on vulnapps (after deploy), then reconcile catalog D* count
+- [ ] Phase 2: importer + server auto-match (pending only, TP wins)
+
 # GitHub Actions deployment
 
 - [x] Prune dangling images on EC2 after successful startup, with warning-only failure.
@@ -588,3 +603,10 @@ Rebase review: current main includes PR #12. Preserved its full scan table and c
 visibility while retaining reviewed F₀.₅ in grouped summaries, charts and comparisons.
 The configured GitHub account has READ access upstream, so prepared branch publication
 uses the fork; a maintainer must apply the rebased branch to PR #9.
+
+## PR #15 conflict update (2026-11-04)
+- [x] Merge current upstream main, preserving chart controls and upstream scan changes.
+- [x] Run frontend utility tests, production build and diff checks.
+- [x] Create a signed merge commit for parent review and publication.
+
+Review: all 24 frontend utility tests and production build pass. Upstream chains column and sorting auto-merged with the grouped chart controls. Preserved both independent lessons at the sole conflict. No scoring behavior or chart defaults changed.

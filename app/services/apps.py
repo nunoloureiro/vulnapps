@@ -7,6 +7,7 @@ from app.dependencies import get_team_role
 from app.visibility import app_visibility_filter
 from app.services.vulns import MAX_VULNS_PER_APP
 from app.services import chains as chains_service
+from app.services import known_fps as known_fps_service
 
 
 _ALLOWED_URL_SCHEMES = ("http", "https")
@@ -228,8 +229,9 @@ async def get_app(db, user, app_id: int) -> dict:
     """
     vis_clause, vis_params = app_visibility_filter(user)
     cursor = await db.execute(
-        f"""SELECT apps.*, users.name as creator_name
+        f"""SELECT apps.*, users.name as creator_name, teams.name as team_name
             FROM apps LEFT JOIN users ON apps.created_by=users.id
+            LEFT JOIN teams ON apps.team_id=teams.id
             WHERE apps.id = ? AND {vis_clause}""",
         [app_id] + vis_params,
     )
@@ -265,6 +267,7 @@ async def get_app(db, user, app_id: int) -> dict:
 
     tech_stack = await _get_tech_stack(db, app_id)
     chains = await chains_service.list_chains(db, user, app_id)
+    known_fps = await known_fps_service.list_known_fps(db, user, app_id)
 
     # Permissions
     can_edit = False
@@ -291,6 +294,7 @@ async def get_app(db, user, app_id: int) -> dict:
         "vuln_count": vuln_count,
         "vulns_truncated": vulns_truncated,
         "chains": chains,
+        "known_fps": known_fps,
         "tech_stack": tech_stack,
         "scan_count": scan_count,
         "severity_counts": severity_counts,
@@ -432,6 +436,18 @@ async def create_app(
                         "INSERT INTO chain_members (chain_pk, vuln_id, step_order) VALUES (?, ?, ?)",
                         (new_chain_pk, new_vuln_id, m["step_order"]),
                     )
+
+        # Known false positives are app curation too (a new version keeps its
+        # decoys); their links to the source app's findings stay behind.
+        await db.execute(
+            """INSERT INTO known_false_positives
+               (app_id, fp_id, title, vuln_type, http_method, url, parameter, filename,
+                description, penalty_weight, source, created_by)
+               SELECT ?, fp_id, title, vuln_type, http_method, url, parameter, filename,
+                      description, penalty_weight, source, ?
+               FROM known_false_positives WHERE app_id = ?""",
+            (app_id, user["sub"], clone_from),
+        )
     await db.commit()
 
     cursor = await db.execute("SELECT * FROM apps WHERE id = ?", (app_id,))

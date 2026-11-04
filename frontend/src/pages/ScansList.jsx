@@ -134,6 +134,7 @@ export default function ScansList() {
         case 'fp': return s.fp_count ?? -1;
         case 'pending': return s.pending_count ?? -1;
         case 'fn': return s.fn_count ?? -1;
+        case 'chains': return s.chains_found ?? -1;
         case 'date':
         default: return s.scan_date || '';
       }
@@ -185,7 +186,7 @@ export default function ScansList() {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     } else {
       setSortKey(key);
-      setSortDir(['date','tp','fp','pending','fn','weighted_found'].includes(key) ? 'desc' : 'asc');
+      setSortDir(['date','tp','fp','pending','fn','weighted_found','chains'].includes(key) ? 'desc' : 'asc');
     }
   };
   const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
@@ -263,6 +264,7 @@ export default function ScansList() {
                   {sortableTh('weighted_found', 'Weighted Detection', { title: 'Impact-weighted points credited / available, including chains. Current benchmark revision.' })}
                   {sortableTh('cost_per_point', 'Cost / point', { title: 'Scan cost in USD / credited weighted detection points. Lower is better.' })}
                   <th>Severity</th>
+                  {sortableTh('chains', 'Chains', { title: 'Chains credited / chains in the benchmark. Current benchmark revision.' })}
                   <th>Labels</th>
                   {user && <th style={{ width: 40 }}></th>}
                 </tr>
@@ -308,6 +310,9 @@ export default function ScansList() {
                         {scan.cost_per_point === null ? '—' : `$${scan.cost_per_point.toFixed(4)}`}
                       </td>
                       <td data-label="Severity"><span className="sev-pill-group"><SeverityCells s={scan} /></span></td>
+                      <td data-label="Chains" style={{ whiteSpace: 'nowrap' }}>
+                        {scan.chains_found == null ? '-' : <>{scan.chains_found}<span className="text-muted text-sm"> / {scan.chains_total}</span></>}
+                      </td>
                       <td data-label="Labels">
                         {labels.length > 0 && (
                           <div className="scan-labels-cell">

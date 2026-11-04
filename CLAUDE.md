@@ -63,7 +63,7 @@
 # Data Consistency Validation
 
 - **Scan import**: after submitting a scan to vulnapps via `tools/import_scan.py`, verify the *count* of findings on vulnapps matches the count in the source report — the report's own findings table (e.g. `vulnerabilities.csv` / the summary table in the combined report) plus one file per finding under `vulnerabilities/`. Same check for chains against `vulnerability_chains/`. A mismatch means the importer dropped or merged something — investigate before trusting the scan.
-- **Catalog updates**: after adding/removing a vuln or chain in a benchmark app's `KnownVulnerabilities.txt` (e.g. TaintedPort-Vulns), verify the count of catalog vuln entries and chain entries reconciles with the count of `TP-*`/`CODE-*`/`PRBL*` vulns and `CHAIN-*` chains registered for the corresponding app on vulnapps. Don't assume a catalog edit and a vulnapps edit stayed in sync — check the numbers.
+- **Catalog updates**: after adding/removing a vuln or chain in a benchmark app's `KnownVulnerabilities.txt` (e.g. TaintedPort-Vulns), verify the count of catalog vuln entries and chain entries reconciles with the count of `TP-*`/`CODE-*`/`PRBL*` vulns and `CHAIN-*` chains registered for the corresponding app on vulnapps, and the catalog's `D*` decoys with the app's known false positives with `source='decoy'`. Don't assume a catalog edit and a vulnapps edit stayed in sync — check the numbers.
 
 ---
 
