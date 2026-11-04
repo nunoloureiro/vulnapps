@@ -604,6 +604,13 @@ visibility while retaining reviewed F₀.₅ in grouped summaries, charts and co
 The configured GitHub account has READ access upstream, so prepared branch publication
 uses the fork; a maintainer must apply the rebased branch to PR #9.
 
+## PR #15 conflict update (2026-11-04)
+- [x] Merge current upstream main, preserving chart controls and upstream scan changes.
+- [x] Run frontend utility tests, production build and diff checks.
+- [x] Create a signed merge commit for parent review and publication.
+
+Review: all 24 frontend utility tests and production build pass. Upstream chains column and sorting auto-merged with the grouped chart controls. Preserved both independent lessons at the sole conflict. No scoring behavior or chart defaults changed.
+
 ### Scan pagination (2026-10-28)
 - [x] Review upstream scan loading, scoring and timestamp ordering.
 - [x] Add optional backend pagination with stable timestamp ordering and page-only scoring for the default list.
@@ -636,4 +643,9 @@ Enter/Space operate the Scanner sort, reset the page, and update aria-sort corre
 ## PR #14 conflict resolution (2026-11-04)
 - [x] Integrate latest main and preserve paginated server sorting plus upstream chains display.
 - [x] Verify pagination and chain ordering: 268 backend tests on Python 3.12, 21 frontend tests, production build and diff checks pass.
+- [ ] Push signed merge commit and verify CI.
+
+## PR #15 pagination integration (2026-11-04)
+- [x] Integrate main after pagination merged; retain full datasets for charts and groups.
+- [x] Run frontend tests (26 pass), production build, backend pagination checks (14 pass) and diff checks.
 - [ ] Push signed merge commit and verify CI.

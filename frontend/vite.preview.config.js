@@ -16,7 +16,7 @@ const labelNames = [
   'thinking-high', 'thinking-medium', 'judge-verified', 'authenticated',
   'baseline', 'candidate', 'regression', 'nightly', 'manual-review',
   'used-browser', 'used-source', 'harness-v3', 'harness-v4',
-  'long-label-to-check-filter-overflow-and-search',
+  'long-label-to-check-filter-overflow-and-search', 'whitebox',
 ];
 const labels = labelNames.map((name, i) => ({
   id: i + 1, name, color: ['#f97316', '#3b82f6', '#8b5cf6', '#10b981'][i % 4],
@@ -42,6 +42,21 @@ const scanLabels = Object.fromEntries(scans.map((scan, i) => [scan.id,
     i % 2, 2 + i % 3, 5 + i % 2, 7, 8 + i % 6, 14 + i % 5,
   ])].map(index => labels[index]).sort((a, b) => a.name.localeCompare(b.name)),
 ]));
+
+// Additional scored variations exercise the grouped and precision/recall charts.
+for (let i = 0; i < 12; i++) {
+  const rift = i >= 6;
+  const sample = {
+    ...scans[0], id: 9100 + i, scanner_name: rift ? 'RIFT' : 'AI PenTest Agent',
+    scanner_version: rift ? '1.0' : i % 2 ? '3.1' : '3.2',
+    scan_date: `2026-10-${String(10 + i).padStart(2, '0')} 12:00`,
+    created_at: `2026-10-${String(10 + i).padStart(2, '0')}T12:00:00Z`,
+    cost: i === 2 || i === 3 ? null : 3 + i * 8,
+    tp_count: 12 + i, fp_count: i % 2, fn_count: 16 - i, pending_count: 0,
+  };
+  scans.push(sample);
+  scanLabels[sample.id] = [labels[rift ? 19 : i % 2], labels[2 + i % 2], labels[16 + i % 2]];
+}
 
 function previewMetrics(scan) {
   const weighted_found = scan.tp_count === null ? null : scan.tp_count * (2 + scan.id % 3);
