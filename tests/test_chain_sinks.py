@@ -309,9 +309,7 @@ async def test_confirm_endpoint_is_retired():
     """Chain credit only comes from a finding that reports the chain."""
     from httpx import ASGITransport, AsyncClient
     from app.main import app
-    from app.auth import create_token
-    headers = {"Authorization": f"Bearer {create_token(1, 'nuno', 'admin')}"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/api/scans/1/chains/1/confirm", headers=headers, json={})
+        resp = await client.post("/api/scans/1/chains/1/confirm", json={})
     assert resp.status_code == 410
     assert "link the finding" in resp.json()["detail"]

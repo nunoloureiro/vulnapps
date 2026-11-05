@@ -245,8 +245,8 @@ async def confirm_chain_credit(request: Request, scan_id: int, chain_pk: int):
     """Retired. Chain credit comes only from a finding that reports the chain:
     link it with ``POST /findings/{fid}/match`` (``chain_ids``). Confirming from
     members matched by separate findings credited chains no finding reported.
-    Existing confirmations still count until revoked (DELETE below)."""
-    await require_user(request)
+    Existing confirmations still count until revoked (DELETE below). Answers
+    the same to everyone: it reads and writes nothing."""
     raise HTTPException(
         status_code=410,
         detail="Chain confirmation is retired: link the finding that reports the chain instead",

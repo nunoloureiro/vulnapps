@@ -222,3 +222,13 @@ using the pattern tools/import_scan.py already had.
 **Rule:** Any script that makes HTTPS calls starts with `import truststore;
 truststore.inject_into_ssl()` before importing httpx, as import_scan.py does. Check the
 existing tools for the pattern before writing a new client.
+
+## Run the CI test command, not just the local one
+
+**Mistake:** Added an API test that passed locally (tests copy the real vulnapps.db) but failed in
+CI, which runs `pytest --ignore=tests/test_api_endpoints.py` against an empty DATABASE_PATH. The
+deploy failed with "no such table: users".
+
+**Rule:** Before pushing a new test, also run it CI's way:
+`DATABASE_PATH=$(mktemp -d)/ci.db .venv/bin/python -m pytest -q --ignore=tests/test_api_endpoints.py`.
+Tests that need the app over HTTP must not depend on rows in the real database.
