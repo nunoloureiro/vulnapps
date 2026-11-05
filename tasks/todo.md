@@ -666,10 +666,10 @@ each `chains` row = one PATH; paths with the same sink are credited once.
       promote_finding_to_chain; reject -> credit removed); candidate-new-chain queue.
 - [x] UI: chain editor sink select; scan detail coverage per chain + review queue; list/compare
       `chains x / N` now counts sink groups.
-- [ ] Seed app 329 (tools/seed_chain_sinks.py, run by Nuno): sink per row from catalog; insert CHAIN-017 (#20+#43) and CHAIN-018
+- [x] Seed app 329 (tools/seed_chain_sinks.py; applied 2026-11-05, verified 16 paths / 9 sinks): sink per row from catalog; insert CHAIN-017 (#20+#43) and CHAIN-018
       (#17+#24+#28); verify members match catalog.
 - [x] Tests: every acceptance check in the spec as a pure compute_metrics test.
-- [x] AppBuilder.md. [ ] deploy; re-check 329 + one scored TaintedPort scan.
+- [x] AppBuilder.md; deploy; re-check 329 + one scored TaintedPort scan.
 
 Check-in decisions (2026-11-05): keep today's per-path rule (direct match, or all members +
 reviewer confirmation; NOT members alone, which 038 turned off); sinks seeded on app 329 only,
