@@ -206,3 +206,14 @@ parallel number.
 ## Limit PR actions to the requested authors
 
 When the user scopes PR work to their own PRs, only update those branches. Do not attempt to merge another author's PR as adjacent cleanup.
+
+## New tools that call HTTPS must use the OS trust store
+
+**Mistake:** Wrote tools/seed_chain_sinks.py with a plain httpx client. Zscaler (always on)
+re-signs TLS with a root only the macOS Keychain trusts, so it failed with
+CERTIFICATE_VERIFY_FAILED; I then worked around it with an exported cert bundle instead of
+using the pattern tools/import_scan.py already had.
+
+**Rule:** Any script that makes HTTPS calls starts with `import truststore;
+truststore.inject_into_ssl()` before importing httpx, as import_scan.py does. Check the
+existing tools for the pattern before writing a new client.

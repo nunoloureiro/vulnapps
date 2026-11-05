@@ -21,6 +21,15 @@ import argparse
 import os
 import sys
 
+try:
+    # OS trust store (Keychain etc.) instead of certifi: the Zscaler proxy
+    # re-signs HTTPS with a root only the OS trusts. Must precede httpx.
+    # Same as tools/import_scan.py.
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 import httpx
 
 # path -> (members in catalog order, sink)
