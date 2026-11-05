@@ -306,13 +306,14 @@ def compute_metrics(
         completes; ``adjudication_complete`` says whether they have.
     ``weighted_rate``
         Impact coverage: ``weighted_found / weighted_total``. A matched
-        vuln scores its full weight. A chain scores its full weight when
-        EITHER: (a) some finding is matched directly to the chain
-        (``matched_chain_ids``) — the scanner's own report contained one
-        finding that itself named/narrated combining the members, which is
-        first-class evidence on its own, same as any vuln match; or (b)
-        every member is independently matched AND a reviewer has explicitly
-        confirmed (``confirmed_chain_ids``) this scan demonstrates it.
+        vuln scores its full weight. A chain path scores when EITHER: (a)
+        some finding is matched directly to it (``matched_chain_ids``) — a
+        finding that REPORTS the chain, combining its steps, which is the
+        only way to earn chain credit now; or (b) legacy: every member is
+        matched AND a reviewer confirmed it (``confirmed_chain_ids``,
+        scan_chain_credits). New confirmations can no longer be made —
+        separate findings that never connect the steps are not a chain —
+        but existing ones count until revoked.
         Matching every member alone (neither (a) nor (b)) is never
         sufficient — confirmed on real scan data where two findings
         independently matched a chain's two members while explicitly

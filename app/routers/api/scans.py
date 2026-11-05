@@ -242,33 +242,15 @@ async def mark_finding_fp(request: Request, scan_id: int, finding_id: int):
 
 @router.post("/{scan_id}/chains/{chain_pk}/confirm")
 async def confirm_chain_credit(request: Request, scan_id: int, chain_pk: int):
-    """Explicitly confirm this scan demonstrates *chain_pk* end to end.
-
-    Matching every member is necessary but not sufficient for chain credit —
-    see app/services/scans.py::confirm_chain_credit. Optional body
-    ``{"notes": "..."}`` records why the reviewer is confident.
-    """
-    user = await require_user(request)
-    require_scope(user, "vuln-mapper")
-    raw = await request.body()
-    notes = None
-    if raw:
-        import json
-        try:
-            notes = (json.loads(raw) or {}).get("notes")
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="Invalid JSON body")
-
-    db = await get_connection()
-    try:
-        result = await scans_service.confirm_chain_credit(db, user, scan_id, chain_pk, notes)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    finally:
-        await db.close()
-    return result
+    """Retired. Chain credit comes only from a finding that reports the chain:
+    link it with ``POST /findings/{fid}/match`` (``chain_ids``). Confirming from
+    members matched by separate findings credited chains no finding reported.
+    Existing confirmations still count until revoked (DELETE below)."""
+    await require_user(request)
+    raise HTTPException(
+        status_code=410,
+        detail="Chain confirmation is retired: link the finding that reports the chain instead",
+    )
 
 
 @router.delete("/{scan_id}/chains/{chain_pk}/confirm")

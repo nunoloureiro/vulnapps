@@ -1241,8 +1241,12 @@ SINK: the vuln its path ENDS on as actually executed. Each `chains` row is one P
 `step_order`; CHAIN-005 lists #43 + #44 but runs #44 first) groups paths. Rows sharing a
 sink are ONE chain; a row with NULL sink is its own chain (the pre-045 behaviour, so apps
 without seeded sinks score exactly as before). Rules, all mechanical:
-1. A PATH is demonstrated by the unchanged per-row rule (direct chain match, or every member
-   matched + reviewer confirmation — `credit_by_chain` still reports this per path).
+1. A PATH is demonstrated when a finding that REPORTS it (combines its steps) is matched to it
+   directly — by the importer, the Matched dropdown, or the scan page's **Reported by…** picker
+   (for when the importer couldn't tell). Separate findings that each show one member and never
+   connect them earn no chain credit. Reviewer confirmations (`scan_chain_credits`, 038) are
+   retired: `POST /scans/{id}/chains/{pk}/confirm` returns 410; existing rows still count,
+   shown "Confirmed (legacy)" with Revoke, until reviewed. `credit_by_chain` reports per path.
 2. Each sink group counts once in `weighted_total` (at the max weight among its known paths)
    and in the Chained tier count, and is credited once at the max weight among its
    demonstrated paths. A second path to the same sink adds coverage, not points.
@@ -1391,8 +1395,8 @@ ways:
 
 | Method | Route | Notes |
 |---|---|---|
-| POST | `/api/scans/{id}/chains/{chain_pk}/confirm` | Manual confirm. Body (optional): `{notes}`. **400** if every member isn't matched by this scan yet |
-| DELETE | `/api/scans/{id}/chains/{chain_pk}/confirm` | Revoke a manual confirmation — reverts to 0 credit (does not affect a direct match; unmatch the finding for that) |
+| POST | `/api/scans/{id}/chains/{chain_pk}/confirm` | **Retired (410).** Chain credit only comes from linking the finding that reports the chain (`/findings/{fid}/match` with `chain_ids`) |
+| DELETE | `/api/scans/{id}/chains/{chain_pk}/confirm` | Revoke a legacy manual confirmation — reverts to 0 credit (does not affect a direct match; unmatch the finding for that) |
 
 Both require scan write access + `vuln-mapper` scope, log to `audit_log`
 (actions `chain_credit_confirmed`/`chain_credit_revoked`), same access rule as

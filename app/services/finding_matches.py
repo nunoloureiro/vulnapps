@@ -78,17 +78,6 @@ async def clear(db, finding_id: int) -> None:
     await db.execute("DELETE FROM finding_matches WHERE finding_id = ?", (finding_id,))
 
 
-async def matched_vuln_ids_for_scan(db, scan_id: int) -> set[int]:
-    """Distinct vuln ids matched by any finding in *scan_id*."""
-    cursor = await db.execute(
-        "SELECT DISTINCT fm.vuln_id FROM finding_matches fm "
-        "JOIN scan_findings sf ON sf.id = fm.finding_id "
-        "WHERE sf.scan_id = ? AND fm.vuln_id IS NOT NULL",
-        (scan_id,),
-    )
-    return {row["vuln_id"] for row in await cursor.fetchall()}
-
-
 async def count_findings_for_vuln(db, vuln_id: int) -> int:
     """How many findings are matched to *vuln_id* (the vuln-delete guard)."""
     cursor = await db.execute(

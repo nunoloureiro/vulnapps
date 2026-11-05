@@ -58,13 +58,12 @@ export default function ScanDetail() {
 
 // Each chain row is one PATH; paths that end on the same vuln (the sink) are
 // one chain, credited once per scan at the best path it demonstrated — see
-// app/scoring.py::_chain_groups. A PATH is demonstrated one of two ways:
-// (1) automatic — some finding above is matched DIRECTLY to it (see the
-// "Chains" optgroup in the Matched Vuln dropdown), because the scanner's own
-// report narrated the pivot; or (2) manual — a reviewer reads every member's
-// finding text and explicitly confirms it. Matching every member alone was
-// found insufficient on real scan data (a scan's findings can match both
-// members while explicitly denying any connection between them).
+// app/scoring.py::_chain_groups. A PATH is demonstrated only when a finding
+// that REPORTS it — narrates the steps combined — is matched to it: by the
+// importer, the Matched dropdown, or "Reported by…" here when the importer
+// couldn't tell. Separate findings that each show one member, never
+// connecting them, earn no chain credit. Pre-existing reviewer confirmations
+// (scan_chain_credits) still count, marked legacy, until revoked.
 function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpdate }) {
   const [busy, setBusy] = useState(null);
   const vulnById = useMemo(() => {
@@ -87,9 +86,22 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
     setBusy(key);
     try { await fn(); onUpdate(); } finally { setBusy(null); }
   };
-  const toggle = (chain, credited) => run(chain.id, () => credited
-    ? api.del(`/scans/${scanId}/chains/${chain.id}/confirm`)
-    : api.post(`/scans/${scanId}/chains/${chain.id}/confirm`, {}));
+  const revoke = chain => run(chain.id, () => api.del(`/scans/${scanId}/chains/${chain.id}/confirm`));
+  // A reviewer's call for when the importer couldn't tell: pick the finding
+  // that reports this chain. It becomes a direct match, like any other.
+  const linkFinding = (chain, findingId) => {
+    const f = findingById.get(findingId);
+    return run(chain.id, () => api.post(`/scans/${scanId}/findings/${findingId}/match`, {
+      vuln_ids: f.matched_vuln_ids || [],
+      chain_ids: [...new Set([...(f.matched_chain_ids || []), chain.id])],
+    }));
+  };
+  // Chain reports first, then findings touching one of the path's members.
+  const candidates = chain => findings
+    .filter(f => !f.is_false_positive && !f.is_ignored && !(f.matched_chain_ids || []).includes(chain.id))
+    .map(f => ({ f, rank: f.is_chain ? 0 : (f.matched_vuln_ids || []).some(v => chain.members.includes(v)) ? 1 : 2 }))
+    .sort((a, b) => a.rank - b.rank)
+    .map(x => x.f);
   const review = (n, body) => run(`n${n.finding_id}`, () =>
     api.post(`/scans/${scanId}/findings/${n.finding_id}/novel-chain`, body));
   // Accept a credited novel path permanently: a new path row on the same sink.
@@ -106,7 +118,6 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
   };
 
   const pathRow = (chain, indent) => {
-    const eligible = chain.members.length > 0 && chain.members.every(vid => matchedIds.has(vid));
     const credited = creditByChain[String(chain.id)] === 1 || creditByChain[chain.id] === 1;
     const directMatch = directMatchChainIds.has(chain.id);
     return (
@@ -128,26 +139,28 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
         </td>
         <td>
           {directMatch ? (
-            <span className="text-success" title="A finding above is matched directly to this path">✓ Demonstrated (direct match)</span>
+            <span className="text-success" title="A finding above is matched directly to this path">✓ Demonstrated (reported)</span>
           ) : credited ? (
             <>
-              <span className="text-success">✓ Confirmed</span>
+              <span className="text-warning" title="Credited by a reviewer confirmation from before only reported chains counted. Link the finding that reports it, or revoke.">✓ Confirmed (legacy)</span>
               {canEdit && (
                 <div>
                   <button className="btn btn-outline btn-sm" disabled={busy === chain.id}
-                          onClick={() => toggle(chain, true)}>Revoke</button>
+                          onClick={() => revoke(chain)}>Revoke</button>
                 </div>
               )}
             </>
-          ) : eligible ? (
-            canEdit ? (
-              <button className="btn btn-primary btn-sm" disabled={busy === chain.id}
-                      onClick={() => toggle(chain, false)}>
-                Confirm demonstrated
-              </button>
-            ) : <span className="text-warning text-sm">Awaiting review</span>
           ) : (
-            <span className="text-muted text-sm">Members not all matched</span>
+            <span className="text-muted text-sm">Not reported</span>
+          )}
+          {canEdit && !directMatch && (
+            <select className="form-select mt-1" style={{ maxWidth: 220 }} disabled={busy === chain.id} value=""
+                    onChange={e => e.target.value && linkFinding(chain, Number(e.target.value))}>
+              <option value="">Reported by…</option>
+              {candidates(chain).map(f => (
+                <option key={f.id} value={f.id}>{f.is_chain ? '⛓ ' : ''}{(f.title || f.vuln_type || 'Untitled').slice(0, 80)}</option>
+              ))}
+            </select>
           )}
         </td>
       </tr>
@@ -167,9 +180,10 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
       <h3 className="card-title mb-2">Chain Credit</h3>
       <p className="text-muted text-sm mb-2">
         A chain is identified by the vulnerability it ends on (its sink). Each row below is one known
-        path to it; the chain earns its weight once, when any one path is demonstrated: a finding above
-        matched to it directly, or a reviewer confirming this scan's findings show it end to end
-        (matching every member alone is never enough). More paths to the same sink add coverage, not points.
+        path to it; the chain earns its weight once, when a finding in this scan reports any one path,
+        combining its steps. Separate findings that each show one step, never connected, are not a chain.
+        If the importer missed it, pick the finding under "Reported by…". More paths to the same sink add
+        coverage, not points.
       </p>
       <div className="table-wrap">
         <table>

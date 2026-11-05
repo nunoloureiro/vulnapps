@@ -681,3 +681,15 @@ older apps keep NULL sinks and score unchanged.
 - Frontend builds. Importer now returns/posts `chain_sink_vuln_db_id` for unmatched chain reports.
 - Also fixed: new chain ids came from row COUNT+1, which would reuse a live id on 329 (CHAIN-016
   exists with 14 rows); now max(CHAIN-###)+1.
+
+## Chain credit only from a finding that reports the chain (2026-11-05)
+Rule (Nuno): a scan earns chain credit only when a finding reports the chain (combines its
+steps). Separate findings that never connect them earn none. Manual path kept for when the
+importer can't tell: "Reported by…" links the finding (a direct match).
+- [x] Scan 1346 (COS 2026-10-31): linked CHAIN-017/018/003 reports; revoked CHAIN-013/015
+      confirmations (591 -> 582). Rejected 2 non-chains (verified with the TaintedPort session).
+- [x] Audited every readable scan with confirmation-only credit (4): linked 12 reported
+      chains (CHAIN-007 credited: deserialization -> gadget -> file write shown, RCE not run),
+      revoked 4 unreported (scan 349 -54, scan 330 -36, scans 348/301 unchanged), as predicted.
+- [x] Confirm endpoint retired (410); legacy confirmations still count, labelled, until revoked.
+- [ ] 10 scans returned 403 to the API key; they may still hold legacy confirmations.

@@ -640,8 +640,9 @@ function ComparisonView({ data, appId }) {
 // Read-only, cross-scanner view of chain credit. One row per chain — its
 // sink, the vuln every one of its paths ends on — credited once per scan at
 // the best path it demonstrated (app/scoring.py::_chain_groups). A path is
-// demonstrated only by a direct chain match or a reviewer's confirmation:
-// "every member matched independently" is NOT evidence (it has been pure
+// demonstrated only by a finding that reports it (a direct chain match; a few
+// legacy reviewer confirmations still count): "every member matched
+// independently" is NOT evidence (it has been pure
 // coincidence between two unrelated findings in production), so that case
 // renders as a miss (✗) with the detail in the title attribute. Reviewing a
 // real candidate happens on the scan's own detail page.
@@ -711,7 +712,7 @@ function ChainsMatrix({ chains, scanners, matrix, label }) {
                           <span
                             className="text-muted"
                             title={allMatched
-                              ? 'Every member of a path matched independently, but nothing demonstrated the chain itself — not credited. Review on the scan detail page.'
+                              ? 'Every member of a path matched, but by separate findings: no finding reports the chain, so it is not credited. If one does, link it under "Reported by…" on the scan page.'
                               : undefined}
                           >
                             ✗
