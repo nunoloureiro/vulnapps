@@ -171,6 +171,11 @@ query the stored scan for every vuln involved and check which other findings cre
 A dry run, an audit file, or an earlier session's numbers are not the stored state. If
 the check wasn't done, say the effect is unverified instead of asserting it.
 
+**Recurrence (2026-11-05):** Told the user the app 329 sink seed changed no score because
+"329 has no scans yet" — remembered from an earlier session, not checked. It had a COS scan,
+so the seed re-scored it and opened 16 revisions. Before any ground-truth write, query the
+app's scans (`/api/scans?app_id=`) and say up front how many revisions it will open.
+
 ## Rebase dependent scan UI changes before integration
 When updating a PR that touches the same scan table as a newly merged change, fetch
 main and rebase first. Preserve the approved individual layout while integrating

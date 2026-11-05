@@ -245,9 +245,17 @@ async def update_chain(db, user, app_id: int, chain_pk: int, chain_data: dict) -
 
     if sink != existing["sink_vuln_id"]:
         # Regrouping paths changes what a scan's chains are worth.
+        codes = {}
+        ids = [v for v in (existing["sink_vuln_id"], sink) if v is not None]
+        if ids:
+            cursor = await db.execute(
+                f"SELECT id, vuln_id FROM vulnerabilities WHERE id IN ({','.join('?' * len(ids))})", ids,
+            )
+            codes = {row["id"]: row["vuln_id"] for row in await cursor.fetchall()}
+        label = lambda v: codes.get(v, "none") if v is not None else "none"
         await scoring_service.revision_for_corpus_change(
             db, app_id, "corpus_change",
-            notes=f"{existing['chain_id']} sink {existing['sink_vuln_id']} → {sink}",
+            notes=f"{existing['chain_id']} sink {label(existing['sink_vuln_id'])} → {label(sink)}",
             user=user,
         )
 

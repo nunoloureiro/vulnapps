@@ -211,6 +211,9 @@ async def test_sink_change_opens_a_revision_and_regroups(db):
     before = await scoring_service.latest_revision(db, app_id)
     await chains_service.update_chain(db, ADMIN, app_id, p2["id"], {"sink_vuln_id": c})
     assert await scoring_service.latest_revision(db, app_id) > before
+    cursor = await db.execute(
+        "SELECT notes FROM ground_truth_revisions WHERE app_id = ? ORDER BY revision DESC LIMIT 1", (app_id,))
+    assert (await cursor.fetchone())["notes"] == "CHAIN-002 sink none → TP-020", "catalog ids, not DB ids"
 
     cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
     scan = dict(await cursor.fetchone())
