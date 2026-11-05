@@ -191,6 +191,7 @@ vulnapps/
 │   ├── 039_finding_matched_chain.sql    # scan_findings.matched_chain_id (direct chain match)
 │   ├── 040_finding_matches.sql          # finding_matches join table; one finding -> many vulns/chains
 │   ├── 044_known_false_positives.sql    # per-app known-FP corpus, scan_findings.known_fp_id, audit 'known_fp'
+│   ├── 045_chain_sinks.sql              # chains.sink_vuln_id; scan_findings.chain_sink_vuln_id, novel_chain_rejected
 │   ├── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
 │   ├── 013_api_keys.sql                 # API keys table with scopes
 │   ├── 014_scan_labels.sql              # Labels + scan_labels junction table
@@ -785,6 +786,7 @@ release versions.
 | POST | `/api/scans/{id}/findings/{fid}/mark-fp` | Scan write / vuln-mapper | Mark finding as false positive. Optional body `{fp_group, fp_impact_weight, known_fp_id, remember}`: `fp_group` clusters findings describing the same non-issue so precision counts them once; `known_fp_id` links one of the app's known FPs (its id/penalty override the others); `remember: true` adds the finding as a new `FP-NNN` known FP and links it. See **Known False Positives** |
 | POST | `/api/scans/{id}/findings/{fid}/ignore` | Scan write / vuln-mapper | Set/clear the "Ignored" state. Body `{ignored: bool}` (default `true`). Callable from any state — ignoring clears any match/FP; clearing returns to Pending |
 | POST | `/api/scans/{id}/findings/{fid}/promote` | App write / vuln-mapper | Promote a pending finding into a new vuln on the scan's app. Body: `{vuln_id, title, severity, vuln_type, http_method, url, parameter, filename, description, poc, remediation, code_location, impact_weight, difficulty_tier}` — missing fields fall back to the finding's stored values; `vuln_id` auto-generates as the next `DISC-NNN` slug if blank. **`existed_since` is REQUIRED** (`all_along` \| `this_revision`) — **400** without it. Always opens a `new_prior_vuln` revision. The finding is linked to the new vuln on success |
+| POST | `/api/scans/{id}/findings/{fid}/novel-chain` | Scan write / vuln-mapper | For a chain report matching no known path: `{sink_vuln_id?, rejected?}` — set the step it ends on (must be one of its matched vulns) and/or reject it (no chain credit). See **Chains by sink** |
 | POST | `/api/scans/{id}/rematch` | Scan write / vuln-mapper | Re-run automatic matching for all findings (in-scope vulns only) |
 | GET | `/api/scans/{id}/history` | Scan write | Audit-log entries for this scan's findings (matched/unmatched/marked FP/ignored/promoted/rematched), most recent first. Gated on scan write access, not a separate role — see History Log below |
 | GET | `/api/apps/{id}/revisions` | None / read | Ground-truth revision history + `latest_revision` |
@@ -1082,8 +1084,10 @@ precision_lower = TP / (TP + FPgroups + Pending)            -- every pending tur
 recall          = TP / (TP + FN)
 f1              = 2 * precision_upper * recall / (…)        -- upper bound, so F1 is
                                                             -- unchanged for adjudicated scans
-weighted_found  = Σ over in-scope vulns and chains of impact_weight × credit
-weighted_total  = Σ over in-scope vulns and chains of impact_weight
+weighted_found  = Σ over in-scope vulns of impact_weight × credit
+                + Σ over chain SINK GROUPS of credited_weight     -- once per chain, see below
+weighted_total  = Σ over in-scope vulns of impact_weight
+                + Σ over chain sink groups of max(path impact_weight)
 weighted_rate   = weighted_found / weighted_total            -- THE HEADLINE METRIC
 
 severity_checked  = TP  -- every true positive is adjudicable, whether or not it reported a severity
@@ -1230,6 +1234,44 @@ next to `41` known vulns without that context reads as a bug.
 
 A chain is its own ground-truth entity with its own weight; its members keep their
 individual weights.
+
+**Chains by sink (migration 045, `scoring._chain_groups`).** A chain is identified by its
+SINK: the vuln its path ENDS on as actually executed. Each `chains` row is one PATH;
+`chains.sink_vuln_id` (FK, must be a member, set explicitly — never inferred from
+`step_order`; CHAIN-005 lists #43 + #44 but runs #44 first) groups paths. Rows sharing a
+sink are ONE chain; a row with NULL sink is its own chain (the pre-045 behaviour, so apps
+without seeded sinks score exactly as before). Rules, all mechanical:
+1. A PATH is demonstrated by the unchanged per-row rule (direct chain match, or every member
+   matched + reviewer confirmation — `credit_by_chain` still reports this per path).
+2. Each sink group counts once in `weighted_total` (at the max weight among its known paths)
+   and in the Chained tier count, and is credited once at the max weight among its
+   demonstrated paths. A second path to the same sink adds coverage, not points.
+3. Coverage: `metrics.chain_groups[]` = `{key, sink_vuln_id, weight, paths[{chain_pk,
+   chain_id, weight, severity, demonstrated}], paths_demonstrated, paths_total,
+   novel_finding_ids, credited, credited_weight, credited_severity}`.
+4. Novel paths: an `is_chain` finding with no chain match whose `scan_findings.chain_sink_vuln_id`
+   is one of its own matched vulns AND the sink of a known group, with ≥ 2 distinct in-scope
+   matched vulns all demonstrated, and not `novel_chain_rejected`, is credited to that group
+   immediately (at the group's max known weight if it is the only demonstrated path; nothing
+   extra otherwise). `metrics.novel_chains[]` = `{finding_id, sink_vuln_id, member_vuln_ids,
+   status}`, status ∈ `novel_path | needs_sink | candidate_new_chain | members_not_demonstrated
+   | rejected | not_a_chain` — the review queue on the scan page.
+5. Never a chain: a bundle of independently-sufficient bugs (their last step is no known sink
+   → `candidate_new_chain`, uncredited; a reviewer rejects any that slip through) and a single
+   vuln plus its own impact (< 2 vulns → `not_a_chain`).
+
+Review: `POST /api/scans/{id}/findings/{fid}/novel-chain` `{sink_vuln_id?, rejected?}`
+(`scans.review_novel_chain`; sink must be one of the finding's matched vulns; reject removes
+the chain credit, keeps vuln matches). "Add as path" on the scan page = Promote → Chain with
+the finding's sink (promotion inherits `chain_sink_vuln_id`, so the new path joins that
+chain). A sink change on a path opens a `corpus_change` revision. App clone copies sinks
+(remapped to the clone's vuln ids). New chain ids are max(CHAIN-###)+1, not row count. The
+importer's mapper returns `chain_sink_vuln_db_id` for unmatched chain reports
+(`_enforce_chain_flag` keeps it only there and only if it is a credited vuln) and posts it
+after matching. UI: ChainForm has a Sink select; the app page marks the sink member and
+counts chains as sinks ("9, 16 paths"); the scan page groups Chain Credit by sink with
+"x of n known paths" and lists unmatched chain reports with Ends-on / Add as path / Reject;
+Compare's Chains matrix has one row per sink with `✓ x/n` coverage.
 
 **What counts as a chain (normative, settled on scan 330):** a sequence of distinct flaws
 where each step hands the next what it needs, ending in an outcome none of the steps reaches

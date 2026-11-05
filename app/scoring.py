@@ -174,6 +174,105 @@ def in_scope(row, revision: int) -> bool:
     return True
 
 
+def _sink_of(chain):
+    sink = field(chain, "sink_vuln_id")
+    return int(sink) if sink not in (None, "") else None
+
+
+def _chain_severity(chain) -> str:
+    return (str(field(chain, "severity", "") or "").strip().lower()
+            or severity_from_weight(weight_of(chain)))
+
+
+def _chain_groups(findings, chains, credit_by_chain, scope_ids, in_scope_matched):
+    """Group chain PATHS by sink and decide the credit of each sink group.
+
+    Returns ``(chain_groups, novel_chains)``.
+
+    A row with a ``sink_vuln_id`` is one path of the chain identified by that
+    sink; a row without one is its own chain (pre-045 behaviour). A group is
+    credited once: at the highest weight among its demonstrated known paths,
+    else — when a novel path (below) is its only demonstrated path — at the
+    highest weight among its known paths.
+
+    A novel path is a finding flagged ``is_chain`` that matches no registered
+    path. It counts toward the chain of its sink when: its sink
+    (``chain_sink_vuln_id``) is one of its own matched vulns and is the sink
+    of a known group; it matches at least two distinct in-scope vulns (a
+    single vuln plus its own impact is not a chain); every member is
+    demonstrated; and no reviewer rejected it. Anything else stays out of the
+    score and is reported in ``novel_chains`` with the reason, as the review
+    queue.
+    """
+    groups: dict = {}
+    for c in chains:
+        sink = _sink_of(c)
+        key = ("sink", sink) if sink is not None else ("chain", field(c, "id"))
+        g = groups.setdefault(key, {
+            "key": f"sink:{sink}" if sink is not None else f"chain:{field(c, 'id')}",
+            "sink_vuln_id": sink,
+            "weight": 0,
+            "paths": [],
+            "novel_finding_ids": [],
+        })
+        g["weight"] = max(g["weight"], weight_of(c))
+        g["paths"].append({
+            "chain_pk": field(c, "id"),
+            "chain_id": field(c, "chain_id"),
+            "weight": weight_of(c),
+            "severity": _chain_severity(c),
+            "demonstrated": credit_by_chain.get(field(c, "id"), 0.0) > 0,
+        })
+
+    novel_chains = []
+    for f in findings:
+        if not int(field(f, "is_chain", 0) or 0):
+            continue
+        if field(f, "matched_chain_ids", None) or []:
+            continue  # matched to a known path: not novel
+        if int(field(f, "is_false_positive", 0) or 0) or int(field(f, "is_ignored", 0) or 0):
+            continue
+        members = sorted({v for v in (field(f, "matched_vuln_ids", None) or []) if v in scope_ids})
+        sink = field(f, "chain_sink_vuln_id")
+        sink = int(sink) if sink not in (None, "") else None
+        if int(field(f, "novel_chain_rejected", 0) or 0):
+            status = "rejected"
+        elif len(members) < 2:
+            status = "not_a_chain"
+        elif sink is None or sink not in members:
+            status = "needs_sink"
+        elif ("sink", sink) not in groups:
+            status = "candidate_new_chain"
+        elif not all(v in in_scope_matched for v in members):
+            status = "members_not_demonstrated"
+        else:
+            status = "novel_path"
+            groups[("sink", sink)]["novel_finding_ids"].append(field(f, "id"))
+        novel_chains.append({
+            "finding_id": field(f, "id"),
+            "sink_vuln_id": sink,
+            "member_vuln_ids": members,
+            "status": status,
+        })
+
+    out = []
+    for g in groups.values():
+        demonstrated = [p for p in g["paths"] if p["demonstrated"]]
+        if demonstrated:
+            best = max(demonstrated, key=lambda p: p["weight"])
+            g["credited_weight"], g["credited_severity"] = best["weight"], best["severity"]
+        elif g["novel_finding_ids"]:
+            best = max(g["paths"], key=lambda p: p["weight"])
+            g["credited_weight"], g["credited_severity"] = g["weight"], best["severity"]
+        else:
+            g["credited_weight"], g["credited_severity"] = 0, None
+        g["credited"] = g["credited_weight"] > 0
+        g["paths_demonstrated"] = len(demonstrated)
+        g["paths_total"] = len(g["paths"])
+        out.append(g)
+    return out, novel_chains
+
+
 # ---------------------------------------------------------------------------
 # The metric
 # ---------------------------------------------------------------------------
@@ -238,7 +337,14 @@ def compute_metrics(
     ``tiers``
         The default reporting view: per-tier count/found/weighted totals.
         Chains are reported in the ``chained`` tier alongside vulns tagged
-        ``chained``.
+        ``chained``. Each chain row is one PATH; paths sharing a
+        ``sink_vuln_id`` are ONE chain, counted and credited once (see
+        ``_chain_groups``), so finding a second route to the same sink adds
+        coverage, not points.
+    ``chain_groups`` / ``novel_chains``
+        Per-chain coverage (which known paths were demonstrated, plus novel
+        paths credited to it) and every scanner-reported chain that matched
+        no known path, with why it was or wasn't credited — the review queue.
     """
     findings = list(findings)
     vulns = list(vulns_in_scope)
@@ -362,6 +468,7 @@ def compute_metrics(
         cid for f in findings for cid in (field(f, "matched_chain_ids", None) or [])
     }
 
+    # Per PATH: is this chain row demonstrated? (Today's rule, unchanged.)
     credit_by_chain = {}
     for c in chains:
         pk = field(c, "id")
@@ -371,6 +478,10 @@ def compute_metrics(
             1.0 if (pk in chain_direct_matches or (all_members_matched and pk in confirmed_chain_ids))
             else 0.0
         )
+
+    chain_groups, novel_chains = _chain_groups(
+        findings, chains, credit_by_chain, scope_ids, in_scope_matched,
+    )
 
     # --- weighted totals and the tier matrix ------------------------------
     tiers = {
@@ -398,21 +509,21 @@ def compute_metrics(
             sev = vuln_severity.get(vid, "")
             bucket["found_by_severity"][sev if sev in SEVERITY_WEIGHTS else "info"] += 1
 
-    for c in chains:
-        pk = field(c, "id")
-        weight = weight_of(c)
-        credit = credit_by_chain.get(pk, 0.0)
+    # A chain is its sink group: counted once in the denominator at the
+    # highest weight among its known paths, credited once at the highest
+    # weight among the paths this scan demonstrated.
+    for g in chain_groups:
+        weight = g["weight"]
+        credited_weight = g["credited_weight"]
         weighted_total += weight
-        weighted_found += weight * credit
+        weighted_found += credited_weight
         bucket = tiers["chained"]
         bucket["count"] += 1
         bucket["weighted_total"] += weight
-        bucket["weighted_found"] += weight * credit
-        if credit > 0:
+        bucket["weighted_found"] += credited_weight
+        if g["credited"]:
             bucket["found"] += 1
-            # Chains carry a severity since migration 041; older rows (and test
-            # fixtures) may only have a weight, which maps 1:1 back to one.
-            sev = str(field(c, "severity", "") or "").strip().lower() or severity_from_weight(weight)
+            sev = g["credited_severity"]
             bucket["found_by_severity"][sev if sev in SEVERITY_WEIGHTS else "info"] += 1
 
     for bucket in tiers.values():
@@ -488,6 +599,8 @@ def compute_metrics(
         "missed_vuln_ids": missed_vuln_ids,
         "credit_by_vuln": credit_by_vuln,
         "credit_by_chain": credit_by_chain,
+        "chain_groups": chain_groups,
+        "novel_chains": novel_chains,
     }
 
 

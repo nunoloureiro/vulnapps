@@ -637,18 +637,25 @@ function ComparisonView({ data, appId }) {
   );
 }
 
-// Read-only, cross-scanner view of chain credit — each chain earns its
-// weight only once a reviewer explicitly confirms (on the scan's own detail
-// page) that its findings demonstrate the chain end to end. Matching every
-// member is shown separately from that confirmation on purpose: a scan
-// whose findings independently match both members but never connect them is
-// exactly the case this distinction exists to catch, and this table is
-// where you can see the gap between the two states across every scanner at
-// once, without having to open each scan and re-derive it.
+// Read-only, cross-scanner view of chain credit. One row per chain — its
+// sink, the vuln every one of its paths ends on — credited once per scan at
+// the best path it demonstrated (app/scoring.py::_chain_groups). A path is
+// demonstrated only by a direct chain match or a reviewer's confirmation:
+// "every member matched independently" is NOT evidence (it has been pure
+// coincidence between two unrelated findings in production), so that case
+// renders as a miss (✗) with the detail in the title attribute. Reviewing a
+// real candidate happens on the scan's own detail page.
 function ChainsMatrix({ chains, scanners, matrix, label }) {
   if (!chains || chains.length === 0) return null;
 
   const vulnById = new Map(matrix.map(row => [row.vuln.id, row.vuln]));
+  const groups = [];
+  const byKey = new Map();
+  for (const chain of chains) {
+    const key = chain.sink_vuln_id != null ? `sink:${chain.sink_vuln_id}` : `chain:${chain.id}`;
+    if (!byKey.has(key)) { byKey.set(key, { key, sink: chain.sink_vuln_id, paths: [] }); groups.push(byKey.get(key)); }
+    byKey.get(key).paths.push(chain);
+  }
 
   return (
     <div className="card mb-2">
@@ -665,47 +672,57 @@ function ChainsMatrix({ chains, scanners, matrix, label }) {
             </tr>
           </thead>
           <tbody>
-            {chains.map(chain => (
-              <tr key={chain.id}>
-                <td className="sticky-col" style={{ left: 0 }}>
-                  <strong>{chain.chain_id}</strong>
-                  <div className="text-muted text-xs">{chain.title}</div>
-                  <div className="text-muted text-xs">
-                    {chain.members.map(vid => vulnById.get(vid)?.vuln_id || `#${vid}`).join(' + ')}
-                  </div>
-                </td>
-                {scanners.map(s => {
-                  // A chain either scored its weight or it didn't — there is no
-                  // partial/in-between state to show here. "Every member matched
-                  // independently" is NOT evidence of a demonstrated chain (see
-                  // app/scoring.py) — it can be, and in production has been,
-                  // pure coincidence between two unrelated findings. That case
-                  // renders identically to any other miss (✗); the title
-                  // attribute carries the diagnostic detail for anyone who
-                  // wants to dig in, but the visible glyph never implies a
-                  // scored outcome that didn't happen. Reviewing/confirming a
-                  // real candidate happens on the scan's own detail page.
-                  const allMatched = chain.members.every(vid => s.matched_vuln_ids.includes(vid));
-                  const credited = s.metrics.credit_by_chain?.[String(chain.id)] === 1;
-                  return (
-                    <td key={s.scan.id} className="text-center">
-                      {credited ? (
-                        <span className="text-success" title="Confirmed — demonstrated end to end">✓ confirmed</span>
-                      ) : (
-                        <span
-                          className="text-muted"
-                          title={allMatched
-                            ? 'Every member matched independently, but nothing demonstrated the chain itself — not credited. Review on the scan detail page.'
-                            : undefined}
-                        >
-                          ✗
-                        </span>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+            {groups.map(g => {
+              const sinkVuln = g.sink != null ? vulnById.get(g.sink) : null;
+              return (
+                <tr key={g.key}>
+                  <td className="sticky-col" style={{ left: 0 }}>
+                    {g.sink != null ? (
+                      <>
+                        <strong>Sink {sinkVuln?.vuln_id || `#${g.sink}`}</strong>
+                        <div className="text-muted text-xs">{sinkVuln?.title}</div>
+                      </>
+                    ) : (
+                      <>
+                        <strong>{g.paths[0].chain_id}</strong>
+                        <div className="text-muted text-xs">{g.paths[0].title}</div>
+                      </>
+                    )}
+                    {g.paths.map(chain => (
+                      <div key={chain.id} className="text-muted text-xs">
+                        {g.sink != null && <>{chain.chain_id}: </>}
+                        {chain.members.map(vid => vulnById.get(vid)?.vuln_id || `#${vid}`).join(' + ')}
+                      </div>
+                    ))}
+                  </td>
+                  {scanners.map(s => {
+                    const group = (s.metrics.chain_groups || []).find(x => x.key === g.key);
+                    const credited = !!group?.credited;
+                    const shown = g.paths.filter(c => s.metrics.credit_by_chain?.[String(c.id)] === 1).length;
+                    const novel = group?.novel_finding_ids?.length || 0;
+                    const allMatched = g.paths.some(c => c.members.every(vid => s.matched_vuln_ids.includes(vid)));
+                    return (
+                      <td key={s.scan.id} className="text-center">
+                        {credited ? (
+                          <span className="text-success" title={`${shown} of ${g.paths.length} known paths demonstrated${novel ? `, ${novel} novel (unreviewed)` : ''}`}>
+                            ✓{g.paths.length > 1 || novel ? <span className="text-xs"> {shown}/{g.paths.length}{novel ? `+${novel}` : ''}</span> : ''}
+                          </span>
+                        ) : (
+                          <span
+                            className="text-muted"
+                            title={allMatched
+                              ? 'Every member of a path matched independently, but nothing demonstrated the chain itself — not credited. Review on the scan detail page.'
+                              : undefined}
+                          >
+                            ✗
+                          </span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

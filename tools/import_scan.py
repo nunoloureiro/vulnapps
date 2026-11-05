@@ -269,6 +269,12 @@ matched_chain_db_id and put the demonstrated members in additional_vuln_db_ids. 
 registered chain fits, still credit every known vulnerability the finding demonstrates \
 — primary in matched_vuln_db_id, the rest in additional_vuln_db_ids — and leave \
 matched_chain_db_id null; a reviewer can then register the chain from this finding. \
+In that case ALSO set chain_sink_vuln_db_id: the id, among the vulns you credited \
+on this finding, of the step the chain ENDS on as the finding actually executed it \
+(the last flaw exploited, not the last one listed or mentioned). A chain whose \
+last step is a known chain's sink is scored as another path to that chain. Leave \
+it null when is_chain is false, when matched_chain_db_id is set, or when the \
+finding does not make the execution order clear. \
 Never leave a demonstrated vulnerability uncredited just because the chain it belongs \
 to is not registered yet. The same holds for shape (1) above: credit each vuln shown. \
 - A finding with a non-null matched_chain_db_id must have matched_vuln_db_id null, and \
@@ -334,6 +340,7 @@ with one entry for every finding number you were given:
             "matched_chain_db_id": 456 or null,
             "additional_vuln_db_ids": [124, 125] or [],
             "is_chain": false,
+            "chain_sink_vuln_db_id": 125 or null,
             "is_false_positive": false,
             "fp_group": "string - shared slug for false positives describing the same non-issue, else empty",
             "reasoning": "string - brief explanation of why this maps (or doesn't) to the known vuln or chain"
@@ -493,6 +500,15 @@ class VulnappsClient:
         resp = self.client.post(
             f"/api/scans/{scan_id}/findings/{finding_id}/match",
             json={"vuln_ids": list(vuln_ids), "chain_ids": list(chain_ids)},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def set_chain_sink(self, scan_id: int, finding_id: int, sink_vuln_id: int) -> dict:
+        """Record the vuln a chain report (matching no known path) ends on."""
+        resp = self.client.post(
+            f"/api/scans/{scan_id}/findings/{finding_id}/novel-chain",
+            json={"sink_vuln_id": sink_vuln_id},
         )
         resp.raise_for_status()
         return resp.json()
@@ -674,6 +690,8 @@ def _enforce_chain_flag(result: dict) -> None:
       primary vuln the model also set is moved into additional_vuln_db_ids
       rather than dropped, since a chain finding still credits the members it
       demonstrates.
+    - chain_sink_vuln_db_id survives only on a chain report matching no known
+      path, and only when it names one of the vulns that report credits.
     """
     for f in result.get("findings", []) or []:
         if not isinstance(f, dict):
@@ -688,6 +706,13 @@ def _enforce_chain_flag(result: dict) -> None:
                 extra.insert(0, f["matched_vuln_db_id"])
             f["additional_vuln_db_ids"] = extra
             f["matched_vuln_db_id"] = None
+        # A sink only means something on a chain report that matches no known
+        # path, and only as one of the vulns that report credits.
+        credited = ([f.get("matched_vuln_db_id")] if f.get("matched_vuln_db_id") else []) + \
+                   [v for v in (f.get("additional_vuln_db_ids") or []) if isinstance(v, int)]
+        if (not f["is_chain"] or f.get("matched_chain_db_id")
+                or f.get("chain_sink_vuln_db_id") not in credited):
+            f["chain_sink_vuln_db_id"] = None
 
 
 # The finding fields of SYSTEM_PROMPT_EXTRACT's answer; --findings-json takes
@@ -893,7 +918,7 @@ def run_map(batch: list[tuple[int, dict]], vulns: list, chains: list | None, *, 
 # description, poc, severity, ... -- comes from phase 1 and is never
 # overwritten, whatever the mapper returns.
 MAPPING_FIELDS = ("matched_vuln_db_id", "matched_chain_db_id", "additional_vuln_db_ids",
-                  "is_chain", "fp_group", "reasoning")
+                  "is_chain", "chain_sink_vuln_db_id", "fp_group", "reasoning")
 
 
 class MappingMismatch(Exception):
@@ -958,6 +983,7 @@ def local_metrics(mapping: dict, vulns: list, chains: list | None) -> dict | Non
             **f,
             "matched_vuln_ids": vids,
             "matched_chain_ids": [f["matched_chain_db_id"]] if f.get("matched_chain_db_id") else [],
+            "chain_sink_vuln_id": f.get("chain_sink_vuln_db_id"),
             "is_false_positive": 1 if f.get("is_false_positive") else 0,
             "is_ignored": 0,
         })
@@ -1006,6 +1032,8 @@ def build_import_json(mapping: dict, vulns: list, chains: list | None, metrics: 
             "matched_vuln_db_id": f.get("matched_vuln_db_id"),
             "additional_vuln_db_ids": f.get("additional_vuln_db_ids") or [],
             "matched_chain_db_id": f.get("matched_chain_db_id"),
+            "chain_sink_vuln_db_id": f.get("chain_sink_vuln_db_id"),
+            "chain_sink_catalog_id": vby.get(f.get("chain_sink_vuln_db_id"), {}).get("vuln_id"),
             "catalog_db_ids": vids,
             "catalog_ids": [vby[v]["vuln_id"] for v in vids if v in vby],
             "catalog_chain_db_ids": cids,
@@ -1403,6 +1431,11 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
                     unmatches += 1
                 else:
                     corrections += 1
+            # A chain report matching no known path: record the step it ends
+            # on, so vulnapps can score it as a path to that sink's chain.
+            sink = lf.get("chain_sink_vuln_db_id")
+            if sink in vuln_ids and not chain_ids and sink != sf.get("chain_sink_vuln_id"):
+                client.set_chain_sink(scan_id, sf["id"], sink)
 
     if corrections or unmatches or fp_marks:
         print(f"  {colored('✓', 'GREEN')} Applied {colored(str(corrections), 'CYAN')} match corrections, "

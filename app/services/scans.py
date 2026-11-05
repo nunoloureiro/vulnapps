@@ -397,7 +397,8 @@ async def list_scans(
         metrics = await scoring_service.score_many(db, scans)
     if metrics is not None:
         detail_keys = {"tiers", "matched_vuln_ids", "missed_vuln_ids",
-                       "credit_by_vuln", "credit_by_chain", "tp_by_severity"}
+                       "credit_by_vuln", "credit_by_chain", "tp_by_severity",
+                       "chain_groups", "novel_chains"}
         scored = []
         for scan in scans:
             m = metrics[scan["id"]]
@@ -1351,6 +1352,69 @@ async def promote_finding(
     }
 
 
+async def review_novel_chain(db, user, scan_id: int, finding_id: int, body: dict) -> dict:
+    """Adjudicate a chain report that matches no known path (a "novel path").
+
+    *body* may carry ``sink_vuln_id`` (the vuln the reported chain ENDS on; must
+    be one of the finding's matched vulns, or null to clear it) and/or
+    ``rejected`` (true: it is not a real chain — e.g. independent bugs bundled
+    together, or one vuln plus its own impact — so it earns no chain credit;
+    false: undo that). Credit itself is decided by ``scoring._chain_groups``;
+    accepting a novel path permanently is ``promote_finding_to_chain``.
+    """
+    scan, app = await _get_scan_and_app(db, scan_id)
+    await _check_app_write(db, user, app)
+
+    cursor = await db.execute(
+        "SELECT * FROM scan_findings WHERE id = ? AND scan_id = ?", (finding_id, scan_id)
+    )
+    finding = await cursor.fetchone()
+    if not finding:
+        raise ValueError("Finding not found")
+    if not finding["is_chain"]:
+        raise ValueError("Finding is not a chain report")
+
+    sink = finding["chain_sink_vuln_id"]
+    if "sink_vuln_id" in body:
+        raw = body.get("sink_vuln_id")
+        if raw in (None, ""):
+            sink = None
+        else:
+            try:
+                sink = int(raw)
+            except (TypeError, ValueError):
+                raise ValueError(f"Invalid sink_vuln_id: {raw!r}")
+            matched = (await finding_matches.load(db, [finding_id]))[finding_id]["vuln_ids"]
+            if sink not in matched:
+                raise ValueError("sink_vuln_id must be one of the finding's matched vulnerabilities")
+    rejected = finding["novel_chain_rejected"]
+    if "rejected" in body:
+        rejected = 1 if body.get("rejected") in (True, 1, "1", "true") else 0
+
+    await db.execute(
+        "UPDATE scan_findings SET chain_sink_vuln_id = ?, novel_chain_rejected = ? WHERE id = ?",
+        (sink, rejected, finding_id),
+    )
+    finding_label = finding["title"] or finding["vuln_type"] or f"finding #{finding_id}"
+    if rejected != finding["novel_chain_rejected"]:
+        action, verb = ("novel_chain_rejected", "rejected") if rejected else \
+                       ("novel_chain_unrejected", "un-rejected")
+        await audit_service.record_audit_event(
+            db, entity_type="scan_finding", action=action, actor=user,
+            message=f"{user['name']} {verb} \"{finding_label}\" as a novel chain path",
+            entity_id=finding_id, scan_id=scan_id,
+        )
+    if sink != finding["chain_sink_vuln_id"]:
+        await audit_service.record_audit_event(
+            db, entity_type="scan_finding", action="novel_chain_sink_set", actor=user,
+            message=f"{user['name']} set the chain sink of \"{finding_label}\"",
+            entity_id=finding_id, scan_id=scan_id, details={"sink_vuln_id": sink},
+        )
+    await db.commit()
+    return {"ok": True, "finding_id": finding_id, "chain_sink_vuln_id": sink,
+            "novel_chain_rejected": rejected}
+
+
 async def promote_finding_to_chain(
     db, user, scan_id: int, finding_id: int, chain_data: dict,
 ) -> dict:
@@ -1386,6 +1450,10 @@ async def promote_finding_to_chain(
     data = dict(chain_data or {})
     data.setdefault("title", finding["title"] or finding["vuln_type"] or "Untitled chain")
     data.setdefault("description", finding["description"])
+    # Promoting a novel path keeps the sink it was credited under, so the new
+    # path joins that chain instead of becoming a separate one.
+    if "sink_vuln_id" not in data and finding["chain_sink_vuln_id"] is not None:
+        data["sink_vuln_id"] = finding["chain_sink_vuln_id"]
 
     chain = await chains_service.create_chain(db, user, app["id"], data)
 
@@ -1395,6 +1463,7 @@ async def promote_finding_to_chain(
     )
     await db.execute(
         "UPDATE scan_findings SET is_chain = 1, is_false_positive = 0, is_ignored = 0, "
+        "novel_chain_rejected = 0, "
         "fp_group = NULL, fp_impact_weight = NULL, known_fp_id = NULL WHERE id = ?",
         (finding_id,),
     )

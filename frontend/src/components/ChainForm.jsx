@@ -15,6 +15,9 @@ export function ChainForm({ vulns, initial = {}, submitLabel = 'Save', onSubmit,
   const [severity, setSeverity] = useState(initial.severity || 'critical');
   const [members, setMembers] = useState(initial.member_vuln_ids || []);
   const [description, setDescription] = useState(initial.description || '');
+  // The vuln the path ENDS on, as executed. Paths with the same sink are one
+  // chain for scoring (credited once). Explicit: listed order is not proof.
+  const [sink, setSink] = useState(initial.sink_vuln_id ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -37,7 +40,10 @@ export function ChainForm({ vulns, initial = {}, submitLabel = 'Save', onSubmit,
     setBusy(true);
     setError(null);
     try {
-      await onSubmit({ title: title.trim(), severity, member_vuln_ids: members, description: description || null });
+      await onSubmit({
+        title: title.trim(), severity, member_vuln_ids: members, description: description || null,
+        sink_vuln_id: members.includes(sink) ? sink : null,
+      });
     } catch (err) {
       setError(err.message || 'Could not save the chain');
       setBusy(false);
@@ -87,6 +93,19 @@ export function ChainForm({ vulns, initial = {}, submitLabel = 'Save', onSubmit,
           <option value="">+ add a step…</option>
           {available.map(v => <option key={v.id} value={v.id}>{v.vuln_id} — {v.title}</option>)}
         </select>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label">Sink (the step this path ends on)</label>
+        <select className="form-select" value={members.includes(sink) ? sink : ''}
+                onChange={e => setSink(e.target.value ? Number(e.target.value) : null)}>
+          <option value="">None: this path is a chain of its own</option>
+          {members.map(vid => {
+            const v = byId.get(vid);
+            return <option key={vid} value={vid}>{v ? `${v.vuln_id} — ${v.title}` : `#${vid}`}</option>;
+          })}
+        </select>
+        <div className="text-muted text-sm">Paths with the same sink are one chain and are credited once per scan.</div>
       </div>
 
       <div className="form-group">

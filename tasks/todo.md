@@ -649,3 +649,35 @@ Enter/Space operate the Scanner sort, reset the page, and update aria-sort corre
 - [x] Integrate main after pagination merged; retain full datasets for charts and groups.
 - [x] Run frontend tests (26 pass), production build, backend pagination checks (14 pass) and diff checks.
 - [ ] Push signed merge commit and verify CI.
+
+## Sink-based chain scoring (2026-11-05)
+
+Spec: TaintedPort agent handoff (catalog "CHAINS BY SINK"). A chain = its SINK vuln;
+each `chains` row = one PATH; paths with the same sink are credited once.
+
+- [x] Migration 045: `chains.sink_vuln_id` (FK vulns, nullable); `scan_findings.chain_sink_vuln_id`
+      (sink of a scanner-reported chain, set by importer/reviewer); `scan_findings.novel_chain_rejected`.
+- [x] scoring.py: per-path "demonstrated" (rule per check-in decision); group by sink
+      (NULL sink = own group, so every un-seeded app scores exactly as today); one credit per
+      group at max demonstrated weight; denominator = one entry per group at max known weight;
+      novel path credit (known sink, >=2 distinct vulns, all members demonstrated, not rejected);
+      `chain_groups` / `novel_chains` output (paths x of n + novel (unreviewed)); review queue items.
+- [x] Service/API: set sink on chain edit; novel-path review (promote -> path row via existing
+      promote_finding_to_chain; reject -> credit removed); candidate-new-chain queue.
+- [x] UI: chain editor sink select; scan detail coverage per chain + review queue; list/compare
+      `chains x / N` now counts sink groups.
+- [ ] Seed app 329 (tools/seed_chain_sinks.py, run by Nuno): sink per row from catalog; insert CHAIN-017 (#20+#43) and CHAIN-018
+      (#17+#24+#28); verify members match catalog.
+- [x] Tests: every acceptance check in the spec as a pure compute_metrics test.
+- [x] AppBuilder.md. [ ] deploy; re-check 329 + one scored TaintedPort scan.
+
+Check-in decisions (2026-11-05): keep today's per-path rule (direct match, or all members +
+reviewer confirmation; NOT members alone, which 038 turned off); sinks seeded on app 329 only,
+older apps keep NULL sinks and score unchanged.
+
+### Review
+- 289 tests pass (21 new in tests/test_chain_sinks.py: every spec acceptance check, plus
+  sink validation, regrouping revision, reject/promote round trip, clone, importer backstop).
+- Frontend builds. Importer now returns/posts `chain_sink_vuln_db_id` for unmatched chain reports.
+- Also fixed: new chain ids came from row COUNT+1, which would reuse a live id on 329 (CHAIN-016
+  exists with 14 rows); now max(CHAIN-###)+1.

@@ -474,6 +474,9 @@ export default function AppDetail() {
 function Chains({ appId, chains, vulns, canEdit, onChange }) {
   const [editing, setEditing] = useState(null); // chain id, 'new', or null
 
+  const sinkPaths = chain => chains.filter(c => c.sink_vuln_id === chain.sink_vuln_id).length;
+  const sinks = new Set(chains.map(c => c.sink_vuln_id ?? `own:${c.id}`));
+
   const save = async (chain, data) => {
     if (chain) await api.put(`/apps/${appId}/chains/${chain.id}`, data);
     else await api.post(`/apps/${appId}/chains`, data);
@@ -484,7 +487,7 @@ function Chains({ appId, chains, vulns, canEdit, onChange }) {
   return (
     <>
       <div className="page-header">
-        <h2 className="page-title">Chains <span className="text-muted text-sm">({chains.length})</span></h2>
+        <h2 className="page-title">Chains <span className="text-muted text-sm">({sinks.size}{sinks.size !== chains.length ? `, ${chains.length} paths` : ''})</span></h2>
         {canEdit && editing !== 'new' && (
           <button type="button" className="btn btn-outline" onClick={() => setEditing('new')}>Add Chain</button>
         )}
@@ -494,8 +497,9 @@ function Chains({ appId, chains, vulns, canEdit, onChange }) {
           A chain is separate ground truth that links two or more of the vulnerabilities
           above into one bigger exploit, where each step hands the next what it needs — it earns
           its own points only when a scan demonstrates the whole thing, not just each step
-          individually. Points follow the chain's severity. See a scan's own detail page to
-          review and credit one.
+          individually. Points follow the chain's severity. Each row is one path; paths that end
+          on the same vulnerability (the sink) are one chain, credited once per scan however many
+          of its paths the scan found. See a scan's own detail page to review and credit one.
         </p>
         {editing === 'new' && (
           <div className="card mb-2">
@@ -516,6 +520,7 @@ function Chains({ appId, chains, vulns, canEdit, onChange }) {
                         initial={{
                           title: chain.title, severity: chain.severity, description: chain.description,
                           member_vuln_ids: chain.members.map(m => m.vuln_id),
+                          sink_vuln_id: chain.sink_vuln_id,
                         }}
                         onSubmit={data => save(chain, data)} onCancel={() => setEditing(null)} />
                     </td>
@@ -534,8 +539,15 @@ function Chains({ appId, chains, vulns, canEdit, onChange }) {
                       {chain.members.map(m => (
                         <div key={m.vuln_id}>
                           <Link to={'/apps/' + appId + '/vulns/' + m.vuln_id}>{m.vuln_code} — {m.vuln_title}</Link>
+                          {m.vuln_id === chain.sink_vuln_id && (
+                            <span className="badge badge-info" style={{ marginLeft: 6 }}
+                                  title="The step this path ends on. Paths with the same sink are one chain, credited once per scan.">sink</span>
+                          )}
                         </div>
                       ))}
+                      {chain.sink_vuln_id && sinkPaths(chain) > 1 && (
+                        <div className="text-muted text-xs">one of {sinkPaths(chain)} paths to this sink</div>
+                      )}
                     </td>
                     {canEdit && (
                       <td>

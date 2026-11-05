@@ -1,8 +1,8 @@
 """CRUD for exploit chains (see migrations/028_chains.sql and app/scoring.py).
 
-A chain is ground truth exactly like a vulnerability, except its weight is
-credited only when every one of its member vulns is independently matched —
-see ``scoring.compute_metrics``. This module is the only write path for the
+A chain row is one PATH: ground truth like a vulnerability, credited per the
+rule in ``scoring.compute_metrics``. Paths sharing a ``sink_vuln_id`` are one
+chain and are credited once per scan. This module is the only write path for the
 ``chains``/``chain_members`` tables; before it existed, nothing could ever
 populate them, so every chain-tier credit came from individual vulns
 mistagged ``difficulty_tier='chained'`` instead of a real demonstrated chain.
@@ -85,6 +85,32 @@ async def _resolve_members(db, app_id: int, member_vuln_ids: list) -> list[int]:
     return ids
 
 
+def _resolve_sink(chain_data: dict, member_ids: list[int], existing=None):
+    """The path's sink: the member vuln it ENDS on, as actually executed.
+
+    Paths sharing a sink are one chain for scoring (see
+    ``scoring._chain_groups``). Set explicitly — never inferred from step order,
+    since a path's listed order need not be its execution order. Absent from
+    the write, an update keeps the current sink (dropped if no longer a member).
+    None means the path is its own chain.
+    """
+    if "sink_vuln_id" in chain_data:
+        raw = chain_data.get("sink_vuln_id")
+        if raw in (None, ""):
+            return None
+        try:
+            sink = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid sink_vuln_id: {raw!r}")
+    else:
+        sink = existing["sink_vuln_id"] if existing is not None else None
+        if sink is not None and sink not in member_ids:
+            return None
+    if sink is not None and sink not in member_ids:
+        raise ValueError("sink_vuln_id must be one of the chain's member vulnerabilities")
+    return sink
+
+
 def _severity_and_weight(chain_data: dict, existing=None) -> tuple[str, int]:
     """Resolve a chain's (severity, impact_weight) from a write.
 
@@ -129,13 +155,16 @@ async def create_chain(db, user, app_id: int, chain_data: dict) -> dict:
     severity, weight = _severity_and_weight(chain_data)
 
     member_ids = await _resolve_members(db, app_id, chain_data.get("member_vuln_ids"))
+    sink = _resolve_sink(chain_data, member_ids)
 
     chain_id = (chain_data.get("chain_id") or "").strip()
     if not chain_id:
-        cursor = await db.execute(
-            "SELECT COUNT(*) AS c FROM chains WHERE app_id = ?", (app_id,)
-        )
-        chain_id = f"CHAIN-{(await cursor.fetchone())['c'] + 1:03d}"
+        # Next after the highest CHAIN-### number, not the row count: retired
+        # rows leave gaps, and a count would reuse a live id.
+        cursor = await db.execute("SELECT chain_id FROM chains WHERE app_id = ?", (app_id,))
+        numbers = [int(r["chain_id"][6:]) for r in await cursor.fetchall()
+                   if r["chain_id"].startswith("CHAIN-") and r["chain_id"][6:].isdigit()]
+        chain_id = f"CHAIN-{max(numbers, default=0) + 1:03d}"
 
     title = (chain_data.get("title") or "").strip()
     if not title:
@@ -155,8 +184,9 @@ async def create_chain(db, user, app_id: int, chain_data: dict) -> dict:
     try:
         cursor = await db.execute(
             """INSERT INTO chains (app_id, chain_id, title, severity, impact_weight, description,
-               existed_since_revision) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (app_id, chain_id, title, severity, weight, chain_data.get("description"), existed_since),
+               existed_since_revision, sink_vuln_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (app_id, chain_id, title, severity, weight, chain_data.get("description"), existed_since,
+             sink),
         )
     except Exception as e:
         if "UNIQUE" in str(e):
@@ -209,7 +239,17 @@ async def update_chain(db, user, app_id: int, chain_pk: int, chain_data: dict) -
         )
         member_ids = [row["vuln_id"] for row in await cursor.fetchall()]
 
+    sink = _resolve_sink(chain_data, member_ids, existing)
+
     title = (chain_data.get("title") or existing["title"]).strip()
+
+    if sink != existing["sink_vuln_id"]:
+        # Regrouping paths changes what a scan's chains are worth.
+        await scoring_service.revision_for_corpus_change(
+            db, app_id, "corpus_change",
+            notes=f"{existing['chain_id']} sink {existing['sink_vuln_id']} → {sink}",
+            user=user,
+        )
 
     if weight != existing["impact_weight"]:
         await scoring_service.revision_for_corpus_change(
@@ -220,8 +260,10 @@ async def update_chain(db, user, app_id: int, chain_pk: int, chain_data: dict) -
         )
 
     await db.execute(
-        "UPDATE chains SET title = ?, description = ?, severity = ?, impact_weight = ? WHERE id = ?",
-        (title, chain_data.get("description", existing["description"]), severity, weight, chain_pk),
+        "UPDATE chains SET title = ?, description = ?, severity = ?, impact_weight = ?, "
+        "sink_vuln_id = ? WHERE id = ?",
+        (title, chain_data.get("description", existing["description"]), severity, weight,
+         sink, chain_pk),
     )
     await db.execute("DELETE FROM chain_members WHERE chain_pk = ?", (chain_pk,))
     for step_order, vuln_id in enumerate(member_ids, start=1):
