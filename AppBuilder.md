@@ -1290,7 +1290,7 @@ the chain credit, keeps vuln matches). "Add as path" on the scan page = Promote 
 the finding's sink (promotion inherits `chain_sink_vuln_id`, so the new path joins that
 chain). A sink change on a path opens a `corpus_change` revision. App clone copies sinks
 (remapped to the clone's vuln ids). New chain ids are max(CHAIN-###)+1, not row count. The
-importer's mapper returns `chain_sink_vuln_db_id` for unmatched chain reports
+importer shows the mapper chains grouped (`format_chains_for_prompt`: chain CH-NN, name, end step, then each attack path's DB id, CH-NN.n id and steps in order; `matched_chain_db_id` is the attack path it performed). The importer's mapper returns `chain_sink_vuln_db_id` for unmatched chain reports
 (`_enforce_chain_flag` keeps it only there and only if it is a credited vuln) and posts it
 after matching. UI wording is **chain** (the group) and **attack path** (a row). ChainForm:
 steps "in the order the attack runs", a checkbox "Attack path of the chain that ends on

@@ -264,15 +264,21 @@ could then be used to…") without that next step actually performed. A step tha
 attacker work rather than a flaw (cracking a hash the chain leaked, generating a TOTP \
 code from a stolen seed, self-registering an account) does not stop it being a chain; \
 it just is not a member. \
-- When is_chain is true: if a registered chain's members are all demonstrated, set \
-matched_chain_db_id and put the demonstrated members in additional_vuln_db_ids. If NO \
-registered chain fits, still credit every known vulnerability the finding demonstrates \
+- Registered chains are listed grouped: a chain (CH-NN) and its attack paths (CH-NN.n), \
+alternative routes that all end on the same step; the chain is credited once if any one \
+attack path is shown. matched_chain_db_id is the DB id of the ATTACK PATH whose steps the \
+finding performed; if it performed several paths of one chain, pick the one it walks most \
+completely. \
+- When is_chain is true: if a registered attack path's steps are all demonstrated, set \
+matched_chain_db_id and put the demonstrated steps in additional_vuln_db_ids. If NO \
+registered attack path fits, still credit every known vulnerability the finding demonstrates \
 — primary in matched_vuln_db_id, the rest in additional_vuln_db_ids — and leave \
 matched_chain_db_id null; a reviewer can then register the chain from this finding. \
 In that case ALSO set chain_sink_vuln_db_id: the id, among the vulns you credited \
 on this finding, of the step the chain ENDS on as the finding actually executed it \
-(the last flaw exploited, not the last one listed or mentioned). A chain whose \
-last step is a known chain's sink is scored as another path to that chain. Leave \
+(the last flaw exploited, not the last one listed or mentioned). A chain report whose \
+last step is the step a registered chain ends on is scored as a new attack path of that \
+chain. Leave \
 it null when is_chain is false, when matched_chain_db_id is set, or when the \
 finding does not make the execution order clear. \
 Never leave a demonstrated vulnerability uncredited just because the chain it belongs \
@@ -569,18 +575,31 @@ def format_vulns_for_prompt(vulns: list) -> str:
 
 
 def format_chains_for_prompt(chains: list) -> str:
-    """Format registered exploit chains for the LLM prompt — see the
-    matched_chain_db_id rule in SYSTEM_PROMPT_MAP for how these are used."""
-    lines = []
+    """Format registered chains for the LLM prompt — see the matched_chain_db_id
+    rule in SYSTEM_PROMPT_MAP for how these are used.
+
+    Grouped the way vulnapps scores them: a chain (CH-NN, a name, the step it
+    ends on) and its attack paths (CH-NN.n, steps in the order they run). A
+    finding is matched to the ATTACK PATH it performed, by that path's DB id.
+    """
+    groups: dict = {}
     for c in chains:
-        members = ", ".join(f"{m['vuln_code']} ({m['vuln_title']})" for m in c.get("members", []))
-        parts = [
-            f"  Chain DB ID: {c['id']}", f"  Chain ID: {c['chain_id']}", f"  Title: {c['title']}",
-            f"  Members: {members}",
-        ]
-        if c.get("description"):
-            parts.append(f"  Description: {c['description'][:400]}")
-        lines.append("\n".join(parts))
+        key = c.get("chain_code") or c["chain_id"]
+        groups.setdefault(key, []).append(c)
+    lines = []
+    for code, paths in groups.items():
+        first = paths[0]
+        ends = next((m for m in first.get("members", []) if m["vuln_id"] == first.get("sink_vuln_id")), None)
+        head = [f"Chain {code}: {first.get('chain_name') or first['title']}"]
+        if ends:
+            head.append(f"  Ends on: {ends['vuln_code']} ({ends['vuln_title']})")
+        for c in paths:
+            steps = " -> ".join(f"{m['vuln_code']} ({m['vuln_title']})" for m in c.get("members", []))
+            head.append(f"  Attack path {c['chain_id']} (Chain DB ID: {c['id']}): {c['title']}")
+            head.append(f"    Steps, in order: {steps}")
+            if c.get("description"):
+                head.append(f"    Description: {c['description'][:400]}")
+        lines.append("\n".join(head))
     return "\n---\n".join(lines)
 
 
@@ -1010,7 +1029,7 @@ def build_import_json(mapping: dict, vulns: list, chains: list | None, metrics: 
     Each finding carries its display fields (title/severity/description/poc/...),
     its raw mapping decision (matched_vuln_db_id, additional_vuln_db_ids,
     matched_chain_db_id, is_chain, fp), AND the resolved catalog identifiers:
-    catalog_ids / catalog_chain_ids are the human vuln codes (TP-014, CHAIN-011),
+    catalog_ids / catalog_chain_ids are the human vuln / attack-path codes (TP-014, CH-01.2),
     catalog_db_ids / catalog_chain_db_ids the numeric ids. `metrics` is the KPI
     block -- computed locally on a dry run, from vulnapps on a real import.
     """
