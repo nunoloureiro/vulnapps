@@ -549,7 +549,7 @@ function Chains({ appId, chains, vulns, canEdit, onChange }) {
               <div key={chain.id} className="chain-path-row">
                 <span className="font-mono text-sm text-muted" title={chain.legacy_chain_id ? `was ${chain.legacy_chain_id}` : undefined}>
                   {chain.chain_id}
-                  {chain.legacy_chain_id && <div className="text-xs">was {chain.legacy_chain_id}</div>}
+                  {chain.legacy_chain_id && <div className="text-xs" style={{ whiteSpace: 'nowrap' }}>was {chain.legacy_chain_id}</div>}
                 </span>
                 <span className="chain-steps-inline">
                   {chain.members.map((m, i) => (

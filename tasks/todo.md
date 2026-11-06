@@ -716,4 +716,4 @@ CH-01 for chains and CH-01.1 for attack paths; old CHAIN-### kept as legacy_chai
 - [x] Migration 047 chain_defs (code, name, end step); legacy_chain_id; chain_names folded in.
 - [x] Auto ids (next CH-NN / CH-NN.n), renames, move between chains, drop empty chains, clone.
 - [x] UI: chain code beside the name (scan page, app page, Compare); path ids with "was CHAIN-###".
-- [ ] Deploy; renumber 329 in catalog order (seed script); verify; screenshot; ask the catalog to adopt.
+- [x] Deployed; 329 renumbered CH-01..CH-09 (16 paths, legacy ids kept); revision 18 and scan 1346 = 582 unchanged; screenshotted.
