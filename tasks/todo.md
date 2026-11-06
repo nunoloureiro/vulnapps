@@ -708,4 +708,4 @@ failed ("No space left on device"), truncating every response over ~96 KB, the J
 - [x] Migration 046 chain_names; chain_name on chain reads/writes; clone copies names.
 - [x] App page grouped by chain; scan page Chains card per mockup (collapsible, step chips,
       summary strip); Compare labels by chain name; ChainForm grouping checkbox + name.
-- [ ] Deploy, seed 329 names (tools/seed_chain_sinks.py), screenshot the real pages.
+- [x] Deployed; 329 names seeded (revision 18 and scan 1346 = 582 unchanged); live pages screenshotted.
