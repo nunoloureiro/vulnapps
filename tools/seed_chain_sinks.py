@@ -39,7 +39,7 @@ PATHS = {
     "CHAIN-002": ([11, 23], 23), "CHAIN-003": ([12, 23], 23),
     "CHAIN-006": ([13, 45], 45),
     "CHAIN-016": ([27, 60], 60),
-    "CHAIN-005": ([43, 44], 43),  # runs #44 first; the sink is #43
+    "CHAIN-005": ([44, 43], 43),  # execution order: read the log (#44), then the token (#43)
     "CHAIN-013": ([17, 24, 20], 20),
     "CHAIN-014": ([53, 24, 28], 28), "CHAIN-015": ([3, 28], 28),
     "CHAIN-012": ([56, 29], 29),
