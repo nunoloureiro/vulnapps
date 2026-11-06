@@ -698,6 +698,6 @@ importer can't tell: "Reported by…" links the finding (a direct match).
 Root disk 12 GB at 100%: 10 deploy DB snapshots (2.2 GB) never pruned; nginx proxy temp writes
 failed ("No space left on device"), truncating every response over ~96 KB, the JS bundle included.
 - [x] aws/setup-ec2.sh keeps the 5 newest snapshots before writing a new one.
-- [ ] Nuno: free space on the host (old snapshots, docker prune, journal); consider a bigger volume.
-- [ ] Push the retention change once the host has space (the deploy pulls an image first).
-- [ ] Re-verify scans 1346/349/348/330/301 after the site serves large responses again.
+- [x] Nuno freed space on the host: 100% -> 83% (2.0 GB free). Consider a bigger volume.
+- [x] Retention change deployed 2026-11-06 (4 snapshots on the host now).
+- [x] Re-verified: 1346 582, 349 438, 348 261, 330 674, 301 499, none credited by a legacy confirmation alone; confirm endpoint 410; JS bundle downloads in full.
