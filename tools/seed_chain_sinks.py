@@ -3,7 +3,7 @@
 
 Sets `sink_vuln_id` on every existing path, registers the two new paths, and
 names each chain (migration 046),
-from the catalog's "CHAINS BY SINK" table (TaintedPort-Vulns
+from the catalog's CHAINS and ATTACK PATHS tables (TaintedPort-Vulns
 KnownVulnerabilities.txt). Dry run unless --apply.
 
 Catalog numbers (#N) are not stored on vulnapps, so they are resolved through
@@ -65,7 +65,7 @@ NEW_PATHS = {
     },
 }
 
-# Chain ids (migration 047) in the catalog's CHAINS BY SINK order: chain code ->
+# Chain ids (migration 047) in the catalog's CHAINS table order: chain code ->
 # its attack paths (by their original CHAIN-### id), numbered .1, .2, ...
 IDS = {
     "CH-01": ["CHAIN-001", "CHAIN-008", "CHAIN-009", "CHAIN-010"],
@@ -79,7 +79,7 @@ IDS = {
     "CH-09": ["CHAIN-007"],
 }
 
-# Chain names, keyed by sink, from the catalog's CHAINS BY SINK.
+# Chain names, keyed by end step, from the catalog's CHAINS table.
 NAMES = {
     40: "Pass-the-hash account takeover",
     23: "Admin claim forgery, signature not enforced",
