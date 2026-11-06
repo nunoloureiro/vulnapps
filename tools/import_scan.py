@@ -1872,6 +1872,40 @@ def _find_stats_files(root: Path) -> list[Path]:
     return matches
 
 
+def _read_report_run(path) -> dict | None:
+    """Cost/tokens/duration/start/models from a report's own top-level ``run``
+    block (cyberAgent findings.json, 2026-11-06), in ``_read_scan_stats``'s
+    shape so the same confirm-per-field flow and flag precedence apply.
+
+    Unknowns are null in that block, never omitted. ``tokens`` is null when the
+    run's token count is incomplete (older runs: guard-model calls had cost
+    but no token rows); the known subset in ``tokens_partial`` is shown but
+    not recorded, since a partial count would understate the scan. Model keys
+    are provider-qualified ("anthropic:claude-sonnet-5-5"); the prefix is
+    dropped. Returns None for anything that isn't such a JSON report.
+    """
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+    run = data.get("run") if isinstance(data, dict) else None
+    if not isinstance(run, dict):
+        return None
+    tokens = run.get("tokens") if isinstance(run.get("tokens"), dict) else None
+    partial = run.get("tokens_partial") if isinstance(run.get("tokens_partial"), dict) else None
+    models = run.get("models") if isinstance(run.get("models"), dict) else {}
+    return {
+        "cost_usd": _as_float(run.get("total_cost_usd")),
+        "tokens_used": _as_int(tokens.get("total")) if tokens else None,
+        "tokens_partial": _as_int(partial.get("total")) if partial and not tokens else None,
+        "duration_seconds": _as_float(run.get("duration_seconds")),
+        "started_at": run.get("started_at"),
+        "model_names": {str(k).split(":", 1)[-1] for k in models},
+        "is_final": True,
+        "source_files": [f"{Path(path).name} (run)"],
+    }
+
+
 def _read_scan_stats(state_root: Path) -> dict | None:
     """Read cost/tokens/duration/model/start-time from any metrics-stream
     file(s) found under the scan's report directory (see
@@ -2914,7 +2948,10 @@ def main():
     # deterministic and authoritative when present -- unlike everything else
     # here, it's not an LLM guess at what the report text says. Only --dir
     # has a state_root to look in; --file/--probely have nothing to check.
-    stats = _read_scan_stats(state_root) if state_root is not None else None
+    # --file: a JSON report can carry its own run block (cyberAgent's
+    # findings.json), read the same way.
+    stats = (_read_scan_stats(state_root) if state_root is not None
+             else _read_report_run(args.file) if getattr(args, "file", None) else None)
     stats_use: dict[str, bool] = {}  # per-field operator answers, filled in below
 
     llm_scan_date = mapping.get("scan_date")  # kept so a declined date can be restored
@@ -2938,7 +2975,10 @@ def main():
         print(f"    Started:  {mapping.get('scan_date') or stats.get('started_at') or '?'}")
         print(f"    Duration: {format_duration(stats['duration_seconds']) if stats.get('duration_seconds') is not None else '?'}")
         print(f"    Cost:     {'$' + format(stats['cost_usd'], ',.2f') if stats.get('cost_usd') is not None else '?'}")
-        print(f"    Tokens:   {format(stats['tokens_used'], ',') if stats.get('tokens_used') is not None else '?'}")
+        tokens_desc = (format(stats['tokens_used'], ',') if stats.get('tokens_used') is not None
+                       else f"? (incomplete: {stats['tokens_partial']:,} known, not recorded)"
+                       if stats.get('tokens_partial') is not None else '?')
+        print(f"    Tokens:   {tokens_desc}")
         print(f"    Model(s): {', '.join(sorted(stats['model_names'])) if stats.get('model_names') else '?'}")
         if not stats.get("is_final"):
             print(f"    {colored('⚠', 'YELLOW')} No snapshot marked final=true — using the last one written; "

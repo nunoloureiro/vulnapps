@@ -854,3 +854,30 @@ def test_cli_result_text_reads_both_cli_output_shapes():
     failed = [{"type": "result", "subtype": "error_max_turns", "is_error": True, "result": ""}]
     with pytest.raises(LLMCallError, match="error_max_turns"):
         _cli_result_text(json.dumps(failed))
+
+
+def test_report_run_block_feeds_scan_metadata(tmp_path):
+    """cyberAgent's findings.json carries the run's own cost/usage (2026-11-06)."""
+    read = import_scan._read_report_run
+    report = {"findings": [], "run": {
+        "total_cost_usd": 21.63462, "duration_seconds": 2943.8,
+        "started_at": "2026-11-06T02:01:01+00:00",
+        "tokens": None, "tokens_partial": {"total": 19606213},
+        "models": {"anthropic:claude-opus-5-5": {}, "anthropic:claude-sonnet-5-5": {}},
+    }}
+    path = tmp_path / "findings.json"
+    path.write_text(json.dumps(report))
+    stats = read(path)
+    assert stats["cost_usd"] == 21.63462 and stats["duration_seconds"] == 2943.8
+    assert stats["tokens_used"] is None, "an incomplete token count is never recorded"
+    assert stats["tokens_partial"] == 19606213
+    assert stats["model_names"] == {"claude-opus-5-5", "claude-sonnet-5-5"}
+
+    report["run"]["tokens"] = {"total": 20000000}
+    path.write_text(json.dumps(report))
+    assert read(path)["tokens_used"] == 20000000 and read(path)["tokens_partial"] is None
+
+    path.write_text(json.dumps({"findings": []}))
+    assert read(path) is None, "no run block, nothing read"
+    path.write_text("# a markdown report")
+    assert read(path) is None
