@@ -887,7 +887,9 @@ Respond with ONLY valid JSON (no markdown fencing)."""
     if model:
         cmd += ["--model", model]
     with Spinner(spinner_msg):
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        # stdin=DEVNULL: otherwise the CLI waits 3s for piped input first.
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+                                stdin=subprocess.DEVNULL)
 
     if result.returncode != 0:
         # The CLI with --output-format json puts errors in the stdout JSON
@@ -904,13 +906,37 @@ Respond with ONLY valid JSON (no markdown fencing)."""
         detail = (str(msg)[:1000] if msg else (stderr[:2000] or stdout[:2000] or ""))
         raise LLMCallError(f"Claude CLI failed (exit {result.returncode}): {detail}")
 
+    text = _cli_result_text(result.stdout)
+    return json.loads(_extract_json_text(text), strict=False), {}
+
+
+def _cli_result_text(stdout: str) -> str:
+    """The model's reply from `claude -p --output-format json` stdout.
+
+    Older CLIs print one envelope object ({"type": "result", "result": ...});
+    newer ones (2.1.x) print a JSON LIST of events (system, assistant, result).
+    Searching that raw list for JSON spans several events and fails with
+    "Extra data", so take the reply from the result event in either shape. An
+    error result (e.g. max turns hit) raises instead of being parsed as data.
+    """
     try:
-        cli_output = json.loads(result.stdout)
-        text = cli_output.get("result", result.stdout) if isinstance(cli_output, dict) else result.stdout
-        parsed = json.loads(_extract_json_text(text), strict=False) if isinstance(text, str) else text
-    except (json.JSONDecodeError, KeyError):
-        parsed = json.loads(_extract_json_text(result.stdout), strict=False)
-    return parsed, {}
+        out = json.loads(stdout)
+    except json.JSONDecodeError:
+        return stdout  # not an envelope: treat stdout as the reply itself
+    events = out if isinstance(out, list) else [out]
+    final = next((e for e in reversed(events)
+                  if isinstance(e, dict) and e.get("type") == "result"), None)
+    if final is None and isinstance(out, dict):
+        final = out
+    if final is None:
+        raise LLMCallError("Claude CLI output had no result event")
+    if final.get("is_error") or (final.get("subtype") or "success") != "success":
+        raise LLMCallError(f"Claude CLI returned an error result: "
+                           f"{final.get('subtype')}: {str(final.get('result', ''))[:500]}")
+    reply = final.get("result")
+    if not isinstance(reply, str):
+        raise LLMCallError("Claude CLI result event had no text reply")
+    return reply
 
 
 def run_extract(content: str, *, model: str, client, use_cli: bool, provider: str,

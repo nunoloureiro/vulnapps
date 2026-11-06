@@ -834,3 +834,23 @@ def test_raw_control_characters_in_reasoning_are_accepted():
 def test_truly_broken_json_still_raises():
     with pytest.raises(json.JSONDecodeError):
         _map_batch([], '{"mappings": [{"index": 0,}', [dict(_FINDING)], [(0, dict(_FINDING))])
+
+
+def test_cli_result_text_reads_both_cli_output_shapes():
+    """`claude -p --output-format json` printed one envelope object in older
+    CLIs and a list of events (system, assistant, result) in 2.1.x. Searching
+    the raw list for JSON failed with "Extra data" on a real import."""
+    LLMCallError = import_scan.LLMCallError
+    _cli_result_text, _extract_json_text = import_scan._cli_result_text, import_scan._extract_json_text
+
+    reply = 'Here you go:\n```json\n{"findings": [{"title": "x"}]}\n```'
+    envelope = {"type": "result", "subtype": "success", "is_error": False, "result": reply}
+    events = [{"type": "system", "subtype": "init", "tools": ["{weird}"]},
+              {"type": "assistant", "message": {"content": [{"type": "text", "text": reply}]}},
+              envelope]
+    for stdout in (json.dumps(envelope), json.dumps(events)):
+        assert json.loads(_extract_json_text(_cli_result_text(stdout))) == {"findings": [{"title": "x"}]}
+
+    failed = [{"type": "result", "subtype": "error_max_turns", "is_error": True, "result": ""}]
+    with pytest.raises(LLMCallError, match="error_max_turns"):
+        _cli_result_text(json.dumps(failed))
