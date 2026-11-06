@@ -52,25 +52,83 @@ async def list_chains(db, user, app_id: int) -> list[dict]:
         )
     for c in chains:
         c["members"] = members_by_chain.get(c["id"], [])
-    return await scoring_service.attach_chain_names(db, app_id, chains)
+    return await scoring_service.attach_chain_defs(db, app_id, chains)
 
 
-async def _save_chain_name(db, app_id: int, sink, chain_data: dict) -> None:
-    """Upsert the name of the chain a path belongs to, when the write carries
-    ``chain_name`` and the path has a sink. Shared by every path to that sink;
-    presentation only, so it opens no revision. An empty name clears it."""
-    if "chain_name" not in chain_data or sink is None:
-        return
-    name = (chain_data.get("chain_name") or "").strip()
-    if not name:
-        await db.execute(
-            "DELETE FROM chain_names WHERE app_id = ? AND sink_vuln_id = ?", (app_id, sink)
-        )
-        return
+_CODE_RE = __import__("re").compile(r"^CH-(\d+)$")
+
+
+async def _chain_def(db, app_id: int, sink, chain_data: dict, fallback_name: str):
+    """The chain (``chain_defs`` row) an attack path ending on *sink* belongs to.
+
+    Created on first use with the next free ``CH-NN`` code, named from
+    ``chain_name`` or else the path's title. ``chain_name``/``chain_code`` in the
+    write rename it. Returns None for a path with no end step (its own chain).
+    Presentation and identity only: scoring groups by end step either way.
+    """
+    if sink is None:
+        return None
+    cursor = await db.execute(
+        "SELECT * FROM chain_defs WHERE app_id = ? AND sink_vuln_id = ?", (app_id, sink)
+    )
+    row = await cursor.fetchone()
+    name = (chain_data.get("chain_name") or "").strip()[:200]
+    code = (chain_data.get("chain_code") or "").strip().upper()
+    if code and not _CODE_RE.match(code):
+        raise ValueError("Invalid chain_code: use CH-<number>, e.g. CH-03")
+    if row is None:
+        if not code:
+            cursor = await db.execute("SELECT code FROM chain_defs WHERE app_id = ?", (app_id,))
+            numbers = [int(m.group(1)) for r in await cursor.fetchall()
+                       if (m := _CODE_RE.match(r["code"]))]
+            code = f"CH-{max(numbers, default=0) + 1:02d}"
+        try:
+            await db.execute(
+                "INSERT INTO chain_defs (app_id, code, name, sink_vuln_id) VALUES (?, ?, ?, ?)",
+                (app_id, code, name or fallback_name, sink),
+            )
+        except Exception as e:
+            if "UNIQUE" in str(e):
+                raise ValueError(f"Chain code '{code}' already exists on this app")
+            raise
+    else:
+        updates = {}
+        if name:
+            updates["name"] = name
+        if code and code != row["code"]:
+            updates["code"] = code
+        if updates:
+            try:
+                await db.execute(
+                    f"UPDATE chain_defs SET {', '.join(f'{k} = ?' for k in updates)} WHERE id = ?",
+                    (*updates.values(), row["id"]),
+                )
+            except Exception as e:
+                if "UNIQUE" in str(e):
+                    raise ValueError(f"Chain code '{code}' already exists on this app")
+                raise
+    cursor = await db.execute(
+        "SELECT * FROM chain_defs WHERE app_id = ? AND sink_vuln_id = ?", (app_id, sink)
+    )
+    return await cursor.fetchone()
+
+
+async def _next_path_id(db, app_id: int, code: str) -> str:
+    """Next attack-path id under chain *code*: CH-01 -> CH-01.<n+1>."""
+    cursor = await db.execute(
+        "SELECT chain_id FROM chains WHERE app_id = ? AND chain_id LIKE ?", (app_id, code + ".%")
+    )
+    numbers = [int(r["chain_id"].rsplit(".", 1)[1]) for r in await cursor.fetchall()
+               if r["chain_id"].rsplit(".", 1)[1].isdigit()]
+    return f"{code}.{max(numbers, default=0) + 1}"
+
+
+async def _drop_empty_chain_defs(db, app_id: int) -> None:
+    """A chain with no attack paths left has nothing to show or score."""
     await db.execute(
-        """INSERT INTO chain_names (app_id, sink_vuln_id, name) VALUES (?, ?, ?)
-           ON CONFLICT(app_id, sink_vuln_id) DO UPDATE SET name = excluded.name""",
-        (app_id, sink, name[:200]),
+        """DELETE FROM chain_defs WHERE app_id = ? AND sink_vuln_id NOT IN
+           (SELECT sink_vuln_id FROM chains WHERE app_id = ? AND sink_vuln_id IS NOT NULL)""",
+        (app_id, app_id),
     )
 
 
@@ -176,18 +234,23 @@ async def create_chain(db, user, app_id: int, chain_data: dict) -> dict:
     member_ids = await _resolve_members(db, app_id, chain_data.get("member_vuln_ids"))
     sink = _resolve_sink(chain_data, member_ids)
 
+    title = (chain_data.get("title") or "").strip()
+    if not title:
+        raise ValueError("title is required for a chain")
+
+    # An attack path's id comes from its chain: CH-01.1, CH-01.2, ... A path
+    # with no end step is a chain of its own and keeps a CHAIN-### id.
+    chain_def = await _chain_def(db, app_id, sink, chain_data, title)
     chain_id = (chain_data.get("chain_id") or "").strip()
-    if not chain_id:
+    if not chain_id and chain_def is not None:
+        chain_id = await _next_path_id(db, app_id, chain_def["code"])
+    elif not chain_id:
         # Next after the highest CHAIN-### number, not the row count: retired
         # rows leave gaps, and a count would reuse a live id.
         cursor = await db.execute("SELECT chain_id FROM chains WHERE app_id = ?", (app_id,))
         numbers = [int(r["chain_id"][6:]) for r in await cursor.fetchall()
                    if r["chain_id"].startswith("CHAIN-") and r["chain_id"][6:].isdigit()]
         chain_id = f"CHAIN-{max(numbers, default=0) + 1:03d}"
-
-    title = (chain_data.get("title") or "").strip()
-    if not title:
-        raise ValueError("title is required for a chain")
 
     revision, _created = await scoring_service.revision_for_corpus_change(
         db, app_id, "new_prior_vuln",
@@ -218,7 +281,6 @@ async def create_chain(db, user, app_id: int, chain_data: dict) -> dict:
             "INSERT INTO chain_members (chain_pk, vuln_id, step_order) VALUES (?, ?, ?)",
             (chain_pk, vuln_id, step_order),
         )
-    await _save_chain_name(db, app_id, sink, chain_data)
 
     await audit_service.record_audit_event(
         db, entity_type="chain", action="chain_created", actor=user,
@@ -263,6 +325,18 @@ async def update_chain(db, user, app_id: int, chain_pk: int, chain_data: dict) -
 
     title = (chain_data.get("title") or existing["title"]).strip()
 
+    # The path's chain, and its id: an explicit chain_id renames it; moving to
+    # another chain (a new end step) gives it the next id there. Either way the
+    # first CHAIN-### id it had is kept as legacy_chain_id.
+    chain_def = await _chain_def(db, app_id, sink, chain_data, title)
+    chain_id = (chain_data.get("chain_id") or "").strip() or existing["chain_id"]
+    if (not chain_data.get("chain_id") and chain_def is not None
+            and not existing["chain_id"].startswith(chain_def["code"] + ".")):
+        chain_id = await _next_path_id(db, app_id, chain_def["code"])
+    legacy = existing["legacy_chain_id"]
+    if chain_id != existing["chain_id"] and not legacy and existing["chain_id"].startswith("CHAIN-"):
+        legacy = existing["chain_id"]
+
     if sink != existing["sink_vuln_id"]:
         # Regrouping paths changes what a scan's chains are worth.
         codes = {}
@@ -287,19 +361,24 @@ async def update_chain(db, user, app_id: int, chain_pk: int, chain_data: dict) -
             user=user,
         )
 
-    await db.execute(
-        "UPDATE chains SET title = ?, description = ?, severity = ?, impact_weight = ?, "
-        "sink_vuln_id = ? WHERE id = ?",
-        (title, chain_data.get("description", existing["description"]), severity, weight,
-         sink, chain_pk),
-    )
+    try:
+        await db.execute(
+            "UPDATE chains SET title = ?, description = ?, severity = ?, impact_weight = ?, "
+            "sink_vuln_id = ?, chain_id = ?, legacy_chain_id = ? WHERE id = ?",
+            (title, chain_data.get("description", existing["description"]), severity, weight,
+             sink, chain_id, legacy, chain_pk),
+        )
+    except Exception as e:
+        if "UNIQUE" in str(e):
+            raise ValueError(f"Chain id '{chain_id}' already exists on this app")
+        raise
+    await _drop_empty_chain_defs(db, app_id)
     await db.execute("DELETE FROM chain_members WHERE chain_pk = ?", (chain_pk,))
     for step_order, vuln_id in enumerate(member_ids, start=1):
         await db.execute(
             "INSERT INTO chain_members (chain_pk, vuln_id, step_order) VALUES (?, ?, ?)",
             (chain_pk, vuln_id, step_order),
         )
-    await _save_chain_name(db, app_id, sink, chain_data)
 
     await audit_service.record_audit_event(
         db, entity_type="chain", action="chain_updated", actor=user,
@@ -329,6 +408,7 @@ async def delete_chain(db, user, app_id: int, chain_pk: int) -> None:
         raise ValueError("Chain not found")
 
     await db.execute("DELETE FROM chains WHERE id = ?", (chain_pk,))
+    await _drop_empty_chain_defs(db, app_id)
     await audit_service.record_audit_event(
         db, entity_type="chain", action="chain_deleted", actor=user,
         message=f"{user['name']} deleted chain {chain['chain_id']}: \"{chain['title']}\"",

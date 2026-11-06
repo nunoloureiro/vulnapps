@@ -128,7 +128,10 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
     const credited = creditByChain[String(chain.id)] === 1 || creditByChain[chain.id] === 1;
     return (
       <div key={chain.id} className="chain-row-path">
-        <span className="font-mono text-xs text-muted" title={chain.title}>{chain.chain_id}</span>
+        <span className="font-mono text-xs text-muted"
+              title={chain.title + (chain.legacy_chain_id ? ` (was ${chain.legacy_chain_id})` : '')}>
+          {chain.chain_id}
+        </span>
         <span className="chain-steps-inline">
           {chain.members.map((vid, i) => (
             <span key={vid}>
@@ -198,6 +201,7 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
         const paths = g.paths.map(p => chainByPk.get(p.chain_pk)).filter(Boolean);
         const first = paths[0];
         const name = first?.chain_name || first?.title || 'Chain';
+        const chainCode = first?.chain_code;
         const severity = g.credited_severity || g.paths.reduce((a, b) => (b.weight > a.weight ? b : a)).severity;
         const novelCount = g.novel_finding_ids.length;
         const isOpen = open.has(g.key);
@@ -206,6 +210,7 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
             <div className="chain-row-head" onClick={() => toggle(g.key)}>
               <span className={g.credited ? 'text-success' : 'text-muted'}>{g.credited ? '✓' : '✗'}</span>
               <div className="chain-row-name">
+                {chainCode && <span className="font-mono text-muted text-sm" style={{ marginRight: 8 }}>{chainCode}</span>}
                 <strong>{name}</strong>
                 {g.sink_vuln_id != null && <small>ends on {vulnLabel(g.sink_vuln_id)}</small>}
               </div>

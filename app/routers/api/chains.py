@@ -36,7 +36,7 @@ async def create_chain(request: Request, app_id: int):
         msg = str(e)
         status = 400 if ("required" in msg or "must be one of" in msg or "Invalid" in msg
                           or "already exists" in msg or "not found on this app" in msg
-                          or "at least two" in msg or "same vulnerability" in msg or "sink_vuln_id must" in msg) else 404
+                          or "at least two" in msg or "same vulnerability" in msg or "sink_vuln_id must" in msg or "chain_code" in msg or "Chain code" in msg or "Chain id" in msg) else 404
         raise HTTPException(status_code=status, detail=msg)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -60,7 +60,7 @@ async def update_chain(request: Request, app_id: int, chain_pk: int):
         msg = str(e)
         status = 400 if ("must be one of" in msg or "Invalid" in msg
                           or "not found on this app" in msg or "at least two" in msg
-                          or "same vulnerability" in msg or "sink_vuln_id must" in msg) else 404
+                          or "same vulnerability" in msg or "sink_vuln_id must" in msg or "chain_code" in msg or "Chain code" in msg or "Chain id" in msg) else 404
         raise HTTPException(status_code=status, detail=msg)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))

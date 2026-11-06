@@ -65,7 +65,21 @@ NEW_PATHS = {
     },
 }
 
-# Chain names (migration 046), keyed by sink, from the catalog's CHAINS BY SINK.
+# Chain ids (migration 047) in the catalog's CHAINS BY SINK order: chain code ->
+# its attack paths (by their original CHAIN-### id), numbered .1, .2, ...
+IDS = {
+    "CH-01": ["CHAIN-001", "CHAIN-008", "CHAIN-009", "CHAIN-010"],
+    "CH-02": ["CHAIN-002", "CHAIN-003"],
+    "CH-03": ["CHAIN-006"],
+    "CH-04": ["CHAIN-016"],
+    "CH-05": ["CHAIN-005", "CHAIN-017"],
+    "CH-06": ["CHAIN-013"],
+    "CH-07": ["CHAIN-014", "CHAIN-015", "CHAIN-018"],
+    "CH-08": ["CHAIN-012"],
+    "CH-09": ["CHAIN-007"],
+}
+
+# Chain names, keyed by sink, from the catalog's CHAINS BY SINK.
 NAMES = {
     40: "Pass-the-hash account takeover",
     23: "Admin claim forgery, signature not enforced",
@@ -94,7 +108,8 @@ def main() -> int:
     base = f"/api/apps/{args.app_id}/chains"
     resp = client.get(base)
     resp.raise_for_status()
-    live = {c["chain_id"]: c for c in resp.json()["chains"]}
+    # Keyed by the path's original CHAIN-### id, which survives renumbering.
+    live = {(c.get("legacy_chain_id") or c["chain_id"]): c for c in resp.json()["chains"]}
 
     # Resolve catalog numbers through the existing paths, cross-checking each.
     catalog: dict[int, dict] = {}
@@ -146,6 +161,24 @@ def main() -> int:
         print(f"{state:4} chain ending on {label(sink)}: {name}")
         if state == "name" and args.apply:
             client.put(f"{base}/{path['id']}", json={"chain_name": name}).raise_for_status()
+
+    # Renumber into CH-NN / CH-NN.n. Chain codes go through temporary ones first
+    # (CH-9N), since the codes a migration assigned may already hold the targets.
+    if args.apply:
+        live = {(c.get("legacy_chain_id") or c["chain_id"]): c
+                for c in client.get(base).json()["chains"]}
+    wanted = {old: (code, f"{code}.{i}") for code, olds in IDS.items()
+              for i, old in enumerate(olds, start=1)}
+    todo = {old: w for old, w in wanted.items()
+            if old in live and (live[old].get("chain_code"), live[old]["chain_id"]) != w}
+    for old, (code, path_id) in wanted.items():
+        state = "ok" if old not in todo else "id"
+        print(f"{state:4} {old} -> {path_id}")
+    if todo and args.apply:
+        for n, (code, olds) in enumerate(IDS.items(), start=1):
+            client.put(f"{base}/{live[olds[0]]['id']}", json={"chain_code": f"CH-{90 + n}"}).raise_for_status()
+        for old, (code, path_id) in wanted.items():
+            client.put(f"{base}/{live[old]['id']}", json={"chain_code": code, "chain_id": path_id}).raise_for_status()
 
     extra = sorted(set(live) - set(PATHS) - set(NEW_PATHS))
     if extra:

@@ -709,3 +709,11 @@ failed ("No space left on device"), truncating every response over ~96 KB, the J
 - [x] App page grouped by chain; scan page Chains card per mockup (collapsible, step chips,
       summary strip); Compare labels by chain name; ChainForm grouping checkbox + name.
 - [x] Deployed; 329 names seeded (revision 18 and scan 1346 = 582 unchanged); live pages screenshotted.
+
+## Chain and attack-path ids (2026-11-06)
+Nuno: a chain has attack paths and full credit for any one, so both need ids. Chose
+CH-01 for chains and CH-01.1 for attack paths; old CHAIN-### kept as legacy_chain_id.
+- [x] Migration 047 chain_defs (code, name, end step); legacy_chain_id; chain_names folded in.
+- [x] Auto ids (next CH-NN / CH-NN.n), renames, move between chains, drop empty chains, clone.
+- [x] UI: chain code beside the name (scan page, app page, Compare); path ids with "was CHAIN-###".
+- [ ] Deploy; renumber 329 in catalog order (seed script); verify; screenshot; ask the catalog to adopt.

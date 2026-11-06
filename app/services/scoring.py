@@ -142,18 +142,18 @@ async def fetch_vulns_in_scope(db, app_id: int, revision: int,
     return await cursor.fetchall()
 
 
-async def attach_chain_names(db, app_id: int, chains: list[dict]) -> list[dict]:
-    """Set ``chain_name`` on each path: its chain's name (migration 046, keyed
-    by sink), else the path's own title — a path without a sink is a chain of
-    its own."""
+async def attach_chain_defs(db, app_id: int, chains: list[dict]) -> list[dict]:
+    """Set ``chain_code``/``chain_name`` on each attack path: its chain's
+    (migration 047, one chain per end step). A path with no end step set is a
+    chain of its own: its code is its own id and its name its own title."""
     cursor = await db.execute(
-        "SELECT sink_vuln_id, name FROM chain_names WHERE app_id = ?", (app_id,)
+        "SELECT sink_vuln_id, code, name FROM chain_defs WHERE app_id = ?", (app_id,)
     )
-    names = {row["sink_vuln_id"]: row["name"] for row in await cursor.fetchall()}
+    defs = {row["sink_vuln_id"]: (row["code"], row["name"]) for row in await cursor.fetchall()}
     for chain in chains:
-        sink = chain.get("sink_vuln_id")
-        chain["chain_name"] = names.get(sink) if sink is not None else None
-        chain["chain_name"] = chain["chain_name"] or chain.get("title")
+        code, name = defs.get(chain.get("sink_vuln_id"), (None, None))
+        chain["chain_code"] = code or chain.get("chain_id")
+        chain["chain_name"] = name or chain.get("title")
     return chains
 
 
@@ -180,7 +180,7 @@ async def fetch_chains_in_scope(db, app_id: int, revision: int,
         members.setdefault(row["chain_pk"], []).append(row["vuln_id"])
     for chain in chains:
         chain["members"] = members.get(chain["id"], [])
-    return await attach_chain_names(db, app_id, chains)
+    return await attach_chain_defs(db, app_id, chains)
 
 
 async def fetch_findings(db, scan_id: int) -> list:

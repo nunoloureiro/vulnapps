@@ -214,7 +214,10 @@ async def test_sink_change_opens_a_revision_and_regroups(db):
     assert await scoring_service.latest_revision(db, app_id) > before
     cursor = await db.execute(
         "SELECT notes FROM ground_truth_revisions WHERE app_id = ? ORDER BY revision DESC LIMIT 1", (app_id,))
-    assert (await cursor.fetchone())["notes"] == "CHAIN-002 sink none → TP-020", "catalog ids, not DB ids"
+    assert (await cursor.fetchone())["notes"] == "CHAIN-001 sink none → TP-020", "catalog ids, not DB ids"
+    moved = next(c for c in await chains_service.list_chains(db, ADMIN, app_id) if c["id"] == p2["id"])
+    assert (moved["chain_id"], moved["legacy_chain_id"]) == ("CH-01.2", "CHAIN-001"), \
+        "joining a chain gives the path its next id there and keeps the old one"
 
     cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
     scan = dict(await cursor.fetchone())
@@ -265,7 +268,7 @@ async def test_review_reject_and_promote_novel_path(db):
     result = await scans_service.promote_finding_to_chain(db, ADMIN, scan_id, fid, {
         "severity": "critical", "member_vuln_ids": [b, c],
     })
-    assert result["chain"]["chain_id"] == "CHAIN-002"
+    assert result["chain"]["chain_id"] == "CH-01.1"
     assert result["chain"]["sink_vuln_id"] == c, "promotion keeps the sink it was credited under"
     tier, novel = await chained()
     assert tier["count"] == 1 and tier["found"] == 1 and novel == []
@@ -340,3 +343,32 @@ async def test_chain_name_is_shared_by_paths_to_the_same_sink(db):
     )
     names = {c["title"]: c["chain_name"] for c in await chains_service.list_chains(db, ADMIN, clone["id"])}
     assert names["B to C"] == "Renamed", "clone keeps chain names"
+
+
+async def test_chain_and_attack_path_ids(db):
+    app_id, (a, b, c) = await setup(db)
+    p1 = await chains_service.create_chain(db, ADMIN, app_id, {
+        "title": "A to C", "severity": "high", "member_vuln_ids": [a, c], "sink_vuln_id": c,
+        "chain_name": "Takeover via C",
+    })
+    p2 = await chains_service.create_chain(db, ADMIN, app_id, {
+        "title": "B to C", "severity": "high", "member_vuln_ids": [b, c], "sink_vuln_id": c,
+    })
+    p3 = await chains_service.create_chain(db, ADMIN, app_id, {
+        "title": "A to B", "severity": "high", "member_vuln_ids": [a, b], "sink_vuln_id": b,
+    })
+    assert [(p["chain_code"], p["chain_id"]) for p in (p1, p2, p3)] == [
+        ("CH-01", "CH-01.1"), ("CH-01", "CH-01.2"), ("CH-02", "CH-02.1")]
+    assert p3["chain_name"] == "A to B", "a new chain is named from its first path"
+
+    # Renumber the chain and rename a path, as a curator would.
+    await chains_service.update_chain(db, ADMIN, app_id, p3["id"], {"chain_code": "CH-07", "chain_id": "CH-07.1"})
+    with pytest.raises(ValueError, match="already exists"):
+        await chains_service.update_chain(db, ADMIN, app_id, p2["id"], {"chain_code": "CH-07"})
+    with pytest.raises(ValueError, match="Invalid chain_code"):
+        await chains_service.update_chain(db, ADMIN, app_id, p2["id"], {"chain_code": "X1"})
+
+    # Deleting a chain's last path removes the chain.
+    await chains_service.delete_chain(db, ADMIN, app_id, p3["id"])
+    cursor = await db.execute("SELECT code FROM chain_defs WHERE app_id = ?", (app_id,))
+    assert [r["code"] for r in await cursor.fetchall()] == ["CH-01"]

@@ -420,10 +420,10 @@ async def create_app(
         for c in source_chains:
             cursor = await db.execute(
                 """INSERT INTO chains (app_id, chain_id, title, severity, impact_weight,
-                   description, existed_since_revision, sink_vuln_id)
-                   VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
+                   description, existed_since_revision, sink_vuln_id, legacy_chain_id)
+                   VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
                 (app_id, c["chain_id"], c["title"], c["severity"], c["impact_weight"], c["description"],
-                 vuln_id_map.get(c["sink_vuln_id"])),
+                 vuln_id_map.get(c["sink_vuln_id"]), c["legacy_chain_id"]),
             )
             new_chain_pk = cursor.lastrowid
             cursor = await db.execute(
@@ -438,15 +438,15 @@ async def create_app(
                         (new_chain_pk, new_vuln_id, m["step_order"]),
                     )
 
-        # Chain names are keyed by sink vuln; follow the vulns to the clone.
+        # Chains (chain_defs) are keyed by their end-step vuln; follow the vulns.
         cursor = await db.execute(
-            "SELECT sink_vuln_id, name FROM chain_names WHERE app_id = ?", (clone_from,)
+            "SELECT code, name, sink_vuln_id FROM chain_defs WHERE app_id = ?", (clone_from,)
         )
         for row in await cursor.fetchall():
             if vuln_id_map.get(row["sink_vuln_id"]) is not None:
                 await db.execute(
-                    "INSERT INTO chain_names (app_id, sink_vuln_id, name) VALUES (?, ?, ?)",
-                    (app_id, vuln_id_map[row["sink_vuln_id"]], row["name"]),
+                    "INSERT INTO chain_defs (app_id, code, name, sink_vuln_id) VALUES (?, ?, ?, ?)",
+                    (app_id, row["code"], row["name"], vuln_id_map[row["sink_vuln_id"]]),
                 )
 
         # Known false positives are app curation too (a new version keeps its

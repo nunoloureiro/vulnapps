@@ -482,7 +482,7 @@ function Chains({ appId, chains, vulns, canEdit, onChange }) {
   const byKey = new Map();
   for (const c of chains) {
     const key = c.sink_vuln_id != null ? `sink:${c.sink_vuln_id}` : `path:${c.id}`;
-    if (!byKey.has(key)) { byKey.set(key, { key, name: c.chain_name || c.title, paths: [] }); groups.push(byKey.get(key)); }
+    if (!byKey.has(key)) { byKey.set(key, { key, code: c.chain_code, name: c.chain_name || c.title, paths: [] }); groups.push(byKey.get(key)); }
     byKey.get(key).paths.push(c);
   }
   for (const g of groups) {
@@ -526,6 +526,7 @@ function Chains({ appId, chains, vulns, canEdit, onChange }) {
         {groups.map(g => (
           <div key={g.key} className="chain-group">
             <div className="chain-group-head">
+              {g.code && <span className="font-mono text-muted text-sm">{g.code}</span>}
               <strong>{g.name}</strong>
               <Badge severity={g.severity}>{g.severity}</Badge>
               <span className="text-muted text-xs font-mono">{g.weight}p</span>
@@ -546,7 +547,10 @@ function Chains({ appId, chains, vulns, canEdit, onChange }) {
               </div>
             ) : (
               <div key={chain.id} className="chain-path-row">
-                <span className="font-mono text-sm text-muted">{chain.chain_id}</span>
+                <span className="font-mono text-sm text-muted" title={chain.legacy_chain_id ? `was ${chain.legacy_chain_id}` : undefined}>
+                  {chain.chain_id}
+                  {chain.legacy_chain_id && <div className="text-xs">was {chain.legacy_chain_id}</div>}
+                </span>
                 <span className="chain-steps-inline">
                   {chain.members.map((m, i) => (
                     <span key={m.vuln_id}>

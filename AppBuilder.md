@@ -193,6 +193,7 @@ vulnapps/
 │   ├── 044_known_false_positives.sql    # per-app known-FP corpus, scan_findings.known_fp_id, audit 'known_fp'
 │   ├── 045_chain_sinks.sql              # chains.sink_vuln_id; scan_findings.chain_sink_vuln_id, novel_chain_rejected
 │   ├── 046_chain_names.sql              # chain_names(app_id, sink_vuln_id, name): one name per chain
+│   ├── 047_chain_defs.sql               # chain_defs (CH-NN code, name, end step); chains.legacy_chain_id; drops chain_names
 │   ├── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
 │   ├── 013_api_keys.sql                 # API keys table with scopes
 │   ├── 014_scan_labels.sql              # Labels + scan_labels junction table
@@ -1268,11 +1269,20 @@ without seeded sinks score exactly as before). Rules, all mechanical:
    → `candidate_new_chain`, uncredited; a reviewer rejects any that slip through) and a single
    vuln plus its own impact (< 2 vulns → `not_a_chain`).
 
-**Chain names (migration 046, `chain_names(app_id, sink_vuln_id, name)`).** One name per
-chain, shared by its attack paths, e.g. "Pass-the-hash account takeover". Paths and the
-scoring `chains` list carry `chain_name` (`scoring_service.attach_chain_names`: the sink's
-name, else the path's own title). Written via `chain_name` on chain create/update
-(`chains._save_chain_name`; empty clears); presentation only, no revision; copied on clone.
+**Chain and attack-path ids (migrations 046 → 047, `chain_defs(id, app_id, code, name,
+sink_vuln_id)`, UNIQUE (app, code) and (app, sink)).** A chain is a real row: code `CH-NN`,
+a name (e.g. "Pass-the-hash account takeover") and the end step all its attack paths share.
+Attack paths (`chains` rows) are numbered under it: `CH-01.1`, `CH-01.2`… (`chains.chain_id`);
+`chains.legacy_chain_id` keeps the original `CHAIN-###` so catalog text, finding reasoning
+and audit history still resolve. `chains._chain_def` creates the chain on first use (next
+free `CH-NN`, named from `chain_name` or the path title) and renames it from `chain_name` /
+`chain_code` (validated `CH-<n>`, unique); `_next_path_id` gives the next `.n`; a path that
+moves to another chain (new end step) gets that chain's next id; an explicit `chain_id`
+renames a path; a chain whose last path is deleted or moved away is dropped. A path with
+no end step is its own chain and keeps a `CHAIN-###` id. Reads carry `chain_code` /
+`chain_name` (`scoring_service.attach_chain_defs`). Ids are identity and presentation
+only: scoring groups by end step and is unchanged. Clone copies chains and legacy ids.
+046's `chain_names` table was folded into `chain_defs` and dropped.
 
 Review: `POST /api/scans/{id}/findings/{fid}/novel-chain` `{sink_vuln_id?, rejected?}`
 (`scans.review_novel_chain`; sink must be one of the finding's matched vulns; reject removes

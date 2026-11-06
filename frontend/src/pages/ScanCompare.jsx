@@ -680,7 +680,10 @@ function ChainsMatrix({ chains, scanners, matrix, label }) {
                   <td className="sticky-col" style={{ left: 0 }}>
                     {g.sink != null ? (
                       <>
-                        <strong>{g.paths[0].chain_name || g.paths[0].title}</strong>
+                        <strong>
+                          <span className="font-mono text-muted">{g.paths[0].chain_code}</span>{' '}
+                          {g.paths[0].chain_name || g.paths[0].title}
+                        </strong>
                         <div className="text-muted text-xs">ends on {sinkVuln?.vuln_id || `#${g.sink}`}</div>
                       </>
                     ) : (
