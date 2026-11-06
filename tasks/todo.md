@@ -693,3 +693,11 @@ importer can't tell: "Reported by…" links the finding (a direct match).
       revoked 4 unreported (scan 349 -54, scan 330 -36, scans 348/301 unchanged), as predicted.
 - [x] Confirm endpoint retired (410); legacy confirmations still count, labelled, until revoked.
 - [ ] 10 scans returned 403 to the API key; they may still hold legacy confirmations.
+
+## Server disk full (2026-11-05/06)
+Root disk 12 GB at 100%: 10 deploy DB snapshots (2.2 GB) never pruned; nginx proxy temp writes
+failed ("No space left on device"), truncating every response over ~96 KB, the JS bundle included.
+- [x] aws/setup-ec2.sh keeps the 5 newest snapshots before writing a new one.
+- [ ] Nuno: free space on the host (old snapshots, docker prune, journal); consider a bigger volume.
+- [ ] Push the retention change once the host has space (the deploy pulls an image first).
+- [ ] Re-verify scans 1346/349/348/330/301 after the site serves large responses again.

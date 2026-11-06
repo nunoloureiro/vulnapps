@@ -63,6 +63,12 @@ import sqlite3
 
 directory = pathlib.Path('/data/deploy-backups')
 directory.mkdir(exist_ok=True)
+# Keep the 5 newest snapshots (names are UTC timestamps, so they sort by age)
+# and drop the rest before writing a new one. Unbounded, they filled the
+# 12 GB root disk on 2026-11-05 and nginx truncated every large response.
+for old in sorted(directory.glob('*.db'))[:-5]:
+    old.unlink()
+    print(f'Removed old snapshot: {old.name}')
 snapshot = directory / (datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '.db')
 with sqlite3.connect('file:/data/vulnapps.db?mode=ro', uri=True) as source:
     with sqlite3.connect(snapshot) as destination:

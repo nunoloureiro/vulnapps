@@ -2165,7 +2165,7 @@ Same pattern as TaintedPort: build locally for linux/amd64, push to Docker Hub, 
 - **Host nginx** proxies domain to `127.0.0.1:8001` (`docker/nginx-host-vulnapps.conf`)
 - **Data persists** via named volume `vulnapps-data`
 
-**`aws/setup-ec2.sh`** — Installs Docker (if needed), pulls the `VULNAPPS_IMAGE` image from Docker Hub, creates the data volume, and runs the container on `127.0.0.1:8001`. Accepts an optional Docker env-file for CI and manual updates; without it, uses the shell's SECRET_KEY or generates one. Snapshots an existing database before replacement and checks API startup.
+**`aws/setup-ec2.sh`** — Installs Docker (if needed), pulls the `VULNAPPS_IMAGE` image from Docker Hub, creates the data volume, and runs the container on `127.0.0.1:8001`. Accepts an optional Docker env-file for CI and manual updates; without it, uses the shell's SECRET_KEY or generates one. Snapshots an existing database to `/data/deploy-backups/<UTC timestamp>.db` before replacement (keeping only the 5 newest older snapshots, so at most 6 exist after a deploy; unbounded snapshots filled the 12 GB root disk on 2026-11-05 and nginx, unable to write proxy temp files, truncated every response over ~96 KB) and checks API startup.
 
 **`docker/nginx-host-vulnapps.conf`** — Host nginx virtual host config. Server name set to `vulnapps.net`.
 
