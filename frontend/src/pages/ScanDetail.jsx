@@ -158,7 +158,7 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
             <span className="text-muted">Not reported</span>
           )}
           {canEdit && reporters.length === 0 && (
-            <select className="form-select" style={{ maxWidth: 170, marginLeft: 8, display: 'inline-block' }}
+            <select className="chain-pick"
                     disabled={busy === chain.id} value=""
                     onChange={e => e.target.value && linkFinding(chain, Number(e.target.value))}>
               <option value="">Reported by…</option>

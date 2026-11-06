@@ -1139,4 +1139,6 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .chain-row-paths { padding: 0 0.25rem 0.75rem 2.25rem; }
 .chain-row-path { display: grid; grid-template-columns: 80px 1fr minmax(240px, auto); align-items: center; gap: 0.6rem; padding: 0.3rem 0; font-size: 0.85rem; }
 .chain-row-pts { text-align: right; font-family: var(--font-mono); font-size: 0.8rem; }
+.chain-pick { background: var(--bg); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.5rem; font-size: 0.8rem; max-width: 170px; margin-left: 0.5rem; }
+.chain-pick:hover { border-color: var(--border-hover); }
 .scans-coverage-missed td { padding-top: 0; color: var(--text-secondary); }
