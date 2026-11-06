@@ -1296,7 +1296,7 @@ after matching. UI wording is **chain** (the group) and **attack path** (a row).
 steps "in the order the attack runs", a checkbox "Attack path of the chain that ends on
 <last step>" (default on for new paths) and the chain name. App page: one block per chain
 (name, top severity, points, n attack paths) with each path on one line as step chips
-(`TP-017 → TP-024 → TP-036`, sink underlined). Scan page **Chains** card: summary strip
+(`TP-017 → TP-024 → TP-036`, sink underlined); a path's old `CHAIN-###` id is a hover tooltip only. Scan page **Chains** card: summary strip
 (chains credited, chain points, attack paths reported), one collapsible row per chain
 (✓/✗, name, "ends on …", severity, "x of n attack paths", credited/possible points); open,
 each path shows step chips green when matched, and "✓ Reported · <finding>", "Confirmed
