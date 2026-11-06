@@ -142,6 +142,21 @@ async def fetch_vulns_in_scope(db, app_id: int, revision: int,
     return await cursor.fetchall()
 
 
+async def attach_chain_names(db, app_id: int, chains: list[dict]) -> list[dict]:
+    """Set ``chain_name`` on each path: its chain's name (migration 046, keyed
+    by sink), else the path's own title — a path without a sink is a chain of
+    its own."""
+    cursor = await db.execute(
+        "SELECT sink_vuln_id, name FROM chain_names WHERE app_id = ?", (app_id,)
+    )
+    names = {row["sink_vuln_id"]: row["name"] for row in await cursor.fetchall()}
+    for chain in chains:
+        sink = chain.get("sink_vuln_id")
+        chain["chain_name"] = names.get(sink) if sink is not None else None
+        chain["chain_name"] = chain["chain_name"] or chain.get("title")
+    return chains
+
+
 async def fetch_chains_in_scope(db, app_id: int, revision: int,
                                 scan_corpus_revision=None) -> list[dict]:
     """Chains in scope, each with its ordered member vuln ids."""
@@ -165,7 +180,7 @@ async def fetch_chains_in_scope(db, app_id: int, revision: int,
         members.setdefault(row["chain_pk"], []).append(row["vuln_id"])
     for chain in chains:
         chain["members"] = members.get(chain["id"], [])
-    return chains
+    return await attach_chain_names(db, app_id, chains)
 
 
 async def fetch_findings(db, scan_id: int) -> list:

@@ -468,14 +468,30 @@ export default function AppDetail() {
   );
 }
 
-// Chains on the app page: the catalog view, where a chain's severity, title
-// and steps are edited. Before this there was no way to edit a chain in the
-// UI at all, and no severity to edit — every chain read as Critical.
-function Chains({ appId, chains, vulns, canEdit, onChange }) {
-  const [editing, setEditing] = useState(null); // chain id, 'new', or null
+// Chains on the app page: the catalog view. A chain is identified by the step
+// its attack paths end on (migration 045); each `chains` row is one attack
+// path, its steps in the order they run, so the last step is the sink. Paths
+// sharing a sink are one chain, named by `chain_name` (migration 046) and
+// credited once per scan. A path with no sink is a chain of its own.
+const SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
 
-  const sinkPaths = chain => chains.filter(c => c.sink_vuln_id === chain.sink_vuln_id).length;
-  const sinks = new Set(chains.map(c => c.sink_vuln_id ?? `own:${c.id}`));
+function Chains({ appId, chains, vulns, canEdit, onChange }) {
+  const [editing, setEditing] = useState(null); // path id, 'new', or null
+
+  const groups = [];
+  const byKey = new Map();
+  for (const c of chains) {
+    const key = c.sink_vuln_id != null ? `sink:${c.sink_vuln_id}` : `path:${c.id}`;
+    if (!byKey.has(key)) { byKey.set(key, { key, name: c.chain_name || c.title, paths: [] }); groups.push(byKey.get(key)); }
+    byKey.get(key).paths.push(c);
+  }
+  for (const g of groups) {
+    g.severity = g.paths.map(p => p.severity).sort((a, b) => (SEV_RANK[b] || 0) - (SEV_RANK[a] || 0))[0];
+    g.weight = Math.max(...g.paths.map(p => p.impact_weight || 0));
+  }
+  const chainNames = Object.fromEntries(
+    chains.filter(c => c.sink_vuln_id != null).map(c => [c.sink_vuln_id, c.chain_name])
+  );
 
   const save = async (chain, data) => {
     if (chain) await api.put(`/apps/${appId}/chains/${chain.id}`, data);
@@ -487,79 +503,69 @@ function Chains({ appId, chains, vulns, canEdit, onChange }) {
   return (
     <>
       <div className="page-header">
-        <h2 className="page-title">Chains <span className="text-muted text-sm">({sinks.size}{sinks.size !== chains.length ? `, ${chains.length} paths` : ''})</span></h2>
+        <h2 className="page-title">
+          Chains <span className="text-muted text-sm">({groups.length} chains, {chains.length} attack paths)</span>
+        </h2>
         {canEdit && editing !== 'new' && (
-          <button type="button" className="btn btn-outline" onClick={() => setEditing('new')}>Add Chain</button>
+          <button type="button" className="btn btn-outline" onClick={() => setEditing('new')}>Add attack path</button>
         )}
       </div>
       <div className="card">
         <p className="text-muted text-sm mb-2">
-          A chain is separate ground truth that links two or more of the vulnerabilities
-          above into one bigger exploit, where each step hands the next what it needs — it earns
-          its own points only when a scan demonstrates the whole thing, not just each step
-          individually. Points follow the chain's severity. Each row is one path; paths that end
-          on the same vulnerability (the sink) are one chain, credited once per scan however many
-          of its paths the scan found. See a scan's own detail page to review and credit one.
+          A chain links two or more of the vulnerabilities above into one bigger exploit, where each step
+          hands the next what it needs. Each chain has one or more attack paths that end on the same step;
+          a scan earns the chain's points once, when it reports any one of them combining its steps.
+          Points follow the chain's severity.
         </p>
         {editing === 'new' && (
           <div className="card mb-2">
-            <ChainForm vulns={vulns} submitLabel="Add chain"
+            <ChainForm vulns={vulns} chainNames={chainNames} submitLabel="Add attack path"
               onSubmit={data => save(null, data)} onCancel={() => setEditing(null)} />
           </div>
         )}
-        {chains.length > 0 && (
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Chain</th><th>Severity</th><th>Members</th>{canEdit && <th style={{ width: 60 }}></th>}</tr></thead>
-              <tbody>
-                {chains.map(chain => editing === chain.id ? (
-                  <tr key={chain.id}>
-                    <td colSpan={canEdit ? 4 : 3}>
-                      <ChainForm vulns={vulns} submitLabel="Save chain"
-                        intro={`Editing ${chain.chain_id}. Changing severity changes its points, which opens a new ground-truth revision.`}
-                        initial={{
-                          title: chain.title, severity: chain.severity, description: chain.description,
-                          member_vuln_ids: chain.members.map(m => m.vuln_id),
-                          sink_vuln_id: chain.sink_vuln_id,
-                        }}
-                        onSubmit={data => save(chain, data)} onCancel={() => setEditing(null)} />
-                    </td>
-                  </tr>
-                ) : (
-                  <tr key={chain.id}>
-                    <td>
-                      <strong>{chain.chain_id}</strong>
-                      <div className="text-muted text-sm">{chain.title}</div>
-                    </td>
-                    <td>
-                      <Badge severity={chain.severity}>{chain.severity}</Badge>
-                      <div className="text-muted text-xs font-mono">{chain.impact_weight}p</div>
-                    </td>
-                    <td>
-                      {chain.members.map(m => (
-                        <div key={m.vuln_id}>
-                          <Link to={'/apps/' + appId + '/vulns/' + m.vuln_id}>{m.vuln_code} — {m.vuln_title}</Link>
-                          {m.vuln_id === chain.sink_vuln_id && (
-                            <span className="badge badge-info" style={{ marginLeft: 6 }}
-                                  title="The step this path ends on. Paths with the same sink are one chain, credited once per scan.">sink</span>
-                          )}
-                        </div>
-                      ))}
-                      {chain.sink_vuln_id && sinkPaths(chain) > 1 && (
-                        <div className="text-muted text-xs">one of {sinkPaths(chain)} paths to this sink</div>
-                      )}
-                    </td>
-                    {canEdit && (
-                      <td>
-                        <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditing(chain.id)}>Edit</button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {groups.map(g => (
+          <div key={g.key} className="chain-group">
+            <div className="chain-group-head">
+              <strong>{g.name}</strong>
+              <Badge severity={g.severity}>{g.severity}</Badge>
+              <span className="text-muted text-xs font-mono">{g.weight}p</span>
+              <span className="text-muted text-sm">
+                {g.paths.length} attack path{g.paths.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            {g.paths.map(chain => editing === chain.id ? (
+              <div key={chain.id} className="card mb-1">
+                <ChainForm vulns={vulns} chainNames={chainNames} submitLabel="Save attack path"
+                  intro={`Editing ${chain.chain_id}. Changing severity changes its points, which opens a new ground-truth revision.`}
+                  initial={{
+                    title: chain.title, severity: chain.severity, description: chain.description,
+                    member_vuln_ids: chain.members.map(m => m.vuln_id),
+                    sink_vuln_id: chain.sink_vuln_id, grouped: chain.sink_vuln_id != null,
+                  }}
+                  onSubmit={data => save(chain, data)} onCancel={() => setEditing(null)} />
+              </div>
+            ) : (
+              <div key={chain.id} className="chain-path-row">
+                <span className="font-mono text-sm text-muted">{chain.chain_id}</span>
+                <span className="chain-steps-inline">
+                  {chain.members.map((m, i) => (
+                    <span key={m.vuln_id}>
+                      {i > 0 && <span className="text-muted"> → </span>}
+                      <Link to={'/apps/' + appId + '/vulns/' + m.vuln_id} title={m.vuln_title}
+                            className={'chain-step' + (m.vuln_id === chain.sink_vuln_id ? ' chain-step-sink' : '')}>
+                        {m.vuln_code}
+                      </Link>
+                    </span>
+                  ))}
+                </span>
+                <span className="text-muted text-sm chain-path-title">{chain.title}</span>
+                {canEdit && (
+                  <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditing(chain.id)}>Edit</button>
+                )}
+              </div>
+            ))}
           </div>
-        )}
+        ))}
       </div>
     </>
   );

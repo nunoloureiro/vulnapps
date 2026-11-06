@@ -680,8 +680,8 @@ function ChainsMatrix({ chains, scanners, matrix, label }) {
                   <td className="sticky-col" style={{ left: 0 }}>
                     {g.sink != null ? (
                       <>
-                        <strong>Sink {sinkVuln?.vuln_id || `#${g.sink}`}</strong>
-                        <div className="text-muted text-xs">{sinkVuln?.title}</div>
+                        <strong>{g.paths[0].chain_name || g.paths[0].title}</strong>
+                        <div className="text-muted text-xs">ends on {sinkVuln?.vuln_id || `#${g.sink}`}</div>
                       </>
                     ) : (
                       <>
@@ -692,7 +692,7 @@ function ChainsMatrix({ chains, scanners, matrix, label }) {
                     {g.paths.map(chain => (
                       <div key={chain.id} className="text-muted text-xs">
                         {g.sink != null && <>{chain.chain_id}: </>}
-                        {chain.members.map(vid => vulnById.get(vid)?.vuln_id || `#${vid}`).join(' + ')}
+                        {chain.members.map(vid => vulnById.get(vid)?.vuln_id || `#${vid}`).join(' → ')}
                       </div>
                     ))}
                   </td>
@@ -705,7 +705,7 @@ function ChainsMatrix({ chains, scanners, matrix, label }) {
                     return (
                       <td key={s.scan.id} className="text-center">
                         {credited ? (
-                          <span className="text-success" title={`${shown} of ${g.paths.length} known paths demonstrated${novel ? `, ${novel} novel (unreviewed)` : ''}`}>
+                          <span className="text-success" title={`${shown} of ${g.paths.length} attack paths reported${novel ? `, ${novel} new (unreviewed)` : ''}`}>
                             ✓{g.paths.length > 1 || novel ? <span className="text-xs"> {shown}/{g.paths.length}{novel ? `+${novel}` : ''}</span> : ''}
                           </span>
                         ) : (

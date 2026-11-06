@@ -701,3 +701,11 @@ failed ("No space left on device"), truncating every response over ~96 KB, the J
 - [x] Nuno freed space on the host: 100% -> 83% (2.0 GB free). Consider a bigger volume.
 - [x] Retention change deployed 2026-11-06 (4 snapshots on the host now).
 - [x] Re-verified: 1346 582, 349 438, 348 261, 330 674, 301 499, none credited by a legacy confirmation alone; confirm endpoint 410; JS bundle downloads in full.
+
+## Chain / attack-path UI and chain names (2026-11-06)
+- [x] CHAIN-005 stored in run order (TP-044 -> TP-043) on 329 and in the catalog; sink = last step
+      enforced (`_resolve_sink`).
+- [x] Migration 046 chain_names; chain_name on chain reads/writes; clone copies names.
+- [x] App page grouped by chain; scan page Chains card per mockup (collapsible, step chips,
+      summary strip); Compare labels by chain name; ChainForm grouping checkbox + name.
+- [ ] Deploy, seed 329 names (tools/seed_chain_sinks.py), screenshot the real pages.

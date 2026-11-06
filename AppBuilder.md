@@ -192,6 +192,7 @@ vulnapps/
 │   ├── 040_finding_matches.sql          # finding_matches join table; one finding -> many vulns/chains
 │   ├── 044_known_false_positives.sql    # per-app known-FP corpus, scan_findings.known_fp_id, audit 'known_fp'
 │   ├── 045_chain_sinks.sql              # chains.sink_vuln_id; scan_findings.chain_sink_vuln_id, novel_chain_rejected
+│   ├── 046_chain_names.sql              # chain_names(app_id, sink_vuln_id, name): one name per chain
 │   ├── 012_permissions_redesign.sql     # Collapse roles to user/admin, team roles to admin/contributor/view
 │   ├── 013_api_keys.sql                 # API keys table with scopes
 │   ├── 014_scan_labels.sql              # Labels + scan_labels junction table
@@ -1236,9 +1237,12 @@ A chain is its own ground-truth entity with its own weight; its members keep the
 individual weights.
 
 **Chains by sink (migration 045, `scoring._chain_groups`).** A chain is identified by its
-SINK: the vuln its path ENDS on as actually executed. Each `chains` row is one PATH;
-`chains.sink_vuln_id` (FK, must be a member, set explicitly — never inferred from
-`step_order`; CHAIN-005 lists #43 + #44 but runs #44 first) groups paths. Rows sharing a
+SINK: the vuln its path ENDS on. Each `chains` row is one ATTACK PATH whose `chain_members`
+are in the order the attack runs, so the sink is always the LAST step: `chains.sink_vuln_id`
+(FK) must equal the last member (`_resolve_sink`; an update that changes a grouped path's
+steps moves its sink to the new last step). It is stored, not derived, so NULL can keep a
+path ungrouped. CHAIN-005 was listed #43 + #44 though it runs #44 first; it is now stored
+TP-044 → TP-043 (catalog too). Rows sharing a
 sink are ONE chain; a row with NULL sink is its own chain (the pre-045 behaviour, so apps
 without seeded sinks score exactly as before). Rules, all mechanical:
 1. A PATH is demonstrated when a finding that REPORTS it (combines its steps) is matched to it
@@ -1264,6 +1268,12 @@ without seeded sinks score exactly as before). Rules, all mechanical:
    → `candidate_new_chain`, uncredited; a reviewer rejects any that slip through) and a single
    vuln plus its own impact (< 2 vulns → `not_a_chain`).
 
+**Chain names (migration 046, `chain_names(app_id, sink_vuln_id, name)`).** One name per
+chain, shared by its attack paths, e.g. "Pass-the-hash account takeover". Paths and the
+scoring `chains` list carry `chain_name` (`scoring_service.attach_chain_names`: the sink's
+name, else the path's own title). Written via `chain_name` on chain create/update
+(`chains._save_chain_name`; empty clears); presentation only, no revision; copied on clone.
+
 Review: `POST /api/scans/{id}/findings/{fid}/novel-chain` `{sink_vuln_id?, rejected?}`
 (`scans.review_novel_chain`; sink must be one of the finding's matched vulns; reject removes
 the chain credit, keeps vuln matches). "Add as path" on the scan page = Promote → Chain with
@@ -1272,10 +1282,16 @@ chain). A sink change on a path opens a `corpus_change` revision. App clone copi
 (remapped to the clone's vuln ids). New chain ids are max(CHAIN-###)+1, not row count. The
 importer's mapper returns `chain_sink_vuln_db_id` for unmatched chain reports
 (`_enforce_chain_flag` keeps it only there and only if it is a credited vuln) and posts it
-after matching. UI: ChainForm has a Sink select; the app page marks the sink member and
-counts chains as sinks ("9, 16 paths"); the scan page groups Chain Credit by sink with
-"x of n known paths" and lists unmatched chain reports with Ends-on / Add as path / Reject;
-Compare's Chains matrix has one row per sink with `✓ x/n` coverage.
+after matching. UI wording is **chain** (the group) and **attack path** (a row). ChainForm:
+steps "in the order the attack runs", a checkbox "Attack path of the chain that ends on
+<last step>" (default on for new paths) and the chain name. App page: one block per chain
+(name, top severity, points, n attack paths) with each path on one line as step chips
+(`TP-017 → TP-024 → TP-036`, sink underlined). Scan page **Chains** card: summary strip
+(chains credited, chain points, attack paths reported), one collapsible row per chain
+(✓/✗, name, "ends on …", severity, "x of n attack paths", credited/possible points); open,
+each path shows step chips green when matched, and "✓ Reported · <finding>", "Confirmed
+(legacy)" + Revoke, or "Not reported" + **Reported by…**; unmatched chain reports fold into
+one row (Ends on… / Add as attack path / Reject). Compare: one row per chain, by name.
 
 **What counts as a chain (normative, settled on scan 330):** a sequence of distinct flaws
 where each step hands the next what it needs, ending in an outcome none of the steps reaches

@@ -438,6 +438,17 @@ async def create_app(
                         (new_chain_pk, new_vuln_id, m["step_order"]),
                     )
 
+        # Chain names are keyed by sink vuln; follow the vulns to the clone.
+        cursor = await db.execute(
+            "SELECT sink_vuln_id, name FROM chain_names WHERE app_id = ?", (clone_from,)
+        )
+        for row in await cursor.fetchall():
+            if vuln_id_map.get(row["sink_vuln_id"]) is not None:
+                await db.execute(
+                    "INSERT INTO chain_names (app_id, sink_vuln_id, name) VALUES (?, ?, ?)",
+                    (app_id, vuln_id_map[row["sink_vuln_id"]], row["name"]),
+                )
+
         # Known false positives are app curation too (a new version keeps its
         # decoys); their links to the source app's findings stay behind.
         await db.execute(

@@ -56,30 +56,28 @@ export default function ScanDetail() {
   );
 }
 
-// Each chain row is one PATH; paths that end on the same vuln (the sink) are
-// one chain, credited once per scan at the best path it demonstrated — see
-// app/scoring.py::_chain_groups. A PATH is demonstrated only when a finding
-// that REPORTS it — narrates the steps combined — is matched to it: by the
-// importer, the Matched dropdown, or "Reported by…" here when the importer
-// couldn't tell. Separate findings that each show one member, never
-// connecting them, earn no chain credit. Pre-existing reviewer confirmations
-// (scan_chain_credits) still count, marked legacy, until revoked.
+// Chains, one row per chain: the attack paths (`chains` rows, steps in run
+// order) that end on the same step, credited once per scan at the best path
+// it reported — see app/scoring.py::_chain_groups. A path counts only when a
+// finding that REPORTS it, combining its steps, is matched to it: by the
+// importer, the Matched dropdown, or "Reported by…" below when the importer
+// couldn't tell. Separate findings that each show one step are not a chain.
+// Pre-existing reviewer confirmations (scan_chain_credits) still count,
+// marked legacy, until revoked. Collapsed by default: a chain's attack paths
+// open on click.
 function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpdate }) {
   const [busy, setBusy] = useState(null);
-  const vulnById = useMemo(() => {
-    const m = new Map();
-    for (const v of knownVulns) m.set(v.id, v);
-    return m;
-  }, [knownVulns]);
+  const [open, setOpen] = useState(() => new Set());
+  const [showNovel, setShowNovel] = useState(false);
+  const vulnById = useMemo(() => new Map(knownVulns.map(v => [v.id, v])), [knownVulns]);
   const chainByPk = new Map(chains.map(c => [c.id, c]));
   const findingById = new Map(findings.map(f => [f.id, f]));
   const matchedIds = new Set(metrics.matched_vuln_ids || []);
   const creditByChain = metrics.credit_by_chain || {};
   const groups = metrics.chain_groups || [];
   const novel = (metrics.novel_chains || []).filter(n => n.status !== 'not_a_chain');
-  const directMatchChainIds = new Set(
-    findings.flatMap(f => f.matched_chain_ids || [])
-  );
+  const reportersOf = pk => findings.filter(f => (f.matched_chain_ids || []).includes(pk));
+  const code = vid => vulnById.get(vid)?.vuln_id || `#${vid}`;
   const vulnLabel = vid => { const v = vulnById.get(vid); return v ? `${v.vuln_id} — ${v.title}` : `#${vid}`; };
 
   const run = async (key, fn) => {
@@ -87,8 +85,6 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
     try { await fn(); onUpdate(); } finally { setBusy(null); }
   };
   const revoke = chain => run(chain.id, () => api.del(`/scans/${scanId}/chains/${chain.id}/confirm`));
-  // A reviewer's call for when the importer couldn't tell: pick the finding
-  // that reports this chain. It becomes a direct match, like any other.
   const linkFinding = (chain, findingId) => {
     const f = findingById.get(findingId);
     return run(chain.id, () => api.post(`/scans/${scanId}/findings/${findingId}/match`, {
@@ -96,7 +92,7 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
       chain_ids: [...new Set([...(f.matched_chain_ids || []), chain.id])],
     }));
   };
-  // Chain reports first, then findings touching one of the path's members.
+  // Chain reports first, then findings touching one of the path's steps.
   const candidates = chain => findings
     .filter(f => !f.is_false_positive && !f.is_ignored && !(f.matched_chain_ids || []).includes(chain.id))
     .map(f => ({ f, rank: f.is_chain ? 0 : (f.matched_vuln_ids || []).some(v => chain.members.includes(v)) ? 1 : 2 }))
@@ -104,7 +100,7 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
     .map(x => x.f);
   const review = (n, body) => run(`n${n.finding_id}`, () =>
     api.post(`/scans/${scanId}/findings/${n.finding_id}/novel-chain`, body));
-  // Accept a credited novel path permanently: a new path row on the same sink.
+  // Accept a credited novel path permanently: a new attack path on that chain.
   const promote = n => {
     const f = findingById.get(n.finding_id);
     const group = groups.find(g => g.sink_vuln_id === n.sink_vuln_id);
@@ -116,45 +112,54 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
       sink_vuln_id: n.sink_vuln_id,
     }));
   };
+  const toggle = key => setOpen(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
 
-  const pathRow = (chain, indent) => {
+  const totalWeight = groups.reduce((sum, g) => sum + g.weight, 0);
+  const creditedWeight = groups.reduce((sum, g) => sum + g.credited_weight, 0);
+  const allPaths = groups.flatMap(g => g.paths);
+  const reportedPaths = allPaths.filter(p => reportersOf(p.chain_pk).length > 0).length;
+
+  const pathRow = chain => {
+    const reporters = reportersOf(chain.id);
     const credited = creditByChain[String(chain.id)] === 1 || creditByChain[chain.id] === 1;
-    const directMatch = directMatchChainIds.has(chain.id);
     return (
-      <tr key={chain.id}>
-        <td style={indent ? { paddingLeft: 28 } : undefined}>
-          <strong>{chain.chain_id}</strong>
-          {chain.severity && <> <Badge severity={chain.severity} /></>}
-          <div className="text-muted text-sm">{chain.title}</div>
-        </td>
-        <td>
-          {chain.members.map(vid => {
-            const hit = matchedIds.has(vid);
-            return (
-              <div key={vid} className={hit ? 'text-success text-sm' : 'text-muted text-sm'}>
-                {hit ? '✓' : '✗'} {vulnLabel(vid)}
-              </div>
-            );
-          })}
-        </td>
-        <td>
-          {directMatch ? (
-            <span className="text-success" title="A finding above is matched directly to this path">✓ Demonstrated (reported)</span>
+      <div key={chain.id} className="chain-row-path">
+        <span className="font-mono text-xs text-muted" title={chain.title}>{chain.chain_id}</span>
+        <span className="chain-steps-inline">
+          {chain.members.map((vid, i) => (
+            <span key={vid}>
+              {i > 0 && <span className="text-muted"> → </span>}
+              <span title={vulnLabel(vid)}
+                    className={'chain-step ' + (matchedIds.has(vid) ? 'found' : 'missed') +
+                               (vid === chain.sink_vuln_id ? ' chain-step-sink' : '')}>
+                {code(vid)}
+              </span>
+            </span>
+          ))}
+        </span>
+        <span className="text-sm">
+          {reporters.length > 0 ? (
+            <span className="text-success" title={reporters.map(f => f.title).join('\n')}>
+              ✓ Reported · “{(reporters[0].title || reporters[0].vuln_type || '').slice(0, 48)}
+              {(reporters[0].title || '').length > 48 ? '…' : ''}”
+              {reporters.length > 1 && <span className="text-muted"> +{reporters.length - 1}</span>}
+            </span>
           ) : credited ? (
-            <>
-              <span className="text-warning" title="Credited by a reviewer confirmation from before only reported chains counted. Link the finding that reports it, or revoke.">✓ Confirmed (legacy)</span>
-              {canEdit && (
-                <div>
-                  <button className="btn btn-outline btn-sm" disabled={busy === chain.id}
-                          onClick={() => revoke(chain)}>Revoke</button>
-                </div>
-              )}
-            </>
+            <span className="text-warning" title="Credited by a reviewer confirmation from before only reported chains counted. Link the finding that reports it, or revoke.">
+              ✓ Confirmed (legacy)
+              {canEdit && <button className="btn btn-outline btn-sm" style={{ marginLeft: 6 }} disabled={busy === chain.id}
+                                  onClick={() => revoke(chain)}>Revoke</button>}
+            </span>
           ) : (
-            <span className="text-muted text-sm">Not reported</span>
+            <span className="text-muted">Not reported</span>
           )}
-          {canEdit && !directMatch && (
-            <select className="form-select mt-1" style={{ maxWidth: 220 }} disabled={busy === chain.id} value=""
+          {canEdit && reporters.length === 0 && (
+            <select className="form-select" style={{ maxWidth: 170, marginLeft: 8, display: 'inline-block' }}
+                    disabled={busy === chain.id} value=""
                     onChange={e => e.target.value && linkFinding(chain, Number(e.target.value))}>
               <option value="">Reported by…</option>
               {candidates(chain).map(f => (
@@ -162,114 +167,119 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
               ))}
             </select>
           )}
-        </td>
-      </tr>
+        </span>
+      </div>
     );
   };
 
   const NOVEL_STATUS = {
-    novel_path: ['text-success', 'Credited to this sink\'s chain: novel path (unreviewed)'],
-    needs_sink: ['text-warning', 'Set the step this chain ends on to score it'],
-    candidate_new_chain: ['text-warning', 'Ends on a vuln that is no chain\'s sink: not credited. Candidate new chain.'],
-    members_not_demonstrated: ['text-muted', 'Not every member is demonstrated: not credited'],
+    novel_path: ['text-success', 'Credited to that chain as a new attack path (unreviewed)'],
+    needs_sink: ['text-warning', 'Pick the step this chain ends on to score it'],
+    candidate_new_chain: ['text-warning', 'Ends on a step no chain ends on: not credited. Candidate new chain.'],
+    members_not_demonstrated: ['text-muted', 'Not every step is demonstrated: not credited'],
     rejected: ['text-muted', 'Rejected as a chain: no chain credit'],
   };
+  const rejectedCount = novel.filter(n => n.status === 'rejected').length;
 
   return (
     <div className="card mb-2">
-      <h3 className="card-title mb-2">Chain Credit</h3>
-      <p className="text-muted text-sm mb-2">
-        A chain is identified by the vulnerability it ends on (its sink). Each row below is one known
-        path to it; the chain earns its weight once, when a finding in this scan reports any one path,
-        combining its steps. Separate findings that each show one step, never connected, are not a chain.
-        If the importer missed it, pick the finding under "Reported by…". More paths to the same sink add
-        coverage, not points.
+      <h3 className="card-title mb-1">Chains</h3>
+      <p className="text-muted text-sm mb-1">
+        A chain is credited once, when this scan reports any one of its attack paths, combining the steps.
+        Separate findings for each step don't count. The underlined step is where every attack path of the chain ends.
       </p>
-      <div className="table-wrap">
-        <table>
-          <thead><tr><th>Chain / path</th><th>Members</th><th style={{ width: 200 }}>Status</th></tr></thead>
-          <tbody>
-            {groups.map(g => {
-              const paths = g.paths.map(p => chainByPk.get(p.chain_pk)).filter(Boolean);
-              if (g.sink_vuln_id == null) return paths.map(c => pathRow(c, false));
-              const novelCount = g.novel_finding_ids.length;
-              return [
-                <tr key={g.key} style={{ background: 'var(--bg-subtle, rgba(127,127,127,0.06))' }}>
-                  <td colSpan={2}>
-                    <strong>Sink {vulnLabel(g.sink_vuln_id)}</strong>
-                    <div className="text-muted text-sm">
-                      {g.paths_demonstrated} of {g.paths_total} known path{g.paths_total === 1 ? '' : 's'} demonstrated
-                      {novelCount > 0 && <> + {novelCount} novel path{novelCount === 1 ? '' : 's'} (unreviewed)</>}
-                    </div>
-                  </td>
-                  <td>
-                    {g.credited
-                      ? <span className="text-success">✓ Credited ({g.credited_weight}p)</span>
-                      : <span className="text-muted text-sm">Not credited</span>}
-                  </td>
-                </tr>,
-                ...paths.map(c => pathRow(c, true)),
-              ];
-            })}
-          </tbody>
-        </table>
+      <div className="chain-summary">
+        <div><b>{groups.filter(g => g.credited).length} / {groups.length}</b>chains credited</div>
+        <div><b>{creditedWeight} / {totalWeight}</b>chain points</div>
+        <div><b>{reportedPaths}</b>of {allPaths.length} attack paths reported</div>
       </div>
 
-      {novel.length > 0 && (
-        <>
-          <h4 className="mt-2 mb-1">Chain reports matching no known path</h4>
-          <p className="text-muted text-sm mb-2">
-            A reported chain that ends on a known sink, with two or more catalogued members all demonstrated,
-            is credited to that sink's chain right away (once per chain). Review each one: add it as a
-            permanent path, or reject it, for example independent bugs bundled together, or one vuln plus its own impact.
-          </p>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Finding</th><th>Members</th><th style={{ width: 260 }}>Status</th></tr></thead>
-              <tbody>
-                {novel.map(n => {
-                  const f = findingById.get(n.finding_id);
-                  const [cls, text] = NOVEL_STATUS[n.status] || ['text-muted', n.status];
-                  const isBusy = busy === `n${n.finding_id}`;
-                  return (
-                    <tr key={n.finding_id}>
-                      <td><strong>{f?.title || f?.vuln_type || 'Chain report'}</strong></td>
-                      <td>
-                        {n.member_vuln_ids.map(vid => (
-                          <div key={vid} className="text-sm">
-                            {vulnLabel(vid)}
-                            {vid === n.sink_vuln_id && <span className="badge badge-info" style={{ marginLeft: 6 }}>sink</span>}
-                          </div>
-                        ))}
-                      </td>
-                      <td>
-                        <div className={`${cls} text-sm`}>{text}</div>
-                        {canEdit && (
-                          <div className="flex gap-1 mt-1" style={{ flexWrap: 'wrap' }}>
-                            {n.status !== 'rejected' && (
-                              <select className="form-select" style={{ maxWidth: 240 }} disabled={isBusy}
-                                      value={n.sink_vuln_id ?? ''}
-                                      onChange={e => review(n, { sink_vuln_id: e.target.value ? Number(e.target.value) : null })}>
-                                <option value="">Ends on…</option>
-                                {n.member_vuln_ids.map(vid => <option key={vid} value={vid}>{vulnLabel(vid)}</option>)}
-                              </select>
-                            )}
-                            {n.status === 'novel_path' && (
-                              <button className="btn btn-primary btn-sm" disabled={isBusy} onClick={() => promote(n)}>Add as path</button>
-                            )}
-                            {n.status === 'rejected'
-                              ? <button className="btn btn-outline btn-sm" disabled={isBusy} onClick={() => review(n, { rejected: false })}>Un-reject</button>
-                              : <button className="btn btn-outline btn-sm" disabled={isBusy} onClick={() => review(n, { rejected: true })}>Reject</button>}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+      {groups.map(g => {
+        const paths = g.paths.map(p => chainByPk.get(p.chain_pk)).filter(Boolean);
+        const first = paths[0];
+        const name = first?.chain_name || first?.title || 'Chain';
+        const severity = g.credited_severity || g.paths.reduce((a, b) => (b.weight > a.weight ? b : a)).severity;
+        const novelCount = g.novel_finding_ids.length;
+        const isOpen = open.has(g.key);
+        return (
+          <div key={g.key} className="chain-row">
+            <div className="chain-row-head" onClick={() => toggle(g.key)}>
+              <span className={g.credited ? 'text-success' : 'text-muted'}>{g.credited ? '✓' : '✗'}</span>
+              <div className="chain-row-name">
+                <strong>{name}</strong>
+                {g.sink_vuln_id != null && <small>ends on {vulnLabel(g.sink_vuln_id)}</small>}
+              </div>
+              <span><Badge severity={severity} /></span>
+              <span className="text-sm text-muted">
+                {g.paths_demonstrated} of {g.paths_total} attack path{g.paths_total === 1 ? '' : 's'}
+                {novelCount > 0 && <> + {novelCount} new</>}
+              </span>
+              <span className={'chain-row-pts ' + (g.credited ? 'text-success' : 'text-muted')}>
+                {g.credited_weight} / {g.weight}p {isOpen ? '▾' : '▸'}
+              </span>
+            </div>
+            {isOpen && <div className="chain-row-paths">{paths.map(pathRow)}</div>}
           </div>
-        </>
+        );
+      })}
+
+      {novel.length > 0 && (
+        <div className="chain-row">
+          <div className="chain-row-head" onClick={() => setShowNovel(v => !v)} style={{ gridTemplateColumns: '1fr auto' }}>
+            <span className="text-sm text-muted">
+              Chain reports matching no attack path ({novel.length}{rejectedCount ? `, ${rejectedCount} rejected` : ''})
+            </span>
+            <span className="text-muted text-sm">{showNovel ? '▾' : '▸'}</span>
+          </div>
+          {showNovel && (
+            <div className="chain-row-paths">
+              <p className="text-muted text-sm mb-1">
+                A reported chain ending on a step some chain ends on, with two or more catalogued steps all
+                demonstrated, counts for that chain right away (once per chain). Add it as a permanent attack
+                path, or reject it, e.g. independent bugs bundled together, or one vuln plus its own impact.
+              </p>
+              {novel.map(n => {
+                const f = findingById.get(n.finding_id);
+                const [cls, text] = NOVEL_STATUS[n.status] || ['text-muted', n.status];
+                const isBusy = busy === `n${n.finding_id}`;
+                return (
+                  <div key={n.finding_id} className="chain-row-path" style={{ gridTemplateColumns: '1fr auto' }}>
+                    <div>
+                      <strong className="text-sm">{f?.title || f?.vuln_type || 'Chain report'}</strong>
+                      <div className="chain-steps-inline mt-1">
+                        {n.member_vuln_ids.map((vid, i) => (
+                          <span key={vid}>
+                            {i > 0 && <span className="text-muted"> · </span>}
+                            <span title={vulnLabel(vid)} className={'chain-step found' + (vid === n.sink_vuln_id ? ' chain-step-sink' : '')}>{code(vid)}</span>
+                          </span>
+                        ))}
+                      </div>
+                      <div className={`${cls} text-sm mt-1`}>{text}</div>
+                    </div>
+                    {canEdit && (
+                      <div className="flex gap-1" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        {n.status !== 'rejected' && (
+                          <select className="form-select" style={{ maxWidth: 200 }} disabled={isBusy}
+                                  value={n.sink_vuln_id ?? ''}
+                                  onChange={e => review(n, { sink_vuln_id: e.target.value ? Number(e.target.value) : null })}>
+                            <option value="">Ends on…</option>
+                            {n.member_vuln_ids.map(vid => <option key={vid} value={vid}>{vulnLabel(vid)}</option>)}
+                          </select>
+                        )}
+                        {n.status === 'novel_path' && (
+                          <button className="btn btn-primary btn-sm" disabled={isBusy} onClick={() => promote(n)}>Add as attack path</button>
+                        )}
+                        {n.status === 'rejected'
+                          ? <button className="btn btn-outline btn-sm" disabled={isBusy} onClick={() => review(n, { rejected: false })}>Un-reject</button>
+                          : <button className="btn btn-outline btn-sm" disabled={isBusy} onClick={() => review(n, { rejected: true })}>Reject</button>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -1067,13 +1077,18 @@ function Findings({ findings, knownVulns, chains, knownFps, canEdit, scanId, app
             <h3 className="card-title mb-2">Promote to Chain</h3>
             <ChainForm
               vulns={knownVulns}
+              chainNames={Object.fromEntries(chains.filter(c => c.sink_vuln_id != null).map(c => [c.sink_vuln_id, c.chain_name]))}
               submitLabel="Register chain"
               intro="Registers a new chain in this app's catalog, opens a ground-truth revision, and credits it to this finding. Steps must already be catalog vulns — promote a missing step as a vuln first. The vulns this finding already credits are pre-filled."
               initial={{
                 title: promotingChain.title || promotingChain.vuln_type || '',
                 severity: (promotingChain.severity || 'critical').toLowerCase() === 'info'
                   ? 'low' : (promotingChain.severity || 'critical').toLowerCase(),
-                member_vuln_ids: promotingChain.matched_vuln_ids || [],
+                // Steps run in order, ending on the sink the finding was credited under.
+                member_vuln_ids: [
+                  ...(promotingChain.matched_vuln_ids || []).filter(v => v !== promotingChain.chain_sink_vuln_id),
+                  ...(promotingChain.chain_sink_vuln_id != null ? [promotingChain.chain_sink_vuln_id] : []),
+                ],
                 sink_vuln_id: promotingChain.chain_sink_vuln_id ?? null,
                 description: promotingChain.description || '',
               }}

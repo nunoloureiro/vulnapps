@@ -184,16 +184,17 @@ from app.services import scans as scans_service
 from app.services import scoring as scoring_service
 
 
-async def test_sink_must_be_a_member(db):
+async def test_sink_must_be_the_last_step(db):
     app_id, (a, b, c) = await setup(db)
-    with pytest.raises(ValueError, match="sink_vuln_id must be one of"):
-        await chains_service.create_chain(db, ADMIN, app_id, {
-            "title": "A to B", "severity": "high", "member_vuln_ids": [a, b], "sink_vuln_id": c,
-        })
+    for wrong in (c, a):  # not a member; a member but not the last step
+        with pytest.raises(ValueError, match="sink_vuln_id must be the path's last step"):
+            await chains_service.create_chain(db, ADMIN, app_id, {
+                "title": "A to B", "severity": "high", "member_vuln_ids": [a, b], "sink_vuln_id": wrong,
+            })
     chain = await chains_service.create_chain(db, ADMIN, app_id, {
-        "title": "A to B", "severity": "high", "member_vuln_ids": [a, b], "sink_vuln_id": a,
+        "title": "A to B", "severity": "high", "member_vuln_ids": [a, b], "sink_vuln_id": b,
     })
-    assert chain["sink_vuln_id"] == a  # explicit, not the last-listed member
+    assert chain["sink_vuln_id"] == b
 
 
 async def test_sink_change_opens_a_revision_and_regroups(db):
@@ -219,9 +220,9 @@ async def test_sink_change_opens_a_revision_and_regroups(db):
     scan = dict(await cursor.fetchone())
     result = await scoring_service.score(db, scan, await scoring_service.latest_revision(db, app_id))
     assert result["metrics"]["tiers"]["chained"]["count"] == 1
-    # Dropping the sink member from the path drops the sink with it.
+    # Changing a grouped path's steps moves its sink to the new last step.
     updated = await chains_service.update_chain(db, ADMIN, app_id, p1["id"], {"member_vuln_ids": [a, b]})
-    assert updated["sink_vuln_id"] is None
+    assert updated["sink_vuln_id"] == b
 
 
 async def test_review_reject_and_promote_novel_path(db):
@@ -313,3 +314,29 @@ async def test_confirm_endpoint_is_retired():
         resp = await client.post("/api/scans/1/chains/1/confirm", json={})
     assert resp.status_code == 410
     assert "link the finding" in resp.json()["detail"]
+
+
+async def test_chain_name_is_shared_by_paths_to_the_same_sink(db):
+    app_id, (a, b, c) = await setup(db)
+    await chains_service.create_chain(db, ADMIN, app_id, {
+        "title": "A to C", "severity": "high", "member_vuln_ids": [a, c], "sink_vuln_id": c,
+        "chain_name": "Takeover via C",
+    })
+    p2 = await chains_service.create_chain(db, ADMIN, app_id, {
+        "title": "B to C", "severity": "high", "member_vuln_ids": [b, c], "sink_vuln_id": c,
+    })
+    lone = await chains_service.create_chain(db, ADMIN, app_id, {
+        "title": "A to B", "severity": "high", "member_vuln_ids": [a, b],
+    })
+    assert p2["chain_name"] == "Takeover via C", "a path joins its sink's chain name"
+    assert lone["chain_name"] == "A to B", "a path with no sink is its own chain"
+
+    await chains_service.update_chain(db, ADMIN, app_id, p2["id"], {"chain_name": "Renamed"})
+    names = {c["title"]: c["chain_name"] for c in await chains_service.list_chains(db, ADMIN, app_id)}
+    assert names == {"A to C": "Renamed", "B to C": "Renamed", "A to B": "A to B"}
+
+    clone = await apps_service.create_app(
+        db, ADMIN, "T", "2.0", None, None, "private", None, "", clone_from=app_id,
+    )
+    names = {c["title"]: c["chain_name"] for c in await chains_service.list_chains(db, ADMIN, clone["id"])}
+    assert names["B to C"] == "Renamed", "clone keeps chain names"

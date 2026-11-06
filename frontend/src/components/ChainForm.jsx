@@ -10,14 +10,18 @@ const SEVERITIES = ['critical', 'high', 'medium', 'low'];
 // exactly as for vulns. Members must already exist in the catalog: a step the
 // catalog lacks is promoted as a vuln first, so every member is a flaw some
 // scan actually showed.
-export function ChainForm({ vulns, initial = {}, submitLabel = 'Save', onSubmit, onCancel, intro }) {
+export function ChainForm({ vulns, initial = {}, submitLabel = 'Save', onSubmit, onCancel, intro, chainNames = {} }) {
   const [title, setTitle] = useState(initial.title || '');
   const [severity, setSeverity] = useState(initial.severity || 'critical');
   const [members, setMembers] = useState(initial.member_vuln_ids || []);
   const [description, setDescription] = useState(initial.description || '');
-  // The vuln the path ENDS on, as executed. Paths with the same sink are one
-  // chain for scoring (credited once). Explicit: listed order is not proof.
-  const [sink, setSink] = useState(initial.sink_vuln_id ?? null);
+  // A path's steps run in order, so it ends on its LAST step (its sink).
+  // Grouped paths ending on the same step are one chain, credited once per
+  // scan and named by `chainNames[sink]`. New paths are grouped by default.
+  const [grouped, setGrouped] = useState(initial.sink_vuln_id != null || initial.grouped !== false);
+  const [nameEdit, setNameEdit] = useState(null); // null = untouched
+  const last = members.length ? members[members.length - 1] : null;
+  const chainName = nameEdit ?? (last != null ? (chainNames[last] || '') : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -40,10 +44,12 @@ export function ChainForm({ vulns, initial = {}, submitLabel = 'Save', onSubmit,
     setBusy(true);
     setError(null);
     try {
-      await onSubmit({
+      const data = {
         title: title.trim(), severity, member_vuln_ids: members, description: description || null,
-        sink_vuln_id: members.includes(sink) ? sink : null,
-      });
+        sink_vuln_id: grouped ? last : null,
+      };
+      if (grouped && nameEdit !== null) data.chain_name = nameEdit.trim();
+      await onSubmit(data);
     } catch (err) {
       setError(err.message || 'Could not save the chain');
       setBusy(false);
@@ -69,7 +75,7 @@ export function ChainForm({ vulns, initial = {}, submitLabel = 'Save', onSubmit,
       </div>
 
       <div className="form-group">
-        <label className="form-label">Steps, in order</label>
+        <label className="form-label">Steps, in the order the attack runs</label>
         {members.length === 0 && <div className="text-muted text-sm mb-1">No steps yet.</div>}
         <ol className="chain-steps">
           {members.map((vid, i) => {
@@ -96,16 +102,20 @@ export function ChainForm({ vulns, initial = {}, submitLabel = 'Save', onSubmit,
       </div>
 
       <div className="form-group">
-        <label className="form-label">Sink (the step this path ends on)</label>
-        <select className="form-select" value={members.includes(sink) ? sink : ''}
-                onChange={e => setSink(e.target.value ? Number(e.target.value) : null)}>
-          <option value="">None: this path is a chain of its own</option>
-          {members.map(vid => {
-            const v = byId.get(vid);
-            return <option key={vid} value={vid}>{v ? `${v.vuln_id} — ${v.title}` : `#${vid}`}</option>;
-          })}
-        </select>
-        <div className="text-muted text-sm">Paths with the same sink are one chain and are credited once per scan.</div>
+        <label className="flex gap-1" style={{ alignItems: 'center' }}>
+          <input type="checkbox" checked={grouped} onChange={e => setGrouped(e.target.checked)} />
+          <span>
+            Attack path of the chain that ends on{' '}
+            <strong>{last != null ? (byId.get(last)?.vuln_id || `#${last}`) : 'its last step'}</strong>
+          </span>
+        </label>
+        <div className="text-muted text-sm">
+          Every attack path ending on the same step is one chain, credited once per scan.
+        </div>
+        {grouped && last != null && (
+          <input className="form-input mt-1" value={chainName} onChange={e => setNameEdit(e.target.value)}
+                 placeholder="Chain name, e.g. Pass-the-hash account takeover (shared by its attack paths)" />
+        )}
       </div>
 
       <div className="form-group">

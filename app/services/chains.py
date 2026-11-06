@@ -52,7 +52,26 @@ async def list_chains(db, user, app_id: int) -> list[dict]:
         )
     for c in chains:
         c["members"] = members_by_chain.get(c["id"], [])
-    return chains
+    return await scoring_service.attach_chain_names(db, app_id, chains)
+
+
+async def _save_chain_name(db, app_id: int, sink, chain_data: dict) -> None:
+    """Upsert the name of the chain a path belongs to, when the write carries
+    ``chain_name`` and the path has a sink. Shared by every path to that sink;
+    presentation only, so it opens no revision. An empty name clears it."""
+    if "chain_name" not in chain_data or sink is None:
+        return
+    name = (chain_data.get("chain_name") or "").strip()
+    if not name:
+        await db.execute(
+            "DELETE FROM chain_names WHERE app_id = ? AND sink_vuln_id = ?", (app_id, sink)
+        )
+        return
+    await db.execute(
+        """INSERT INTO chain_names (app_id, sink_vuln_id, name) VALUES (?, ?, ?)
+           ON CONFLICT(app_id, sink_vuln_id) DO UPDATE SET name = excluded.name""",
+        (app_id, sink, name[:200]),
+    )
 
 
 async def _resolve_members(db, app_id: int, member_vuln_ids: list) -> list[int]:
@@ -86,13 +105,14 @@ async def _resolve_members(db, app_id: int, member_vuln_ids: list) -> list[int]:
 
 
 def _resolve_sink(chain_data: dict, member_ids: list[int], existing=None):
-    """The path's sink: the member vuln it ENDS on, as actually executed.
+    """The path's sink: the step it ENDS on, which is its LAST step.
 
     Paths sharing a sink are one chain for scoring (see
-    ``scoring._chain_groups``). Set explicitly — never inferred from step order,
-    since a path's listed order need not be its execution order. Absent from
-    the write, an update keeps the current sink (dropped if no longer a member).
-    None means the path is its own chain.
+    ``scoring._chain_groups``). Steps are stored in execution order, so the
+    sink is always the last one; it is stored explicitly so that NULL can keep
+    a path out of any group (every path written before migration 045). Absent
+    from the write, an update keeps a grouped path grouped, on its (possibly
+    new) last step. None means the path is its own chain.
     """
     if "sink_vuln_id" in chain_data:
         raw = chain_data.get("sink_vuln_id")
@@ -103,11 +123,10 @@ def _resolve_sink(chain_data: dict, member_ids: list[int], existing=None):
         except (TypeError, ValueError):
             raise ValueError(f"Invalid sink_vuln_id: {raw!r}")
     else:
-        sink = existing["sink_vuln_id"] if existing is not None else None
-        if sink is not None and sink not in member_ids:
-            return None
-    if sink is not None and sink not in member_ids:
-        raise ValueError("sink_vuln_id must be one of the chain's member vulnerabilities")
+        grouped = existing is not None and existing["sink_vuln_id"] is not None
+        return member_ids[-1] if grouped else None
+    if sink != member_ids[-1]:
+        raise ValueError("sink_vuln_id must be the path's last step (steps run in order)")
     return sink
 
 
@@ -199,6 +218,7 @@ async def create_chain(db, user, app_id: int, chain_data: dict) -> dict:
             "INSERT INTO chain_members (chain_pk, vuln_id, step_order) VALUES (?, ?, ?)",
             (chain_pk, vuln_id, step_order),
         )
+    await _save_chain_name(db, app_id, sink, chain_data)
 
     await audit_service.record_audit_event(
         db, entity_type="chain", action="chain_created", actor=user,
@@ -279,6 +299,7 @@ async def update_chain(db, user, app_id: int, chain_pk: int, chain_data: dict) -
             "INSERT INTO chain_members (chain_pk, vuln_id, step_order) VALUES (?, ?, ?)",
             (chain_pk, vuln_id, step_order),
         )
+    await _save_chain_name(db, app_id, sink, chain_data)
 
     await audit_service.record_audit_event(
         db, entity_type="chain", action="chain_updated", actor=user,

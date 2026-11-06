@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Seed TaintedPort chain sinks (migration 045) on a vulnapps app.
 
-Sets `sink_vuln_id` on every existing path and registers the two new paths,
+Sets `sink_vuln_id` on every existing path, registers the two new paths, and
+names each chain (migration 046),
 from the catalog's "CHAINS BY SINK" table (TaintedPort-Vulns
 KnownVulnerabilities.txt). Dry run unless --apply.
 
@@ -64,6 +65,19 @@ NEW_PATHS = {
     },
 }
 
+# Chain names (migration 046), keyed by sink, from the catalog's CHAINS BY SINK.
+NAMES = {
+    40: "Pass-the-hash account takeover",
+    23: "Admin claim forgery, signature not enforced",
+    45: "Admin forgery via algorithm confusion",
+    60: "Admin forgery via recovered signing secret",
+    43: "Takeover via predictable reset token",
+    20: "2FA-disable IDOR -> account takeover",
+    28: "2FA-protected takeover via leaked TOTP seed",
+    29: "CSRF-delivered XSS -> session token theft",
+    47: "Deserialization gadget -> RCE",
+}
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -124,6 +138,14 @@ def main() -> int:
                 "member_vuln_ids": [catalog[n]["vuln_id"] for n in spec["members"]],
                 "sink_vuln_id": catalog[spec["sink"]]["vuln_id"],
             }).raise_for_status()
+
+    # Names are shared by every path to a sink: writing one path names the chain.
+    for sink, name in NAMES.items():
+        path = next(c for cid, c in live.items() if cid in PATHS and PATHS[cid][1] == sink)
+        state = "ok" if path.get("chain_name") == name else "name"
+        print(f"{state:4} chain ending on {label(sink)}: {name}")
+        if state == "name" and args.apply:
+            client.put(f"{base}/{path['id']}", json={"chain_name": name}).raise_for_status()
 
     extra = sorted(set(live) - set(PATHS) - set(NEW_PATHS))
     if extra:
