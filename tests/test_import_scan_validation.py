@@ -832,7 +832,8 @@ def test_raw_control_characters_in_reasoning_are_accepted():
 
 
 def test_truly_broken_json_still_raises():
-    with pytest.raises(json.JSONDecodeError):
+    # Raised as LLMCallError (retried like any LLM failure) with the reply saved.
+    with pytest.raises(import_scan.LLMCallError, match="invalid JSON.*reply saved"):
         _map_batch([], '{"mappings": [{"index": 0,}', [dict(_FINDING)], [(0, dict(_FINDING))])
 
 
@@ -925,5 +926,40 @@ def test_reply_with_a_snippet_before_the_answer():
     assert parse(text) == answer
     assert parse(json.dumps(answer)) == answer, "the normal path is unchanged"
     assert parse('```json\n{"findings": []}\n```') == {"findings": []}
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(import_scan.LLMCallError, match="reply saved"):
         parse("no json here")
+    with pytest.raises(import_scan.LLMCallError, match="empty reply"):
+        parse("   ")
+
+
+def test_cyberagent_report_is_read_without_extraction(tmp_path):
+    """A cyberAgent findings.json is converted field by field; no model has to
+    re-type its exploits (that output was stopped by a safety classifier)."""
+    report = {"product": "CyberAgent", "findings": [{
+        "display_id": "CYA-003", "title": "alg=none accepted", "severity": "Critical",
+        "vuln_class": "JWT signature bypass", "cwe": "CWE-347", "owasp": "A07",
+        "affected": [{"url": "https://api.example/auth/me", "method": "GET", "parameter": "Bearer"},
+                     {"url": "https://api.example/admin/users", "method": "GET", "parameter": "Bearer"}],
+        "description": "Unsigned tokens are accepted.", "business_impact": "Admin takeover.",
+        "attack_steps": ["forge alg=none", "call /admin/users"],
+        "evidence": [{"excerpt": "HTTP 200 users list"}], "exploit_output": "CYA-PROOF: 200",
+        "remediation": "Verify signatures.", "exploit_script": "exploits/c12/x.py"}],
+        "chains": [{"display_id": "CYA-CHAIN-01", "title": "price + status", "severity": "high",
+                    "finding_ids": ["CYA-010", "CYA-011"], "narrative": "Together they ...",
+                    "attack_steps": ["set price", "flip status"]}]}
+    path = tmp_path / "findings.json"
+    path.write_text(json.dumps(report))
+    out = import_scan.cyberagent_findings(path)
+    assert len(out) == 2
+    f, chain = out
+    assert (f["title"], f["severity"], f["url"], f["http_method"]) == (
+        "CYA-003: alg=none accepted", "critical", "https://api.example/auth/me", "GET")
+    assert "Admin takeover." in f["description"] and "/admin/users" in f["description"]
+    assert "1. forge alg=none" in f["poc"] and "HTTP 200 users list" in f["poc"] and "CYA-PROOF" in f["poc"]
+    assert "exploits/c12" not in f["poc"], "the script path is not evidence"
+    assert chain["vuln_type"] == "Exploit chain" and "CYA-010, CYA-011" in chain["description"]
+    listed = tmp_path / "list.json"
+    listed.write_text(json.dumps(out))
+    import_scan.load_findings_json(listed)  # valid --findings-json shape
+    path.write_text(json.dumps({"findings": [{"title": "x"}]}))
+    assert import_scan.cyberagent_findings(path) is None, "other JSON reports still go through extraction"

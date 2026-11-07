@@ -789,7 +789,105 @@ def load_findings_json(path: str) -> list[dict]:
     return data
 
 
+def _cyberagent_text(*parts) -> str:
+    return "\n\n".join(p for p in parts if p)
+
+
+def cyberagent_findings(path) -> list[dict] | None:
+    """Findings straight from a cyberAgent ``report/findings.json`` (product
+    "CyberAgent", ``findings`` plus ``chains``), in --findings-json shape, so
+    the report needs no LLM extraction. None if the file isn't one.
+
+    Why: extraction asks a model to re-type every finding verbatim. For this
+    report that means reproducing dozens of working exploits (payloads, steps,
+    proof output), and on 2026-11-07 the model's output was stopped by a
+    safety classifier partway through, twice. The report is already
+    structured, so the transcription step is unnecessary: fields are copied
+    deterministically, and the model only maps (reads evidence, returns ids).
+
+    A finding: title, severity, vuln_class -> vuln_type, the first affected
+    endpoint -> url/http_method/parameter (others listed in the description),
+    description + business impact + CWE/OWASP, attack steps + evidence
+    excerpts + exploit proof output -> poc, remediation. A report chain
+    (``chains[]``) becomes one more finding: its narrative, combined impact,
+    the findings it combines and its steps, so the mapper can judge it as a
+    chain report.
+    """
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+    if not (isinstance(data, dict) and isinstance(data.get("findings"), list)
+            and (str(data.get("product", "")).lower() == "cyberagent"
+                 or all(isinstance(f, dict) and "display_id" in f and "attack_steps" in f
+                        for f in data["findings"]) and data["findings"])):
+        return None
+
+    def sev(v):
+        v = str(v or "").strip().lower()
+        return v if v in SEVERITIES else ""
+
+    def steps(items):
+        return "\n".join(f"{i}. {s}" for i, s in enumerate(items or [], start=1) if s)
+
+    out = []
+    for f in data["findings"]:
+        affected = [a for a in (f.get("affected") or []) if isinstance(a, dict)]
+        first = affected[0] if affected else {}
+        others = "\n".join(f"- {a.get('method', '')} {a.get('url', '')} ({a.get('parameter', '')})".strip()
+                           for a in affected[1:])
+        evidence = "\n".join(f"- {e.get('excerpt', '')}" for e in (f.get("evidence") or [])
+                             if isinstance(e, dict) and e.get("excerpt"))
+        out.append({
+            "vuln_type": str(f.get("vuln_class") or ""),
+            "title": f"{f.get('display_id', '')}: {f.get('title', '')}".strip(": "),
+            "http_method": str(first.get("method") or ""),
+            "url": str(first.get("url") or ""),
+            "parameter": str(first.get("parameter") or ""),
+            "filename": "",
+            "severity": sev(f.get("severity")),
+            "description": _cyberagent_text(
+                f.get("description"),
+                f"Business impact: {f['business_impact']}" if f.get("business_impact") else "",
+                " / ".join(x for x in (f.get("cwe"), f.get("owasp")) if x),
+                f"Also affected:\n{others}" if others else ""),
+            "poc": _cyberagent_text(
+                f"Attack steps:\n{steps(f.get('attack_steps'))}" if f.get("attack_steps") else "",
+                f"Evidence:\n{evidence}" if evidence else "",
+                f"Exploit proof: {f['exploit_output']}" if f.get("exploit_output") else ""),
+            "remediation": str(f.get("remediation") or ""),
+            "code_location": "",
+        })
+    for c in data.get("chains") or []:
+        if not isinstance(c, dict):
+            continue
+        combines = ", ".join(c.get("finding_ids") or [])
+        out.append({
+            "vuln_type": "Exploit chain",
+            "title": f"{c.get('display_id', '')}: {c.get('title', '')}".strip(": "),
+            "http_method": "", "url": "", "parameter": "", "filename": "", "code_location": "",
+            "severity": sev(c.get("severity")),
+            "description": _cyberagent_text(
+                f"Exploit chain combining {combines}." if combines else "Exploit chain.",
+                c.get("narrative"),
+                f"Combined impact: {c['combined_impact']}" if c.get("combined_impact") else ""),
+            "poc": f"Attack steps:\n{steps(c.get('attack_steps'))}" if c.get("attack_steps") else "",
+            "remediation": str(c.get("remediation") or ""),
+        })
+    return out
+
+
 _ANSWER_KEYS = ("mappings", "findings")
+
+
+def _save_unparsed_reply(text: str) -> str:
+    """Keep a reply that held no usable JSON, so the failure can be diagnosed
+    from what the model actually said instead of guessed at."""
+    import tempfile
+    import time
+    path = Path(tempfile.gettempdir()) / f"vulnapps-import-reply-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.txt"
+    path.write_text(text if isinstance(text, str) else repr(text))
+    return str(path)
 
 
 def _parse_json_reply(text: str):
@@ -807,7 +905,9 @@ def _parse_json_reply(text: str):
     """
     try:
         return json.loads(_extract_json_text(text), strict=False)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as first_error:
+        if not (text or "").strip():
+            raise LLMCallError(f"the model returned an empty reply (saved: {_save_unparsed_reply(text)})")
         decoder = json.JSONDecoder(strict=False)
         found = []  # (length, value)
         i = text.find("{")
@@ -822,7 +922,8 @@ def _parse_json_reply(text: str):
             i = text.find("{", end)
         answers = [f for f in found if any(k in f[1] for k in _ANSWER_KEYS)] or found
         if not answers:
-            raise
+            raise LLMCallError(f"LLM returned invalid JSON: {first_error} "
+                               f"(reply saved: {_save_unparsed_reply(text)})") from first_error
         return max(answers, key=lambda f: f[0])[1]
 
 
@@ -2135,8 +2236,8 @@ def _matcher_identity(args) -> tuple:
 def _scan_config(args, scan_model: str | None) -> dict:
     """Provenance + configuration fingerprint fields to send with the scan."""
     matcher_version, matcher_sha = _matcher_identity(args)
-    if getattr(args, "findings_json", None):
-        extractor_version, extractor_sha = "structured", None
+    if getattr(args, "findings_json", None) or getattr(args, "structured_source", None):
+        extractor_version, extractor_sha = getattr(args, "structured_source", None) or "structured", None
     else:
         extractor_version, extractor_sha = _llm_identity(
             "cli" if args.use_cli else "api", args.extract_model, SYSTEM_PROMPT_EXTRACT)
@@ -2463,6 +2564,15 @@ def main():
             print(f"  {colored('Error:', 'RED')} --findings-json: {e}", file=sys.stderr)
             sys.exit(1)
 
+    # A cyberAgent report is already structured: take its findings as they
+    # are instead of having a model re-type them (see cyberagent_findings).
+    if args.file and structured is None:
+        structured = cyberagent_findings(args.file)
+        if structured is not None:
+            args.structured_source = "cyberagent"
+            if not args.scanner:
+                args.scanner = "cyberAgent"
+
     if args.app_id is None and not args.create_app:
         print(f"  {colored('Error:', 'RED')} Either --app-id or --create-app is required", file=sys.stderr)
         sys.exit(1)
@@ -2639,7 +2749,9 @@ def main():
     # flags win over it.
     args.extract_model = args.extract_model or args.model or DEFAULT_EXTRACT_MODEL
     args.map_model = args.map_model or args.model or DEFAULT_MAP_MODEL
-    print(f"  {C.DIM}Extract with {args.extract_model}"
+    extract_desc = ("Findings read from the structured report (no extraction)"
+                    if structured is not None else f"Extract with {args.extract_model}")
+    print(f"  {C.DIM}{extract_desc}"
           + (f"; map with {args.map_model}" if vulns else " (no catalog: extract only)") + f"{C.RESET}")
 
     usage_totals = {"extract": {"calls": 0, "input": 0, "output": 0},
