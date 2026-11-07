@@ -760,6 +760,7 @@ release versions.
 | PUT | `/api/apps/{id}/vulns/{vid}` | App write / full | Update vuln. Omitting the scoring fields PRESERVES the stored values (never resets a hand-corrected weight). A changed `impact_weight` opens a `weight_change` revision |
 | DELETE | `/api/apps/{id}/vulns/{vid}` | App write / full | Delete vuln. **409** if any finding matched it — invalidate instead |
 | POST | `/api/apps/{id}/vulns/{vid}/invalidate` | App write / full | Retire from ground truth at a new revision. Body (optional): `{notes}`. Stays in scope for earlier revisions |
+| POST | `/api/apps/{id}/vulns/{vid}/reintroduce` | App write / full | Count a vuln for scans from a new revision onward (`existed_since_revision` = new revision, invalidation cleared); scans submitted earlier keep it out, so their scores don't move. For a vuln that only became real with a code change (TaintedPort TP-066/#65 on the busy-timeout release). Body `{notes?}` |
 | POST | `/api/apps/{id}/vulns/import` | App write / full | Import vulns from JSON/CSV (file upload or JSON body). Optional `existed_since` (`all_along` \| `this_revision`, default `this_revision`) decides whether prior scans are re-scored against the batch |
 | GET | `/api/apps/{id}/vulns/export` | None / read | Download all vulns for the app as a CSV file (`Content-Disposition: attachment`). Never capped by `MAX_VULNS_PER_APP` — unlike the list/detail endpoints, it's one file rather than a paginated response. Columns match what `import` reads, so an export round-trips through import unchanged. String cells starting with `=`, `+`, `-`, or `@` get a leading `'` to defuse spreadsheet formula injection |
 | GET | `/api/apps/{id}/history` | App write | Audit-log entries for this app's vulnerabilities (created/updated/deleted/invalidated/bulk-imported), most recent first. Gated on app write access, not a separate role — see History Log below |
@@ -1301,7 +1302,7 @@ steps "in the order the attack runs", a checkbox "Attack path of the chain that 
 (✓/✗, name, "ends on …", severity, "x of n attack paths", credited/possible points); open,
 each path shows step chips green when matched, and "✓ Reported · <finding>", "Confirmed
 (legacy)" + Revoke, or "Not reported" + **Reported by…**; unmatched chain reports fold into
-one row (Ends on… / Add as attack path / Reject). Compare: one row per chain, by name.
+one row (Ends on… / Add as attack path / Reject). Compare: one row per chain, by name. Compare's metric rows start with Weighted detection, then Weighted F₀.₅ (the trophy still marks the highest reviewed weighted F₀.₅).
 
 **What counts as a chain (normative, settled on scan 330):** a sequence of distinct flaws
 where each step hands the next what it needs, ending in an outcome none of the steps reaches

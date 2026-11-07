@@ -174,6 +174,36 @@ async def invalidate_vuln(request: Request, app_id: int, vuln_id: int):
     return result
 
 
+@router.post("/{app_id}/vulns/{vuln_id}/reintroduce")
+async def reintroduce_vuln(request: Request, app_id: int, vuln_id: int):
+    """Count a vuln for scans from a new revision onward; earlier scans keep it
+    out. For a vuln that only became real with a code change. Body (optional):
+    ``{"notes": "why"}``."""
+    user = request.state.user
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    require_scope(user, "full")
+
+    raw = await request.body()
+    notes = None
+    if raw:
+        try:
+            notes = (json.loads(raw) or {}).get("notes")
+        except (ValueError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    db = await get_connection()
+    try:
+        result = await vulns_service.reintroduce_vuln(db, user, app_id, vuln_id, notes)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+    return result
+
+
 @router.post("/{app_id}/vulns/import")
 async def import_vulns(
     request: Request,

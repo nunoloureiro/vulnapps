@@ -555,6 +555,54 @@ async def invalidate_vuln(db, user, app_id: int, vuln_id: int, notes=None) -> di
     return {"ok": True, "vuln_id": vuln_id, "invalidated_at_revision": revision}
 
 
+async def reintroduce_vuln(db, user, app_id: int, vuln_id: int, notes=None) -> dict:
+    """Bring a vuln (back) into scope for scans from a new revision onward,
+    without counting it against any scan already submitted.
+
+    For a vuln that only became real with a code change, e.g. TP-066 (#65)
+    on TaintedPort: not exploitable on v1.40 (invalidated at revision 19), then
+    exploitable from the release that added a SQLite busy timeout. Opens a
+    revision R and sets ``existed_since_revision = R`` with no invalidation, the
+    same model as a vuln introduced by a code change: scans submitted at R or
+    later count it, while every earlier scan keeps it out (``_RAN_BEFORE_SQL``),
+    so their scores don't move. Replays of revisions before R stop including
+    it, which is the point: it didn't exist there.
+
+    Raises ``ValueError`` if app or vuln not found.
+    Raises ``PermissionError`` if access denied.
+    """
+    app = await _get_visible_app(db, user, app_id)
+    await _require_app_write(db, user, app)
+
+    cursor = await db.execute(
+        "SELECT * FROM vulnerabilities WHERE id = ? AND app_id = ?", (vuln_id, app_id)
+    )
+    vuln = await cursor.fetchone()
+    if not vuln:
+        raise ValueError("Vulnerability not found")
+
+    revision = await scoring_service.create_revision(
+        db, app_id, "corpus_change",
+        notes or f"Reintroduced {vuln['vuln_id']}: {vuln['title']} (counts for scans from this revision)",
+        user,
+    )
+    await db.execute(
+        "UPDATE vulnerabilities SET existed_since_revision = ?, invalidated_at_revision = NULL "
+        "WHERE id = ?",
+        (revision, vuln_id),
+    )
+    await audit_service.record_audit_event(
+        db, entity_type="vulnerability", action="vuln_reintroduced", actor=user,
+        message=(
+            f"{user['name']} reintroduced {vuln['vuln_id']}: \"{vuln['title']}\" from ground-truth "
+            f"revision {revision}; scans submitted earlier do not count it"
+        ),
+        entity_id=vuln_id, app_id=app_id,
+    )
+    await db.commit()
+    return {"ok": True, "vuln_id": vuln_id, "existed_since_revision": revision}
+
+
 async def inline_update_vuln(
     db, user, app_id: int, vuln_id: int, updates: dict
 ) -> None:

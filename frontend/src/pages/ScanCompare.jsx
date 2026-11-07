@@ -371,16 +371,6 @@ function ComparisonView({ data, appId }) {
             </thead>
             <tbody>
               <tr>
-                <td className="detail-label sticky-col"><MetricLabel k="weighted_f05" /></td>
-                {scanners.map(s => {
-                  const score = isFiltered ? null : scanQuality({ metrics: s.metrics }).weighted_f05;
-                  return <td key={s.scan.id} className={`text-center font-mono ${score === null ? 'text-muted' : pctColor(score)}`}>
-                    {!isFiltered && s.metrics.weighted_score_provisional !== false ? 'Awaiting review' : score === null ? '—' : `${(score * 100).toFixed(1)}%`}
-                    {isFiltered ? <div className="text-muted text-xs">Requires full corpus</div> : null}
-                  </td>;
-                })}
-              </tr>
-              <tr>
                 <td className="detail-label sticky-col"><MetricLabel k="weighted_rate" /></td>
                 {filteredMetrics.map((m, i) => {
                   const baseStyle = winnerStyle(i);
@@ -391,6 +381,16 @@ function ComparisonView({ data, appId }) {
                       <div className="text-muted text-xs">{m.weighted_found}/{m.weighted_total} pts</div>
                     </td>
                   );
+                })}
+              </tr>
+              <tr>
+                <td className="detail-label sticky-col"><MetricLabel k="weighted_f05" /></td>
+                {scanners.map(s => {
+                  const score = isFiltered ? null : scanQuality({ metrics: s.metrics }).weighted_f05;
+                  return <td key={s.scan.id} className={`text-center font-mono ${score === null ? 'text-muted' : pctColor(score)}`}>
+                    {!isFiltered && s.metrics.weighted_score_provisional !== false ? 'Awaiting review' : score === null ? '—' : `${(score * 100).toFixed(1)}%`}
+                    {isFiltered ? <div className="text-muted text-xs">Requires full corpus</div> : null}
+                  </td>;
                 })}
               </tr>
               {['tp', 'fp_groups', 'fn', 'pending'].map(k => (

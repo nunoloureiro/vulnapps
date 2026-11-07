@@ -738,3 +738,6 @@ single-use voucher redemption, one promo voucher per user, #59 wording. When it 
 - [x] CH-09.1 (deserialization -> RCE) proven end to end on v1.40 and v1.46 (taintedport-87, safe marker,
       jwt.php restored): stays in scope on 329. The failing pytest was a harness default (host exports path
       against a container); no app change.
+- [ ] When the next TaintedPort version (vouchers + busy timeout) is LIVE: reintroduce TP-066 on 329
+      (POST /api/apps/329/vulns/<TP-066 pk>/reintroduce) so scans from then on count it; scans 1346/1355
+      must keep 582/888 and 367/888. Update 329's version/description to say it spans v1.40 and v1.4x.
