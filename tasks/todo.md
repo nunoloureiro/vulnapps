@@ -717,3 +717,16 @@ CH-01 for chains and CH-01.1 for attack paths; old CHAIN-### kept as legacy_chai
 - [x] Auto ids (next CH-NN / CH-NN.n), renames, move between chains, drop empty chains, clone.
 - [x] UI: chain code beside the name (scan page, app page, Compare); path ids with "was CHAIN-###".
 - [x] Deployed; 329 renumbered CH-01..CH-09 (16 paths, legacy ids kept); revision 18 and scan 1346 = 582 unchanged; screenshotted.
+
+## PENDING: cyberAgent scan of TaintedPort v1.40 (2026-11-06) and the voucher fix
+Import not yet submitted (Nuno re-runs; answer N to the claude-haiku-5-5 label). Then:
+- [ ] Verify 25 findings + 1 chain report (the report's `chains` list) landed on app 329.
+- [ ] Ignore: CYA-001 default creds (published fixture), CYA-015 voucher replay (real,
+      uncatalogued; fixed in the next version), CYA-023 cart qty > 12 via repeated adds,
+      CYA-024 discount-code enumeration (both real, no meaningful impact).
+- [ ] Reject the chain report "€0-total order: #19 + #25" (a bundle, catalog rule (a)).
+- [ ] Review CYA-009's TP-047 credit (gadget quoted from source, never run).
+Next TaintedPort version (change request sent to taintedport-87 on 2026-11-07):
+single-use voucher redemption, one promo voucher per user, #59 wording. When it ships:
+- [ ] Clone 329 into the new version app; no vuln/chain count change expected.
+- [ ] Confirm #62 (edited amount redeems once) and #65 (cashout race) still work in its tests.
