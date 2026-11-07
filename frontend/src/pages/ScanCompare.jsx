@@ -385,9 +385,10 @@ function ComparisonView({ data, appId }) {
               </tr>
               <tr>
                 <td className="detail-label sticky-col"><MetricLabel k="weighted_f05" /></td>
-                {scanners.map(s => {
+                {scanners.map((s, i) => {
                   const score = isFiltered ? null : scanQuality({ metrics: s.metrics }).weighted_f05;
-                  return <td key={s.scan.id} className={`text-center font-mono ${score === null ? 'text-muted' : pctColor(score)}`}>
+                  return <td key={s.scan.id} className={`text-center font-mono ${score === null ? 'text-muted' : pctColor(score)}`}
+                             style={winnerStyle(i)}>
                     {!isFiltered && s.metrics.weighted_score_provisional !== false ? 'Awaiting review' : score === null ? '—' : `${(score * 100).toFixed(1)}%`}
                     {isFiltered ? <div className="text-muted text-xs">Requires full corpus</div> : null}
                   </td>;
