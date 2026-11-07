@@ -725,7 +725,8 @@ Import not yet submitted (Nuno re-runs; answer N to the claude-haiku-5-5 label).
       uncatalogued; fixed in the next version), CYA-023 cart qty > 12 via repeated adds,
       CYA-024 discount-code enumeration (both real, no meaningful impact).
 - [x] Reject the chain report "€0-total order: #19 + #25" (a bundle, catalog rule (a)).
-- [ ] Nuno to decide CYA-009's TP-047 credit (gadget quoted from source, never run); the mapper credited it on the real import, not on the dry run.
+- [x] CYA-009's TP-047 credit kept (Nuno, 2026-11-07): #47 is source-only by the catalog's own Difficulty line.
+      TP-047's description on 329 now starts with that rule so the mapper sees it; catalog note requested.
 Next TaintedPort version (change request sent to taintedport-87 on 2026-11-07):
 single-use voucher redemption, one promo voucher per user, #59 wording. When it ships:
 - [ ] Clone 329 into the new version app; no vuln/chain count change expected.
