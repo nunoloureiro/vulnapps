@@ -730,3 +730,8 @@ Next TaintedPort version (change request sent to taintedport-87 on 2026-11-07):
 single-use voucher redemption, one promo voucher per user, #59 wording. When it ships:
 - [ ] Clone 329 into the new version app; no vuln/chain count change expected.
 - [ ] Confirm #62 (edited amount redeems once) and #65 (cashout race) still work in its tests.
+- [x] TP-066 (#65 cashout race) invalidated on app 329 at revision 19: not exploitable on v1.40
+      (no SQLite busy timeout). Scans 1346/1355 total 897 -> 888, found/TP unchanged.
+      Note: catalog still lists #65 (with an operational note), so 329 = 61 in-scope vulns vs 62
+      catalog entries is deliberate. 330 (team copy) left untouched.
+- [ ] CH-09.1 (deserialization -> RCE) reproduction check requested from taintedport-87.
