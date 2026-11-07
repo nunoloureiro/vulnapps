@@ -789,6 +789,43 @@ def load_findings_json(path: str) -> list[dict]:
     return data
 
 
+_ANSWER_KEYS = ("mappings", "findings")
+
+
+def _parse_json_reply(text: str):
+    """Parse a model reply that should be one JSON object.
+
+    Normally ``_extract_json_text`` + ``json.loads`` is enough. But a reply can
+    hold more than one JSON value: a real import (2026-11-07, mapping findings
+    1-20) failed with "Extra data" because the model wrote a ~1 KB snippet
+    before its real answer, and the first-``{``-to-last-``}`` span covered both.
+    Taking the FIRST value would be wrong there (it was the snippet), so on
+    that failure every top-level JSON object in the text is decoded and the
+    answer is the largest one that has an expected top-level key
+    ("mappings"/"findings"), else the largest object. merge_mappings still
+    checks the answer covers exactly the findings asked about.
+    """
+    try:
+        return json.loads(_extract_json_text(text), strict=False)
+    except json.JSONDecodeError:
+        decoder = json.JSONDecoder(strict=False)
+        found = []  # (length, value)
+        i = text.find("{")
+        while i != -1:
+            try:
+                value, end = decoder.raw_decode(text, i)
+            except json.JSONDecodeError:
+                i = text.find("{", i + 1)
+                continue
+            if isinstance(value, dict):
+                found.append((end - i, value))
+            i = text.find("{", end)
+        answers = [f for f in found if any(k in f[1] for k in _ANSWER_KEYS)] or found
+        if not answers:
+            raise
+        return max(answers, key=lambda f: f[0])[1]
+
+
 def _extract_json_text(text: str) -> str:
     """Pull the JSON object out of a raw LLM response.
 
@@ -882,7 +919,7 @@ def _llm_json_api(system: str, user_message: str, model: str, client,
                           + (getattr(u, "cache_creation_input_tokens", 0) or 0),
                  "output": u.output_tokens or 0}
     # strict=False: models write raw newlines/tabs inside long strings.
-    return json.loads(_extract_json_text(text), strict=False), usage
+    return _parse_json_reply(text), usage
 
 
 def _llm_json_cli(system: str, user_message: str, model: str | None, spinner_msg: str) -> tuple[dict, dict]:
@@ -925,7 +962,7 @@ Respond with ONLY valid JSON (no markdown fencing)."""
         raise LLMCallError(f"Claude CLI failed (exit {result.returncode}): {detail}")
 
     text = _cli_result_text(result.stdout)
-    return json.loads(_extract_json_text(text), strict=False), {}
+    return _parse_json_reply(text), {}
 
 
 def _cli_result_text(stdout: str) -> str:

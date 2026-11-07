@@ -913,3 +913,17 @@ def test_map_schema_allows_every_mapping_field():
     missing from it can never be returned through the API."""
     props = import_scan.map_schema([0])["properties"]["mappings"]["items"]["properties"]
     assert set(import_scan.MAPPING_FIELDS) <= set(props)
+
+
+def test_reply_with_a_snippet_before_the_answer():
+    """A real mapping reply held a small JSON snippet, then the real answer;
+    the first value alone would have been the snippet, not the answer."""
+    parse = import_scan._parse_json_reply
+    answer = {"mappings": [{"index": i, "reasoning": "x" * 40} for i in range(20)]}
+    text = ('Checking the format first:\n{"index": 0, "note": "draft"}\n\n'
+            + json.dumps(answer) + "\n\nDone {see above}.")
+    assert parse(text) == answer
+    assert parse(json.dumps(answer)) == answer, "the normal path is unchanged"
+    assert parse('```json\n{"findings": []}\n```') == {"findings": []}
+    with pytest.raises(json.JSONDecodeError):
+        parse("no json here")
