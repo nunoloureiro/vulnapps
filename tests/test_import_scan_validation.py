@@ -881,3 +881,35 @@ def test_report_run_block_feeds_scan_metadata(tmp_path):
     assert read(path) is None, "no run block, nothing read"
     path.write_text("# a markdown report")
     assert read(path) is None
+
+
+def test_one_finding_can_credit_several_attack_paths():
+    """A finding that performs two attack paths of one chain (alg=none and a
+    bogus signature, both forging admin) is linked to both, so coverage shows
+    2 of 2 rather than 1 of 2."""
+    findings = [
+        {"title": "JWT forgery two ways", "is_chain": True, "matched_chain_db_id": 61,
+         "additional_chain_db_ids": [62, 61, 62, 999], "additional_vuln_db_ids": [11, 12, 23]},
+        {"title": "not a chain", "is_chain": False, "matched_vuln_db_id": 11,
+         "additional_chain_db_ids": [61]},
+        {"title": "extras only", "is_chain": True, "additional_chain_db_ids": [62]},
+    ]
+    import_scan._enforce_chain_flag({"findings": findings})
+    assert findings[0]["additional_chain_db_ids"] == [62, 999], "deduped, never the primary"
+    assert findings[1]["additional_chain_db_ids"] == [], "only a chain report links paths"
+    assert (findings[2]["matched_chain_db_id"], findings[2]["additional_chain_db_ids"]) == (62, [])
+
+    chains = [{"id": 61, "chain_id": "CH-02.1", "title": "alg none"},
+              {"id": 62, "chain_id": "CH-02.2", "title": "bad signature"}]
+    vulns = [{"id": i, "vuln_id": f"TP-{i:03d}", "title": "JWT forgery"} for i in (11, 12, 23)]
+    warnings = import_scan.validate_llm_matches({"findings": findings}, vulns, chains)
+    assert findings[0]["additional_chain_db_ids"] == [62]
+    assert any("999" in w for w in warnings), "a hallucinated path id is dropped with a warning"
+    assert import_scan._chain_ids(findings[0]) == [61, 62]
+
+
+def test_map_schema_allows_every_mapping_field():
+    """The structured-output schema forbids unknown fields, so a mapping field
+    missing from it can never be returned through the API."""
+    props = import_scan.map_schema([0])["properties"]["mappings"]["items"]["properties"]
+    assert set(import_scan.MAPPING_FIELDS) <= set(props)

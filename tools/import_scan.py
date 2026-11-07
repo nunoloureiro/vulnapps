@@ -267,8 +267,12 @@ it just is not a member. \
 - Registered chains are listed grouped: a chain (CH-NN) and its attack paths (CH-NN.n), \
 alternative routes that all end on the same step; the chain is credited once if any one \
 attack path is shown. matched_chain_db_id is the DB id of the ATTACK PATH whose steps the \
-finding performed; if it performed several paths of one chain, pick the one it walks most \
-completely. \
+finding performed. If the same finding performs MORE THAN ONE registered attack path \
+end to end (e.g. it forges an admin token once with alg=none and once with a bogus \
+signature, two paths of the same chain), put the one it walks most completely in \
+matched_chain_db_id and every other path it fully performs in additional_chain_db_ids. \
+The same demonstration bar applies to each one: never add a path the finding only \
+mentions or partly walks. Use [] when it performs only one. \
 - When is_chain is true: if a registered attack path's steps are all demonstrated, set \
 matched_chain_db_id and put the demonstrated steps in additional_vuln_db_ids. If NO \
 registered attack path fits, still credit every known vulnerability the finding demonstrates \
@@ -345,6 +349,7 @@ with one entry for every finding number you were given:
             "matched_vuln_db_id": 123 or null,
             "matched_chain_db_id": 456 or null,
             "additional_vuln_db_ids": [124, 125] or [],
+            "additional_chain_db_ids": [457] or [],
             "is_chain": false,
             "chain_sink_vuln_db_id": 125 or null,
             "is_false_positive": false,
@@ -684,7 +689,9 @@ def map_schema(indices: list[int]) -> dict:
         "matched_vuln_db_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
         "matched_chain_db_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
         "additional_vuln_db_ids": ids,
+        "additional_chain_db_ids": ids,
         "is_chain": {"type": "boolean"},
+        "chain_sink_vuln_db_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
         "is_false_positive": {"type": "boolean"},
         "fp_group": {"type": "string"},
         "reasoning": {"type": "string"},
@@ -709,6 +716,9 @@ def _enforce_chain_flag(result: dict) -> None:
       primary vuln the model also set is moved into additional_vuln_db_ids
       rather than dropped, since a chain finding still credits the members it
       demonstrates.
+    - additional_chain_db_ids (other attack paths the same finding performs)
+      are dropped when the finding is not a chain, deduped, never repeat the
+      primary, and the first becomes the primary if none was set.
     - chain_sink_vuln_db_id survives only on a chain report matching no known
       path, and only when it names one of the vulns that report credits.
     """
@@ -716,6 +726,14 @@ def _enforce_chain_flag(result: dict) -> None:
         if not isinstance(f, dict):
             continue
         f["is_chain"] = f.get("is_chain") is True
+        extra_chains = f.get("additional_chain_db_ids")
+        extra_chains = [c for c in extra_chains if isinstance(c, int)] if isinstance(extra_chains, list) else []
+        if not f["is_chain"]:
+            extra_chains = []
+        elif not f.get("matched_chain_db_id") and extra_chains:
+            f["matched_chain_db_id"] = extra_chains.pop(0)  # extras need a primary
+        f["additional_chain_db_ids"] = [c for c in dict.fromkeys(extra_chains)
+                                        if c != f.get("matched_chain_db_id")]
         if not f["is_chain"]:
             f["matched_chain_db_id"] = None
         elif f.get("matched_chain_db_id") and f.get("matched_vuln_db_id"):
@@ -963,7 +981,8 @@ def run_map(batch: list[tuple[int, dict]], vulns: list, chains: list | None, *, 
 # description, poc, severity, ... -- comes from phase 1 and is never
 # overwritten, whatever the mapper returns.
 MAPPING_FIELDS = ("matched_vuln_db_id", "matched_chain_db_id", "additional_vuln_db_ids",
-                  "is_chain", "chain_sink_vuln_db_id", "fp_group", "reasoning")
+                  "additional_chain_db_ids", "is_chain", "chain_sink_vuln_db_id",
+                  "fp_group", "reasoning")
 
 
 class MappingMismatch(Exception):
@@ -1027,13 +1046,20 @@ def local_metrics(mapping: dict, vulns: list, chains: list | None) -> dict | Non
         findings.append({
             **f,
             "matched_vuln_ids": vids,
-            "matched_chain_ids": [f["matched_chain_db_id"]] if f.get("matched_chain_db_id") else [],
+            "matched_chain_ids": _chain_ids(f),
             "chain_sink_vuln_id": f.get("chain_sink_vuln_db_id"),
             "is_false_positive": 1 if f.get("is_false_positive") else 0,
             "is_ignored": 0,
         })
     current = lambda rows: [r for r in (rows or []) if not r.get("invalidated_at_revision")]
     return compute_metrics(findings, current(vulns), current(chains))
+
+
+def _chain_ids(f: dict) -> list:
+    """Every attack path a mapped finding is credited to: its primary match
+    plus any other paths the same finding fully performs."""
+    primary = [f["matched_chain_db_id"]] if f.get("matched_chain_db_id") else []
+    return primary + [c for c in (f.get("additional_chain_db_ids") or []) if c not in primary]
 
 
 def _json_safe(obj):
@@ -1065,7 +1091,7 @@ def build_import_json(mapping: dict, vulns: list, chains: list | None, metrics: 
     for f in mapping.get("findings", []) or []:
         vids = ([f["matched_vuln_db_id"]] if f.get("matched_vuln_db_id") else []) + \
                [v for v in (f.get("additional_vuln_db_ids") or []) if v != f.get("matched_vuln_db_id")]
-        cids = [f["matched_chain_db_id"]] if f.get("matched_chain_db_id") else []
+        cids = _chain_ids(f)
         out_findings.append({
             **{k: f.get(k) for k in ("vuln_type", "title", "http_method", "url", "parameter",
                                      "filename", "severity", "description", "poc", "remediation",
@@ -1077,6 +1103,7 @@ def build_import_json(mapping: dict, vulns: list, chains: list | None, metrics: 
             "matched_vuln_db_id": f.get("matched_vuln_db_id"),
             "additional_vuln_db_ids": f.get("additional_vuln_db_ids") or [],
             "matched_chain_db_id": f.get("matched_chain_db_id"),
+            "additional_chain_db_ids": f.get("additional_chain_db_ids") or [],
             "chain_sink_vuln_db_id": f.get("chain_sink_vuln_db_id"),
             "chain_sink_catalog_id": vby.get(f.get("chain_sink_vuln_db_id"), {}).get("vuln_id"),
             "catalog_db_ids": vids,
@@ -1203,6 +1230,10 @@ def print_mapping_table(mapping: dict, vulns: list, chains: list | None = None):
             chain_id = chain.get("chain_id", "?")
             print(f"    {colored('⛓', 'CYAN')} {C.BOLD}{f.get('title') or f.get('vuln_type') or '(untitled finding)'}{C.RESET}")
             print(f"      {colored('→', 'GRAY')} {chain_title} {C.DIM}({chain_id}){C.RESET}")
+            for cid in f.get("additional_chain_db_ids") or []:
+                other = chain_lookup.get(cid, {})
+                print(f"      {colored('→', 'GRAY')} {other.get('title', f'DB#{cid}')} "
+                      f"{C.DIM}({other.get('chain_id', '?')}, also performed){C.RESET}")
             extra = _extra_line(f)
             if extra:
                 print(extra)
@@ -1347,6 +1378,20 @@ def validate_llm_matches(mapping: dict, vulns: list, chains: list | None = None)
             f["matched_vuln_db_id"] = None
             matched = None
 
+        extra_chains_out = []
+        for cid in f.get("additional_chain_db_ids") or []:
+            if not isinstance(cid, int) or cid == f.get("matched_chain_db_id") or cid in extra_chains_out:
+                continue
+            if cid not in chain_lookup:
+                warnings.append(
+                    f"'{f.get('title', f.get('vuln_type', '?'))}' listed additional attack path "
+                    f"DB id {cid}, which isn't in the known-chains list shown to the model — "
+                    f"dropping it (possible hallucination)."
+                )
+                continue
+            extra_chains_out.append(cid)
+        f["additional_chain_db_ids"] = extra_chains_out
+
         if matched_chain is not None:
             chain = chain_lookup.get(matched_chain)
             if chain is None:
@@ -1467,7 +1512,7 @@ def submit_to_vulnapps(client: VulnappsClient, app_id: int, mapping: dict, is_pu
             vuln_ids = ([matched] if matched is not None else []) + list(
                 lf.get("additional_vuln_db_ids") or []
             )
-            chain_ids = [matched_chain] if matched_chain is not None else []
+            chain_ids = _chain_ids(lf)
             current_vulns = sf.get("matched_vuln_ids") or []
             current_chains = sf.get("matched_chain_ids") or []
             if set(vuln_ids) != set(current_vulns) or set(chain_ids) != set(current_chains):
