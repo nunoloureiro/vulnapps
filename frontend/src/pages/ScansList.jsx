@@ -44,14 +44,14 @@ export default function ScansList() {
   const weighting = searchParams.get('weighting') === 'unweighted' ? 'unweighted' : 'weighted';
   const metricColumns = metricView === 'quality'
     ? weighting === 'weighted'
-      ? [['weighted_f05', 'Weighted F₀.₅'], ['weighted_rate', 'Weighted detection'], ['weighted_precision', 'Weighted precision']]
+      ? [['weighted_rate', 'Weighted detection'], ['weighted_f05', 'Weighted F₀.₅'], ['weighted_precision', 'Weighted precision']]
       : [['precision', 'Unweighted precision'], ['recall', 'Unweighted recall'], ['f1', 'Unweighted F1']]
     : [['tp_count', 'TP'], ['fp_count', 'FP'], ['pending_count', 'Pending'], ['fn_count', 'FN']];
   const [expanded, setExpanded] = useState(new Set());
   const groupBy = Object.hasOwn(scanGroupOptions, searchParams.get('group_by')) ? searchParams.get('group_by') : '';
   const chartView = searchParams.get('view') === 'chart';
   const chartX = Object.hasOwn(chartResources, searchParams.get('chart_x')) ? searchParams.get('chart_x') : 'cost';
-  const chartY = Object.hasOwn(chartMetrics, searchParams.get('chart_y')) ? searchParams.get('chart_y') : 'weighted_f05';
+  const chartY = Object.hasOwn(chartMetrics, searchParams.get('chart_y')) ? searchParams.get('chart_y') : 'weighted_rate';
   const setView = view => {
     const p = changeScanParams(searchParams, { view: '' });
     if (view === 'chart') p.set('view', 'chart');

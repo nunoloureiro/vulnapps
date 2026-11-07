@@ -1,9 +1,9 @@
 import { scanQuality, scanStatistics } from './scanStatistics.js';
 
 export const chartMetrics = {
+  weighted_rate: 'Weighted detection',
   weighted_f05: 'Weighted F₀.₅',
   f05: 'F₀.₅ (conservative)',
-  weighted_rate: 'Weighted detection',
   weighted_precision: 'Weighted precision',
   precision: 'Precision',
   recall: 'Recall',

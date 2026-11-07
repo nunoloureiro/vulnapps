@@ -512,17 +512,6 @@ function Metrics({ metrics, app, revision, scan }) {
       </details>
       <div className="metrics-grid mb-2">
         <div className="metric-card">
-          <div className={`metric-value ${awaitingReview ? 'text-muted text-sm' : 'text-accent'}`} style={awaitingReview ? { fontSize: '1rem' } : undefined}>{awaitingReview ? 'Awaiting review' : pct(metrics.weighted_f05)}</div>
-          <div className="metric-label">Weighted F₀.₅</div>
-          {!awaitingReview && <div className="text-muted text-xs">Weighted precision {pct(metrics.weighted_precision)}</div>}
-          {awaitingReview && <details className="scan-stat-help"><summary>Conservative estimate</summary>
-            <p>Weighted F₀.₅ {pct(metrics.weighted_f05)} · weighted precision {pct(metrics.weighted_precision)}</p>
-            <p>{metrics.pending ?? '—'} pending findings · {metrics.weighted_fp_unreviewed ?? '—'} FP clusters awaiting impact review.</p>
-            <p>This estimate assigns 27 points to each pending finding and unreviewed FP cluster. Reviewed penalties use 1/3/9/27 points; a cluster takes its maximum penalty. It is excluded from headline comparisons until review is complete.</p>
-            <p>Estimate = 1.25 × credited impact / (credited impact + 0.25 × available impact + FP penalties + 27 × pending findings).</p>
-          </details>}
-        </div>
-        <div className="metric-card">
           <div className="metric-value text-accent">{pct(metrics.weighted_rate)}</div>
           <div className="metric-label">
             Weighted detection
@@ -536,6 +525,17 @@ function Metrics({ metrics, app, revision, scan }) {
           <div className="text-muted text-xs font-mono">
             {metrics.weighted_found} / {metrics.weighted_total} pts
           </div>
+        </div>
+        <div className="metric-card">
+          <div className={`metric-value ${awaitingReview ? 'text-muted text-sm' : 'text-accent'}`} style={awaitingReview ? { fontSize: '1rem' } : undefined}>{awaitingReview ? 'Awaiting review' : pct(metrics.weighted_f05)}</div>
+          <div className="metric-label">Weighted F₀.₅</div>
+          {!awaitingReview && <div className="text-muted text-xs">Weighted precision {pct(metrics.weighted_precision)}</div>}
+          {awaitingReview && <details className="scan-stat-help"><summary>Conservative estimate</summary>
+            <p>Weighted F₀.₅ {pct(metrics.weighted_f05)} · weighted precision {pct(metrics.weighted_precision)}</p>
+            <p>{metrics.pending ?? '—'} pending findings · {metrics.weighted_fp_unreviewed ?? '—'} FP clusters awaiting impact review.</p>
+            <p>This estimate assigns 27 points to each pending finding and unreviewed FP cluster. Reviewed penalties use 1/3/9/27 points; a cluster takes its maximum penalty. It is excluded from headline comparisons until review is complete.</p>
+            <p>Estimate = 1.25 × credited impact / (credited impact + 0.25 × available impact + FP penalties + 27 × pending findings).</p>
+          </details>}
         </div>
         <div className="metric-card"><div className="metric-value text-success">{metrics.tp}</div><div className="metric-label">True Positives</div></div>
         <div className="metric-card">
