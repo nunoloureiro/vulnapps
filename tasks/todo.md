@@ -734,4 +734,6 @@ single-use voucher redemption, one promo voucher per user, #59 wording. When it 
       (no SQLite busy timeout). Scans 1346/1355 total 897 -> 888, found/TP unchanged.
       Note: catalog still lists #65 (with an operational note), so 329 = 61 in-scope vulns vs 62
       catalog entries is deliberate. 330 (team copy) left untouched.
-- [ ] CH-09.1 (deserialization -> RCE) reproduction check requested from taintedport-87.
+- [x] CH-09.1 (deserialization -> RCE) proven end to end on v1.40 and v1.46 (taintedport-87, safe marker,
+      jwt.php restored): stays in scope on 329. The failing pytest was a harness default (host exports path
+      against a container); no app change.
