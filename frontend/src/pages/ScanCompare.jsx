@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { InfoTip } from '../components/InfoTip';
 import { SeverityBreakdown } from '../components/SeverityBreakdown';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
@@ -319,12 +320,7 @@ function ComparisonView({ data, appId }) {
     return (
       <>
         {names[k]}
-        {tip && (
-          <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>
-            ⓘ
-            <span className="tooltip-text">{tip}</span>
-          </span>
-        )}
+        {tip && <InfoTip>{tip}</InfoTip>}
       </>
     );
   };
@@ -477,15 +473,12 @@ function ComparisonView({ data, appId }) {
                       <span className="text-muted text-sm">
                         {tierLabel}
                         {tier === 'chained' && (
-                          <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>
-                            ⓘ
-                            <span className="tooltip-text">
-                              Counts registered exploit chains, not a 4th bucket of the vulns
-                              above — each chain's own members are already counted once under
-                              Commodity/Business logic. See the Chains section below for the
-                              full list.
-                            </span>
-                          </span>
+                          <InfoTip>
+                            Counts chains, not a 4th bucket of the vulns above: each step of a
+                            chain is already counted under Commodity or Business logic. A chain
+                            is found when the scan reports any one of its attack paths. See the
+                            Chains section below.
+                          </InfoTip>
                         )}
                       </span>
                     </td>

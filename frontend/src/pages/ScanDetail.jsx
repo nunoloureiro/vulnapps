@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { InfoTip } from '../components/InfoTip';
 import { ChainForm } from '../components/ChainForm';
 import { SeverityBreakdown } from '../components/SeverityBreakdown';
 import { useParams, Link } from 'react-router-dom';
@@ -515,12 +516,10 @@ function Metrics({ metrics, app, revision, scan }) {
           <div className="metric-value text-accent">{pct(metrics.weighted_rate)}</div>
           <div className="metric-label">
             Weighted detection
-            <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>ⓘ
-              <span className="tooltip-text">
-                Severity-weighted detection rate: points found / points available on the
-                1/3/9/27 scale, including chain credit.
-              </span>
-            </span>
+            <InfoTip>
+              Severity-weighted detection rate: points found / points available on the
+              1/3/9/27 scale, including chain credit.
+            </InfoTip>
           </div>
           <div className="text-muted text-xs font-mono">
             {metrics.weighted_found} / {metrics.weighted_total} pts
@@ -542,13 +541,11 @@ function Metrics({ metrics, app, revision, scan }) {
           <div className="metric-value text-error">{metrics.fp_groups ?? metrics.fp}</div>
           <div className="metric-label">
             False Positives
-            <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>ⓘ
-              <span className="tooltip-text">
-                Distinct false-positive clusters. Findings sharing an fp_group count once,
-                so precision is not depressed for a scanner that describes one non-issue
-                three times.
-              </span>
-            </span>
+            <InfoTip>
+              Distinct false-positive clusters. Findings sharing an fp_group count once,
+              so precision is not depressed for a scanner that describes one non-issue
+              three times.
+            </InfoTip>
           </div>
           {metrics.fp !== metrics.fp_groups && (
             <div className="text-muted text-xs font-mono">{metrics.fp} findings</div>
@@ -568,13 +565,11 @@ function Metrics({ metrics, app, revision, scan }) {
           <div className="metric-label">
             Precision
             {incomplete && (
-              <span className="tooltip-wrap text-muted text-xs" style={{ marginLeft: 4 }}>ⓘ
-                <span className="tooltip-text">
-                  {metrics.pending} finding(s) are still unadjudicated, so precision is a
-                  range: the lower bound treats every pending finding as a false positive,
-                  the upper bound as a true one. They converge as you adjudicate.
-                </span>
-              </span>
+              <InfoTip>
+                {metrics.pending} finding(s) are still unadjudicated, so precision is a
+                range: the lower bound treats every pending finding as a false positive,
+                the upper bound as a true one. They converge as you adjudicate.
+              </InfoTip>
             )}
           </div>
           {incomplete && <div className="text-warning text-xs">{metrics.pending} pending</div>}

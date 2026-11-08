@@ -728,31 +728,28 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 }
 .compare-scroll thead th.sticky-col,
 .compare-scroll thead th.sticky-col2 { z-index: 3; }
-.tooltip-wrap { position: relative; display: inline-block; cursor: help; }
-.tooltip-wrap .tooltip-text {
-    visibility: hidden;
-    opacity: 0;
-    position: absolute;
-    bottom: 125%;
-    left: 0;
+/* InfoTip (components/InfoTip.jsx): rendered in a portal at a fixed
+   position, so scrolling tables can't clip it. */
+.info-tip { display: inline-block; cursor: help; }
+.info-tip:focus-visible { outline: 1px solid var(--accent); border-radius: 50%; }
+.info-tip-text {
+    position: fixed;
+    z-index: 10000;
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 0.5rem 0.75rem;
     font-size: 0.75rem;
+    line-height: 1.45;
     color: var(--text-secondary);
     white-space: normal;
-    width: 250px;
     text-align: left;
     text-transform: none;
     letter-spacing: normal;
     font-weight: 400;
-    z-index: 9999;
-    transition: opacity 0.15s;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
     pointer-events: none;
 }
-.tooltip-wrap:hover .tooltip-text { visibility: visible; opacity: 1; }
 
 /* Empty state */
 .empty-state {
