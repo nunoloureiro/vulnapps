@@ -232,3 +232,15 @@ deploy failed with "no such table: users".
 **Rule:** Before pushing a new test, also run it CI's way:
 `DATABASE_PATH=$(mktemp -d)/ci.db .venv/bin/python -m pytest -q --ignore=tests/test_api_endpoints.py`.
 Tests that need the app over HTTP must not depend on rows in the real database.
+
+## Never give the benchmarked scanner the answer key
+
+**Mistake:** A cyberAgent development session asked how vulnapps models chains. I answered
+with real TaintedPort chains as examples and pointed it at tests/test_chain_sinks.py and
+AppBuilder.md, which list the full chain answer key. The session itself refused to read
+KnownVulnerabilities.txt "(answer key)"; I had to send a retraction.
+
+**Rule:** Scanner-development sessions get methodology only. Before sending, strip every
+catalog id, endpoint, decoy and concrete chain; use invented examples. Don't point them at
+TaintedPort-Vulns, test fixtures or tools that seed TaintedPort data, or the TaintedPort
+examples in AppBuilder.md. Generic code is fine to reference.
