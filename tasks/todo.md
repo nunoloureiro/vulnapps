@@ -741,3 +741,6 @@ single-use voucher redemption, one promo voucher per user, #59 wording. When it 
 - [ ] When the next TaintedPort version (vouchers + busy timeout) is LIVE: reintroduce TP-066 on 329
       (POST /api/apps/329/vulns/<TP-066 pk>/reintroduce) so scans from then on count it; scans 1346/1355
       must keep 582/888 and 367/888. Update 329's version/description to say it spans v1.40 and v1.4x.
+      Same release narrows /files/ (#13) to database.db + api/config/ only: update TP-013's description
+      on 329 (it says "exposing all PHP source code"). From that release a black-box finding quoting
+      source outside api/config/ must have read it via #14 path traversal or another bug, not /files/.
