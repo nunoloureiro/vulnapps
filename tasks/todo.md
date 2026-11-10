@@ -748,7 +748,8 @@ single-use voucher redemption, one promo voucher per user, #59 wording. When it 
 ## Global "missing rate limiting on sensitive actions" vuln (2026-11-10)
 Nuno: real throttling gaps must not be ignored because another bug is worse; one global entry
 covering the sensitive non-auth actions. Draft requested from taintedport-b9.
-- [ ] Catalog entry (taintedport-b9): endpoints, severity, CWE; CYA-029 (ticket size) folded in or separate.
-- [ ] Register on 329 as existed all along (one revision), then map: scan 1357 CYA-027/028 (+029 if folded),
-      scan 1355 CYA-024 (currently Ignored). Check scan 1346 (COS) for throttling findings too.
+- [x] Catalog #67 (taintedport-b9): Medium, CWE-799/770, 10 endpoints, CYA-029 ticket size folded in.
+- [x] Registered as TP-068 on 329 (revision 20, existed all along, commodity, 3 pts). Credited 1355 CYA-024,
+      1357 CYA-027/028/029. 1346 582/891 (miss), 1355 370/891 TP 29, 1357 388/891 TP 32 pending 0, as predicted.
+      329 = 63 registered (62 in scope; TP-066 out) = catalog's 63 active.
 - [ ] Re-check the other Ignores against the new rule: scan 1355 CYA-015 (voucher replay, real on v1.40).
