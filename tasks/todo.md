@@ -744,3 +744,11 @@ single-use voucher redemption, one promo voucher per user, #59 wording. When it 
       Same release narrows /files/ (#13) to database.db + api/config/ only: update TP-013's description
       on 329 (it says "exposing all PHP source code"). From that release a black-box finding quoting
       source outside api/config/ must have read it via #14 path traversal or another bug, not /files/.
+
+## Global "missing rate limiting on sensitive actions" vuln (2026-11-10)
+Nuno: real throttling gaps must not be ignored because another bug is worse; one global entry
+covering the sensitive non-auth actions. Draft requested from taintedport-b9.
+- [ ] Catalog entry (taintedport-b9): endpoints, severity, CWE; CYA-029 (ticket size) folded in or separate.
+- [ ] Register on 329 as existed all along (one revision), then map: scan 1357 CYA-027/028 (+029 if folded),
+      scan 1355 CYA-024 (currently Ignored). Check scan 1346 (COS) for throttling findings too.
+- [ ] Re-check the other Ignores against the new rule: scan 1355 CYA-015 (voucher replay, real on v1.40).

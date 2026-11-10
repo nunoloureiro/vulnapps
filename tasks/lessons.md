@@ -244,3 +244,15 @@ KnownVulnerabilities.txt "(answer key)"; I had to send a retraction.
 catalog id, endpoint, decoy and concrete chain; use invented examples. Don't point them at
 TaintedPort-Vulns, test fixtures or tools that seed TaintedPort data, or the TaintedPort
 examples in AppBuilder.md. Generic code is fine to reference.
+
+## A worse bug elsewhere doesn't make a real finding ignorable
+
+**Mistake:** Recommended Ignoring "no rate limit on discount-code validation" because another
+catalogued bug (any discount % accepted at checkout) already gives more. Nuno: if the client
+fixes the worse bug, this one is still a real issue that needs fixing.
+
+**Rule:** Judge a finding on its own: real + needs a fix = it belongs in the catalog (credit
+it), whatever else the app gets wrong. Ignore only fixtures (published test accounts) and
+behaviour with no security consequence of its own. When several findings share one root
+cause (e.g. no rate limiting anywhere), catalog one entry covering the affected sensitive
+actions rather than ignoring each.
