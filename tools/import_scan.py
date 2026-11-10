@@ -1540,6 +1540,17 @@ def validate_llm_matches(mapping: dict, vulns: list, chains: list | None = None)
                 )
                 f["matched_chain_db_id"] = None
 
+        # A path is credited only when the finding performs every one of its
+        # steps, so each step is demonstrated and is credited as a vuln too.
+        # Real miss (2026-11-10): the model credited CH-07.3 but left out its
+        # end step TP-028 ("covered by the chain match"), losing 27 points.
+        for cid in _chain_ids(f):
+            for m in (chain_lookup.get(cid) or {}).get("members", []):
+                vid = m.get("vuln_id") if isinstance(m, dict) else m
+                if vid in vuln_lookup and vid != f.get("matched_vuln_db_id") \
+                        and vid not in f["additional_vuln_db_ids"]:
+                    f["additional_vuln_db_ids"].append(vid)
+
         if matched is None:
             continue
         vuln = vuln_lookup.get(matched)

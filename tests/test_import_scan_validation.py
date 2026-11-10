@@ -963,3 +963,16 @@ def test_cyberagent_report_is_read_without_extraction(tmp_path):
     import_scan.load_findings_json(listed)  # valid --findings-json shape
     path.write_text(json.dumps({"findings": [{"title": "x"}]}))
     assert import_scan.cyberagent_findings(path) is None, "other JSON reports still go through extraction"
+
+
+def test_credited_attack_path_credits_each_of_its_steps():
+    """The mapper credited a path but not its end step; every step of a
+    credited path is demonstrated by definition, so each is credited."""
+    vulns = [{"id": i, "vuln_id": f"TP-{i:03d}", "title": t} for i, t in
+             ((17, "Order IDOR"), (24, "Order data exposure"), (28, "TOTP seed stored with credentials"))]
+    chains = [{"id": 70, "chain_id": "CH-07.3", "title": "IDOR -> seed leak -> 2FA takeover",
+               "members": [{"vuln_id": 17}, {"vuln_id": 24}, {"vuln_id": 28}]}]
+    mapping = {"findings": [{"title": "order IDOR leaks the TOTP seed, then 2FA takeover", "is_chain": True,
+                             "matched_chain_db_id": 70, "additional_vuln_db_ids": [17, 24]}]}
+    import_scan.validate_llm_matches(mapping, vulns, chains)
+    assert sorted(mapping["findings"][0]["additional_vuln_db_ids"]) == [17, 24, 28]
