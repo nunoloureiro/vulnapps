@@ -753,3 +753,19 @@ covering the sensitive non-auth actions. Draft requested from taintedport-b9.
       1357 CYA-027/028/029. 1346 582/891 (miss), 1355 370/891 TP 29, 1357 388/891 TP 32 pending 0, as predicted.
       329 = 63 registered (62 in scope; TP-066 out) = catalog's 63 active.
 - [ ] Re-check the other Ignores against the new rule: scan 1355 CYA-015 (voucher replay, real on v1.40).
+
+## New TaintedPort app (v1.47) — waiting for Nuno's clone of 329 (2026-11-10)
+Scan of 2026-11-10 (cyberAgent, run 20261109-2350) tested v1.47, not v1.40 (/files/ narrowed,
+redeemed_vouchers table, voucher reuse -> 409); run 20261109-2012 was v1.45-v1.47. In-place update
+of 329 dropped: one version per app.
+Catalog now describes ONLY the current version (no fixed vulns, history notes or "was CHAIN-###"):
+it reconciles with the new app; 329 stays a historical v1.40 app that deliberately differs
+(TP-066 out of scope; possibly a 329-only voucher-replay vuln). Legacy chain ids live in vulnapps only.
+- [ ] Nuno clones 329 -> new app.
+- [ ] New app: add TP-066 (clone skips out-of-scope vulns), present from the start; update TP-013 text
+      (listing exposes only database.db + api/config/).
+- [ ] Re-import run 20261109-2350 there; re-apply CYA-027/028/029 -> TP-068 and its Ignore; verify
+      counts; delete scan 1357 from 329.
+- [ ] Import run 20261109-2012 (23 findings + 1 chain, $20.21); review mappings with Nuno; verify counts.
+- [ ] Reconcile the new app with the catalog: 63 vulns, 7 decoys, 9 chains / 16 attack paths.
+- [ ] Nuno to decide: 329-only voucher-replay vuln crediting scan 1355 CYA-015 (+9), or leave Ignored.
