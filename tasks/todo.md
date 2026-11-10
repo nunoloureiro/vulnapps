@@ -755,8 +755,10 @@ covering the sensitive non-auth actions. Draft requested from taintedport-b9.
 - [ ] Re-check the other Ignores against the new rule: scan 1355 CYA-015 (voucher replay, real on v1.40).
 
 ## New TaintedPort app (v1.47) — waiting for Nuno's clone of 329 (2026-11-10)
-Scan of 2026-11-10 (cyberAgent, run 20261109-2350) tested v1.47, not v1.40 (/files/ narrowed,
-redeemed_vouchers table, voucher reuse -> 409); run 20261109-2012 was v1.45-v1.47. In-place update
+Scan of 2026-11-10 (cyberAgent, run 20261109-2350) tested the new build, not v1.40 (/files/ narrowed,
+redeemed_vouchers table, voucher reuse -> 409); run 20261109-2012 ran after the voucher fix was live.
+NB (Nuno): deployed containers were built from the working tree, so commit-count version numbers do NOT
+say what was live when; place scans by what they observed, not by version arithmetic. In-place update
 of 329 dropped: one version per app.
 Catalog now describes ONLY the current version (no fixed vulns, history notes or "was CHAIN-###"):
 it reconciles with the new app; 329 stays a historical v1.40 app that deliberately differs
@@ -770,4 +772,6 @@ it reconciles with the new app; 329 stays a historical v1.40 app that deliberate
 - [ ] Reconcile the new app with the catalog: 63 vulns, 7 decoys, 9 chains / 16 attack paths.
 - [x] Voucher replay (scan 1355 CYA-015): stays Ignored (Nuno).
 - [x] Scan on 329 from run 20261109-0107 (cyberAgent 1.8): before the /files/ narrowing, stays on 329 (Nuno).
+- [ ] Open: no scan on 331 exercised the cashout race, so TP-066 being in scope there assumes the busy timeout
+      shipped with the voucher fix and the /files/ narrowing. Nuno to confirm.
 - [x] Importer: a credited attack path now credits each of its steps (TP-028 was dropped as "covered").

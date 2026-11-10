@@ -256,3 +256,13 @@ it), whatever else the app gets wrong. Ignore only fixtures (published test acco
 behaviour with no security consequence of its own. When several findings share one root
 cause (e.g. no rate limiting anywhere), catalog one entry covering the affected sensitive
 actions rather than ignoring each.
+
+## Don't infer what was deployed from commit-count versions
+
+**Mistake:** Told Nuno a scan predated the /files/ narrowing "which came in v1.47", reading the
+version off commit counts. He builds containers from the working tree, so changes were live
+before they were committed: version arithmetic doesn't say what a scan tested.
+
+**Rule:** Place a scan by what it observed (listing contents, a 409 on reuse, a table in the
+dumped DB), and say which behaviours its findings don't cover. Only Nuno knows the deploy
+history; ask rather than derive it from git.
