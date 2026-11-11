@@ -69,14 +69,16 @@ export default function ScanDetail() {
 function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpdate }) {
   const [busy, setBusy] = useState(null);
   const [open, setOpen] = useState(() => new Set());
-  const [showNovel, setShowNovel] = useState(false);
+  const [showNovel, setShowNovel] = useState(null); // null = automatic: open while any report awaits review
   const vulnById = useMemo(() => new Map(knownVulns.map(v => [v.id, v])), [knownVulns]);
   const chainByPk = new Map(chains.map(c => [c.id, c]));
   const findingById = new Map(findings.map(f => [f.id, f]));
   const matchedIds = new Set(metrics.matched_vuln_ids || []);
   const creditByChain = metrics.credit_by_chain || {};
   const groups = metrics.chain_groups || [];
-  const novel = (metrics.novel_chains || []).filter(n => n.status !== 'not_a_chain');
+  // Every chain report that matches no attack path, "not a chain" ones too:
+  // hiding those made reports look missing from the scan (scan 1408).
+  const novel = metrics.novel_chains || [];
   const reportersOf = pk => findings.filter(f => (f.matched_chain_ids || []).includes(pk));
   const code = vid => vulnById.get(vid)?.vuln_id || `#${vid}`;
   const vulnLabel = vid => { const v = vulnById.get(vid); return v ? `${v.vuln_id} — ${v.title}` : `#${vid}`; };
@@ -182,8 +184,16 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
     candidate_new_chain: ['text-warning', 'Ends on a step no chain ends on: not credited. Candidate new chain.'],
     members_not_demonstrated: ['text-muted', 'Not every step is demonstrated: not credited'],
     rejected: ['text-muted', 'Rejected as a chain: no chain credit'],
+    not_a_chain: ['text-muted', 'Not a chain: fewer than two of its steps are catalogued vulns. Its vulns count on their own.'],
   };
   const rejectedCount = novel.filter(n => n.status === 'rejected').length;
+  const AWAITING = ['novel_path', 'needs_sink', 'candidate_new_chain'];
+  const awaiting = novel.filter(n => AWAITING.includes(n.status)).length;
+  const novelOpen = showNovel ?? awaiting > 0;
+  // Chain reports in this scan: findings presenting themselves as chains.
+  const reports = findings.filter(f => f.is_chain && !f.is_false_positive && !f.is_ignored);
+  const linked = reports.filter(f => (f.matched_chain_ids || []).length > 0).length;
+  const statusCount = st => novel.filter(n => n.status === st).length;
 
   return (
     <div className="card mb-2">
@@ -196,6 +206,15 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
         <div><b>{groups.filter(g => g.credited).length} / {groups.length}</b>chains credited</div>
         <div><b>{creditedWeight} / {totalWeight}</b>chain points</div>
         <div><b>{reportedPaths}</b>of {allPaths.length} attack paths reported</div>
+        {reports.length > 0 && (
+          <div title="Findings in this scan that present themselves as chains">
+            <b>{reports.length}</b>chain reports:{' '}
+            {[[linked, 'on a known attack path'], [statusCount('novel_path'), 'new attack path'],
+              [statusCount('candidate_new_chain') + statusCount('needs_sink'), 'to review'],
+              [statusCount('not_a_chain'), 'not a chain'], [rejectedCount, 'rejected']]
+              .filter(([n]) => n > 0).map(([n, l]) => `${n} ${l}`).join(', ')}
+          </div>
+        )}
       </div>
 
       {groups.map(g => {
@@ -231,13 +250,13 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
 
       {novel.length > 0 && (
         <div className="chain-row">
-          <div className="chain-row-head" onClick={() => setShowNovel(v => !v)} style={{ gridTemplateColumns: '1fr auto' }}>
-            <span className="text-sm text-muted">
-              Chain reports matching no attack path ({novel.length}{rejectedCount ? `, ${rejectedCount} rejected` : ''})
+          <div className="chain-row-head" onClick={() => setShowNovel(!novelOpen)} style={{ gridTemplateColumns: '1fr auto' }}>
+            <span className={'text-sm ' + (awaiting ? 'text-warning' : 'text-muted')}>
+              Chain reports matching no attack path ({novel.length}{awaiting ? `, ${awaiting} to review` : ''}{rejectedCount ? `, ${rejectedCount} rejected` : ''})
             </span>
-            <span className="text-muted text-sm">{showNovel ? '▾' : '▸'}</span>
+            <span className="text-muted text-sm">{novelOpen ? '▾' : '▸'}</span>
           </div>
-          {showNovel && (
+          {novelOpen && (
             <div className="chain-row-paths">
               <p className="text-muted text-sm mb-1">
                 A reported chain ending on a step some chain ends on, with two or more catalogued steps all
@@ -262,7 +281,7 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
                       </div>
                       <div className={`${cls} text-sm mt-1`}>{text}</div>
                     </div>
-                    {canEdit && (
+                    {canEdit && n.status !== 'not_a_chain' && (
                       <div className="flex gap-1" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                         {n.status !== 'rejected' && (
                           <select className="form-select" style={{ maxWidth: 200 }} disabled={isBusy}
