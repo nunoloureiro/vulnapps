@@ -45,19 +45,14 @@ export default function ScanDetail() {
 
       <ScanMeta scan={scan} app={app} labels={labels || []} canEdit={can_edit} canViewCost={can_view_cost} scanId={id} onUpdate={load} />
       <Metrics metrics={metrics} app={app} revision={revision} scan={scan} />
-      {/* Findings, then chains (the chain-credit card plus the scan's own
-          chain reports), then missed vulns, then false positives. */}
-      <Findings findings={findings} rows={findings.filter(f => !isChainReport(f) && !f.is_false_positive)}
+      {/* Findings, then chains (with the scan's pending chain reports inside),
+          then missed vulns, then false positives. */}
+      <Findings findings={findings} rows={findings.filter(f => !f.is_false_positive && !isPendingChainReport(f, metrics))}
                 knownVulns={known_vulns || []} chains={chains || []} knownFps={known_fps || []} canEdit={can_edit}
                 scanId={id} appId={app.id} onUpdate={load} metrics={metrics} />
-      {((chains && chains.length > 0) || findings.some(f => isChainReport(f) && !f.is_false_positive)) && (
+      {((chains && chains.length > 0) || findings.some(f => isPendingChainReport(f, metrics))) && (
         <Chains chains={chains || []} knownVulns={known_vulns || []} findings={findings} metrics={metrics}
-                canEdit={can_edit} scanId={id} onUpdate={load} />
-      )}
-      {findings.some(f => isChainReport(f) && !f.is_false_positive) && (
-        <Findings findings={findings} rows={findings.filter(f => isChainReport(f) && !f.is_false_positive)} variant="chains"
-                  knownVulns={known_vulns || []} chains={chains || []} knownFps={known_fps || []} canEdit={can_edit}
-                  scanId={id} appId={app.id} onUpdate={load} metrics={metrics} />
+                knownFps={known_fps || []} appId={app.id} canEdit={can_edit} scanId={id} onUpdate={load} />
       )}
       {missed_vulns && missed_vulns.length > 0 && <MissedVulns vulns={missed_vulns} appId={app.id} />}
       {findings.some(f => f.is_false_positive) && (
@@ -116,87 +111,94 @@ const NOVEL_STATUS = {
   not_a_chain: ['text-muted', 'Not a chain: fewer than two of its steps are catalogued vulns. Its vulns count on their own.'],
 };
 
-// What a chain report chains, by name and in order, and what became of it.
-// Steps come from the attack path it matched (stored in run order), else from
-// its credited vulns with the step it ends on last.
-function ChainReportStatus({ f, metrics, chains, knownVulns, appId, canEdit, scanId, onUpdate }) {
+// A chain report still waiting for a decision: a new attack path of a known
+// chain (credited, unreviewed), or a candidate new chain (not credited).
+const PENDING_PATH = ['novel_path', 'members_not_demonstrated'];
+const PENDING_CHAIN = ['candidate_new_chain', 'needs_sink'];
+const isPendingChainReport = (f, metrics) => !f.is_false_positive && !f.is_ignored &&
+  (metrics.novel_chains || []).some(n => n.finding_id === f.id && [...PENDING_PATH, ...PENDING_CHAIN].includes(n.status));
+
+// One pending chain report: what it chains (linked vuln names in run order,
+// end step underlined), and Add / FP / Ignore. Add turns it into an attack
+// path of its chain, or into a new chain; FP and Ignore act on the finding.
+function PendingChainReport({ f, n, kind, metrics, knownVulns, knownFps, appId, canEdit, scanId, onUpdate, refs }) {
   const [busy, setBusy] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [markingFp, setMarkingFp] = useState(false);
   const vulnById = useMemo(() => new Map(knownVulns.map(v => [v.id, v])), [knownVulns]);
-  const paths = (f.matched_chain_ids || []).map(id => chains.find(c => c.id === id)).filter(Boolean);
-  const n = (metrics.novel_chains || []).find(x => x.finding_id === f.id);
-  const sink = paths[0]?.sink_vuln_id ?? n?.sink_vuln_id ?? null;
-  // Run order: a matched path's own steps; else the finding's matches in the
-  // order the importer recorded them (novel_chains sorts its member ids, which
-  // loses that order), with the step it ends on last.
-  const inScope = n ? new Set(n.member_vuln_ids) : null;
-  const recorded = (f.matched_vuln_ids || []).filter(v => !inScope || inScope.has(v));
-  const ids = paths.length
-    ? paths[0].members
-    : [...recorded.filter(v => v !== sink), ...(sink != null ? [sink] : [])];
+  // Run order: the finding's matches as the importer recorded them
+  // (novel_chains sorts its member ids), with the step it ends on last.
+  const members = new Set(n.member_vuln_ids);
+  const recorded = (f.matched_vuln_ids || []).filter(v => members.has(v));
+  const sink = n.sink_vuln_id ?? recorded[recorded.length - 1] ?? null;
+  const ids = [...recorded.filter(v => v !== sink), ...(sink != null ? [sink] : [])];
   const run = async fn => { setBusy(true); try { await fn(); onUpdate(); } finally { setBusy(false); } };
-  const review = body => run(() => api.post(`/scans/${scanId}/findings/${f.id}/novel-chain`, body));
-  const promote = () => {
-    const group = (metrics.chain_groups || []).find(g => g.sink_vuln_id === n.sink_vuln_id);
-    const best = group ? group.paths.reduce((a, b) => (b.weight > a.weight ? b : a)) : null;
+  const add = () => {
+    const sev = String(f.severity || '').toLowerCase();
+    let severity = ['critical', 'high', 'medium', 'low'].includes(sev) ? sev : 'high';
+    if (kind === 'path') {
+      const group = (metrics.chain_groups || []).find(g => g.sink_vuln_id === sink);
+      severity = group ? group.paths.reduce((a, b) => (b.weight > a.weight ? b : a)).severity : severity;
+    }
     return run(() => api.post(`/scans/${scanId}/findings/${f.id}/promote-chain`, {
-      title: f.title || 'Untitled chain', severity: best?.severity || 'critical',
-      member_vuln_ids: ids,
-      sink_vuln_id: n.sink_vuln_id,
+      title: f.title || 'Untitled chain', severity, member_vuln_ids: ids, sink_vuln_id: sink,
+      ...(kind === 'chain' ? { chain_name: f.title || 'Untitled chain' } : {}),
     }));
   };
-  let status;
-  if (paths.length) {
-    status = (
-      <div className="text-success text-sm">
-        ✓ {Object.values(paths.reduce((acc, c) => {
-            const key = c.chain_code || c.chain_id;
-            (acc[key] = acc[key] || { code: key, name: c.chain_name || c.title, ids: [] }).ids.push(c.chain_id);
-            return acc;
-          }, {})).map(g => `${g.ids.join(' and ')}${g.code !== g.ids[0] ? ` of ${g.code}` : ''} ${g.name}`).join('; ')}
-      </div>
-    );
-  } else if (n) {
-    const [cls, text] = NOVEL_STATUS[n.status] || ['text-muted', n.status];
-    status = <div className={`${cls} text-sm`}>{text}</div>;
-  } else {
-    status = <div className="text-muted text-sm">Not scored as a chain: the importer judged its link not demonstrated (see its reasoning). Its vulns count on their own.</div>;
-  }
+  const ignore = () => run(() => api.post(`/scans/${scanId}/findings/${f.id}/ignore`, { ignored: true }));
+  const status = kind === 'path'
+    ? (n.status === 'novel_path' ? 'New attack path of this chain: credited, pending review'
+                                 : 'New attack path of this chain: not every step demonstrated, not credited')
+    : (n.status === 'needs_sink' ? 'New chain: pick the step it ends on' : 'New chain: not in the catalog, not credited');
   return (
-    <div className="chain-report-status">
-      {ids.length > 0 && (
-        <div className="chain-report-steps">
-          {ids.map((vid, i) => {
-            const v = vulnById.get(vid);
-            return (
+    <div className="chain-pending">
+      <div className="chain-pending-main">
+        <div>
+          <span className="badge badge-pending" style={{ marginRight: 6 }}>pending</span>
+          <button type="button" className="chain-pending-title" onClick={() => setShowDetails(v => !v)}
+                  title={showDetails ? 'Hide the report' : 'Show the report'}>
+            {f.title || f.vuln_type} {showDetails ? '▾' : '▸'}
+          </button>
+        </div>
+        {ids.length > 0 && (
+          <div className="chain-report-steps">
+            {ids.map((vid, i) => (
               <span key={vid}>
                 {i > 0 && <span className="text-muted"> → </span>}
-                <Link to={`/apps/${appId}/vulns/${vid}`} title={v?.vuln_id}
+                <Link to={`/apps/${appId}/vulns/${vid}`} title={vulnById.get(vid)?.vuln_id}
                       className={vid === sink ? 'chain-step-name chain-step-name-sink' : 'chain-step-name'}>
-                  {v ? v.title : `#${vid}`}
+                  {vulnById.get(vid)?.title || `#${vid}`}
                 </Link>
               </span>
-            );
-          })}
-        </div>
-      )}
-      {status}
-      {canEdit && n && n.status !== 'not_a_chain' && (
-        <div className="flex gap-1 mt-1" style={{ flexWrap: 'wrap' }}>
-          {n.status !== 'rejected' && (
-            <select className="chain-pick" style={{ marginLeft: 0 }} disabled={busy} value={n.sink_vuln_id ?? ''}
-                    onChange={e => review({ sink_vuln_id: e.target.value ? Number(e.target.value) : null })}>
+            ))}
+          </div>
+        )}
+        <div className={`text-sm ${kind === 'path' && n.status === 'novel_path' ? 'text-success' : 'text-warning'}`}>{status}</div>
+        {markingFp && (
+          <FpGroup key={`fp-${f.id}`} scanId={scanId} finding={f} knownFps={knownFps} canEdit={canEdit}
+                   onUpdate={onUpdate} startEditing onCancel={() => setMarkingFp(false)} />
+        )}
+      </div>
+      {canEdit && (
+        <div className="chain-pending-actions">
+          {kind === 'chain' && (
+            <select className="chain-pick" style={{ marginLeft: 0 }} disabled={busy} value={sink ?? ''}
+                    title="The step this chain ends on"
+                    onChange={e => run(() => api.post(`/scans/${scanId}/findings/${f.id}/novel-chain`,
+                      { sink_vuln_id: e.target.value ? Number(e.target.value) : null }))}>
               <option value="">Ends on…</option>
               {n.member_vuln_ids.map(vid => <option key={vid} value={vid}>{vulnById.get(vid)?.title || `#${vid}`}</option>)}
             </select>
           )}
-          {n.status === 'novel_path' && (
-            <button className="btn btn-primary btn-sm" disabled={busy} onClick={promote}>Add as attack path</button>
-          )}
-          {n.status === 'rejected'
-            ? <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => review({ rejected: false })}>Un-reject</button>
-            : <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => review({ rejected: true })}>Reject as chain</button>}
+          <button className="btn btn-primary btn-sm" disabled={busy || sink == null} onClick={add}
+                  title={kind === 'path' ? 'Register it as an attack path of this chain' : 'Register it as a new chain, ending on its last step'}>
+            {kind === 'path' ? 'Add attack path' : 'Add chain'}
+          </button>
+          <button className="fa-btn fa-fp" disabled={busy} onClick={() => setMarkingFp(true)} title="Mark the report a false positive">FP</button>
+          <button className="fa-btn fa-ignore" disabled={busy} onClick={ignore} title="Ignore the report (excluded from metrics; drops its matches)">Ignore</button>
         </div>
       )}
+      {showDetails && <div className="card mt-1" style={{ gridColumn: '1 / -1' }}><FindingDetails finding={f} refs={refs} /></div>}
     </div>
   );
 }
@@ -210,9 +212,18 @@ function ChainReportStatus({ f, metrics, chains, knownVulns, appId, canEdit, sca
 // Pre-existing reviewer confirmations (scan_chain_credits) still count,
 // marked legacy, until revoked. Collapsed by default: a chain's attack paths
 // open on click.
-function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpdate }) {
+function Chains({ chains, knownVulns, findings, metrics, knownFps, appId, canEdit, scanId, onUpdate }) {
   const [busy, setBusy] = useState(null);
-  const [open, setOpen] = useState(() => new Set());
+  const refs = useMemo(() => refMapOf(findings), [findings]);
+  const pendingOf = (statuses) => (metrics.novel_chains || [])
+    .filter(n => statuses.includes(n.status))
+    .map(n => ({ n, f: findings.find(x => x.id === n.finding_id) }))
+    .filter(({ f }) => f && !f.is_false_positive && !f.is_ignored);
+  const pendingPaths = pendingOf(PENDING_PATH);
+  const pendingChains = pendingOf(PENDING_CHAIN);
+  const pendingFor = g => pendingPaths.filter(({ n }) => g.sink_vuln_id != null && n.sink_vuln_id === g.sink_vuln_id);
+  // A chain with something pending starts open, so it isn't missed.
+  const [open, setOpen] = useState(() => new Set((metrics.chain_groups || []).filter(g => pendingFor(g).length).map(g => g.key)));
     const vulnById = useMemo(() => new Map(knownVulns.map(v => [v.id, v])), [knownVulns]);
   const chainByPk = new Map(chains.map(c => [c.id, c]));
   const findingById = new Map(findings.map(f => [f.id, f]));
@@ -326,9 +337,9 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
         <div><b>{reportedPaths}</b>of {allPaths.length} attack paths reported</div>
         {reports.length > 0 && (
           <div title="Findings in this scan that present themselves as chains">
-            <b>{reports.length}</b>chain reports (listed below):{' '}
-            {[[linked, 'on a known attack path'], [statusCount('novel_path'), 'new attack path'],
-              [statusCount('candidate_new_chain') + statusCount('needs_sink'), 'to review'],
+            <b>{reports.length}</b>chain reports:{' '}
+            {[[linked, 'on a known attack path'], [pendingPaths.length, 'new attack path pending'],
+              [pendingChains.length, 'new chain pending'],
               [statusCount('not_a_chain'), 'not a chain'], [rejectedCount, 'rejected'],
               [reports.filter(f => !f.is_chain).length, 'not scored as a chain']]
               .filter(([n]) => n > 0).map(([n, l]) => `${n} ${l}`).join(', ')}
@@ -342,7 +353,7 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
         const name = first?.chain_name || first?.title || 'Chain';
         const chainCode = first?.chain_code;
         const severity = g.credited_severity || g.paths.reduce((a, b) => (b.weight > a.weight ? b : a)).severity;
-        const novelCount = g.novel_finding_ids.length;
+        const pending = pendingFor(g);
         const isOpen = open.has(g.key);
         return (
           <div key={g.key} className="chain-row">
@@ -356,17 +367,44 @@ function Chains({ chains, knownVulns, findings, metrics, canEdit, scanId, onUpda
               <span><Badge severity={severity} /></span>
               <span className="text-sm text-muted">
                 {g.paths_demonstrated} of {g.paths_total} attack path{g.paths_total === 1 ? '' : 's'}
-                {novelCount > 0 && <> + {novelCount} new</>}
+                {pending.length > 0 && <span className="text-warning"> + {pending.length} pending</span>}
               </span>
               <span className={'chain-row-pts ' + (g.credited ? 'text-success' : 'text-muted')}>
                 {g.credited_weight} / {g.weight}p {isOpen ? '▾' : '▸'}
               </span>
             </div>
-            {isOpen && <div className="chain-row-paths">{paths.map(pathRow)}</div>}
+            {isOpen && (
+              <div className="chain-row-paths">
+                {paths.map(pathRow)}
+                {pending.map(({ n, f }) => (
+                  <PendingChainReport key={f.id} f={f} n={n} kind="path" metrics={metrics} knownVulns={knownVulns}
+                                      knownFps={knownFps} appId={appId} canEdit={canEdit} scanId={scanId}
+                                      onUpdate={onUpdate} refs={refs} />
+                ))}
+              </div>
+            )}
           </div>
         );
       })}
 
+      {pendingChains.length > 0 && (
+        <div className="chain-row">
+          <div className="chain-row-head" style={{ gridTemplateColumns: '22px 1fr', cursor: 'default' }}>
+            <span className="text-warning">?</span>
+            <div className="chain-row-name">
+              <strong>New chains</strong>
+              <small>reported by this scan, not in the catalog: add, or reject as FP or Ignore</small>
+            </div>
+          </div>
+          <div className="chain-row-paths">
+            {pendingChains.map(({ n, f }) => (
+              <PendingChainReport key={f.id} f={f} n={n} kind="chain" metrics={metrics} knownVulns={knownVulns}
+                                  knownFps={knownFps} appId={appId} canEdit={canEdit} scanId={scanId}
+                                  onUpdate={onUpdate} refs={refs} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -836,10 +874,9 @@ function FpGroup({ scanId, finding, knownFps, canEdit, onUpdate, startEditing = 
   );
 }
 
-// One table, three uses: the ordinary findings, the scan's chain reports (in
-// the chains section) and its false positives. `findings` is always the whole
+// One table, two uses: the findings and the false positives. `findings` is always the whole
 // scan (for cross-references); `rows` is what this table lists.
-const FINDINGS_HEADINGS = { findings: 'Findings', chains: 'Chain reports', fp: 'False Positives' };
+const FINDINGS_HEADINGS = { findings: 'Findings', fp: 'False Positives' };
 
 function Findings({ findings, rows, variant = 'findings', metrics, knownVulns, chains, knownFps, canEdit, scanId, appId, onUpdate }) {
   rows = rows || findings;
@@ -959,19 +996,12 @@ function Findings({ findings, rows, variant = 'findings', metrics, knownVulns, c
         <h2 className="page-title">{FINDINGS_HEADINGS[variant]} <span className="text-muted text-sm">({rows.length})</span></h2>
         {canEdit && variant === 'findings' && <button className="btn btn-outline btn-sm" onClick={rematch}>Re-match All</button>}
       </div>
-      {variant === 'chains' && (
-        <p className="text-muted text-sm mb-2">
-          Findings this scan presented as exploit chains: what each chains together, step by step, and what
-          became of it. Each step is credited on its own; the chain is credited above when it follows an attack path.
-        </p>
-      )}
       {rows.length > 0 ? (
         <div className="card">
           <div className="table-wrap">
             <table className="cards-on-mobile">
               <thead><tr>
-                <th style={variant === 'chains' ? { width: '48%' } : undefined}>{variant === 'chains' ? 'Chain report' : 'Type'}</th>
-                {variant !== 'chains' && <th>Location</th>}<th>Status</th><th>Matched Vuln</th>
+                <th>Type</th><th>Location</th><th>Status</th><th>Matched Vuln</th>
                 <th></th>
               </tr></thead>
               <tbody>
@@ -996,7 +1026,7 @@ function Findings({ findings, rows, variant = 'findings', metrics, knownVulns, c
                   return (
                   <React.Fragment key={f.id}>
                   <tr id={`finding-${f.id}`}>
-                    <td data-label="Type" style={variant === 'chains' ? { minWidth: 460, maxWidth: 640 } : undefined}>
+                    <td data-label="Type">
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         {hasDetails && (
                           <button
@@ -1009,7 +1039,8 @@ function Findings({ findings, rows, variant = 'findings', metrics, knownVulns, c
                             </svg>
                           </button>
                         )}
-                        {variant !== 'chains' && <span>{f.vuln_type}</span>}
+                        {/* A chain report's type is just "Exploit chain": name it by its title. */}
+                        <span>{isChainReport(f) ? (f.title || f.vuln_type) : f.vuln_type}</span>
                         {f.severity && <Badge severity={f.severity.toLowerCase()} />}
                         {/* The finding presents itself as a multi-step chain —
                             decided from its content, not from where it sat in
@@ -1020,29 +1051,16 @@ function Findings({ findings, rows, variant = 'findings', metrics, knownVulns, c
                           <span className="badge badge-info" title="This finding reports a multi-step exploit chain">chain</span>
                         )}
                       </div>
-                      {variant !== 'chains' && f.title && f.title !== f.vuln_type && (
+                      {!isChainReport(f) && f.title && f.title !== f.vuln_type && (
                         <div className="text-muted text-xs" style={{ marginTop: 2, marginLeft: hasDetails ? 18 : 0 }}>{f.title}</div>
                       )}
-                      {variant === 'chains' && (
-                        <div style={{ marginTop: 4, marginLeft: hasDetails ? 18 : 0 }}>
-                          <strong className="text-sm">{f.title || f.vuln_type}</strong>
-                        </div>
-                      )}
-                      {variant === 'chains' && metrics && (
-                        <div style={{ marginTop: 4, marginLeft: hasDetails ? 18 : 0 }}>
-                          <ChainReportStatus f={f} metrics={metrics} chains={chains} knownVulns={knownVulns} appId={appId}
-                                             canEdit={canEdit} scanId={scanId} onUpdate={onUpdate} />
-                        </div>
-                      )}
                     </td>
-                    {variant !== 'chains' && (
                     <td data-label="Location" className="font-mono text-sm">
                       {locationDisplay}
                       {f.parameter && (
                         <div className="text-muted text-xs" style={{ marginTop: 2 }}>param: {f.parameter}</div>
                       )}
                     </td>
-                    )}
                     <td data-label="Status">
                       {hasMatch ? <Badge severity="low">TP</Badge> :
                        f.is_false_positive ? <Badge severity="critical">FP</Badge> :
@@ -1161,7 +1179,7 @@ function Findings({ findings, rows, variant = 'findings', metrics, knownVulns, c
                   </tr>
                   {isExpanded && hasDetails && (
                     <tr>
-                      <td data-label="" colSpan={variant === 'chains' ? 4 : 5} style={{ padding: '0.75rem 0' }}>
+                      <td data-label="" colSpan="5" style={{ padding: '0.75rem 0' }}>
                         <div className="card">
                           <FindingDetails finding={f} refs={refs} />
                         </div>
