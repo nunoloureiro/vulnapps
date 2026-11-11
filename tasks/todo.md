@@ -797,3 +797,9 @@ or revision change). Differences known so far vs the catalog's current sections:
       329 = 27 / 14 / 22 (no TP-069). No revision, no score change. Live radar checked on both apps.
 - [ ] Optional: re-tier the 8 older TaintedPort apps so their tier rows compare with 329/331.
 - [ ] Later (agreed with taintedport-29): one default ZAP/Burp scan of 1.50 to calibrate the Commodity list.
+
+## Scan 1408 chain reports (2026-11-11)
+- [x] Scan page shows every chain report (not-a-chain ones were hidden; list opens while any await review);
+      summary counts reports by outcome. Deployed (ded08ac).
+- [ ] taintedport-29 reviewing all 8 reports (new attack path / new chain / not a chain). Suspected mis-map:
+      CYA-CHAIN-04 credits TP-064 (invoice IDOR); the exposure step looks like TP-024.
