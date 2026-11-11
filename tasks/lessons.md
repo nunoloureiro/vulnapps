@@ -266,3 +266,15 @@ before they were committed: version arithmetic doesn't say what a scan tested.
 **Rule:** Place a scan by what it observed (listing contents, a 409 on reuse, a table in the
 dumped DB), and say which behaviours its findings don't cover. Only Nuno knows the deploy
 history; ask rather than derive it from git.
+
+## Tier by what it takes to recognise the bug, not by a neighbour's tier
+
+**Mistake:** Registered TP-069 (one payment backs several orders, via a checkout race) as
+commodity because #48's race was commodity. Nuno: commodity is XSS, SQLi and the like, which you
+can identify with no context; here you must understand that two successful orders used the same
+payment transaction. That takes "brains": business logic.
+
+**Rule:** Commodity = a generic, app-independent class recognisable without knowing what the app
+is for. Business logic = recognising it as a bug requires the app's own rules (money, codes,
+ownership, checkout, payments). Decide the tier from that test for each vuln; never copy it from
+a similar-looking one, and follow the catalog's section when it has one.

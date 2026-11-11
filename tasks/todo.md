@@ -778,3 +778,12 @@ it reconciles with the new app; 329 stays a historical v1.40 app that deliberate
       registered on 331 only as TP-069 (High, commodity like #48; revision 2). 1408: 467/909, 39 TP, 0 pending.
       331 = 64 vulns / 9 chains / 16 paths / 7 decoys = catalog. Not on 329: the race needs the busy timeout.
 - [x] Importer: a credited attack path now credits each of its steps (TP-028 was dropped as "covered").
+
+## Tier review (2026-11-11) — waiting for TaintedPort's review of every vuln
+Nuno: TP-069 is business logic, not commodity. TaintedPort is reviewing the commodity/business-logic
+split of all catalog vulns; then align 331 AND 329 in one pass (tiers are a reporting axis, no weight
+or revision change). Differences known so far vs the catalog's current sections:
+- TP-048 (#48 referral race) and TP-069 (#68): commodity on vulnapps -> business logic in the catalog.
+- TP-062 (#61 remember-me AES-GCM nonce) and TP-065 (#64 second-order SQLi): business_logic on vulnapps
+  (my 2026-10 mapping of "Hard-with-source") -> commodity in the catalog.
+- [ ] Get TaintedPort's final list; diff every vuln's tier on 331 and 329; apply; verify per-tier counts.
