@@ -45,12 +45,12 @@ export default function ScanDetail() {
 
       <ScanMeta scan={scan} app={app} labels={labels || []} canEdit={can_edit} canViewCost={can_view_cost} scanId={id} onUpdate={load} />
       <Metrics metrics={metrics} app={app} revision={revision} scan={scan} />
-      {/* Findings, then chains (with the scan's pending chain reports inside),
-          then missed vulns, then false positives. */}
-      <Findings findings={findings} rows={findings.filter(f => !f.is_false_positive && !isPendingChainReport(f, metrics))}
+      {/* Findings, then chains (every chain report lives there), then missed
+          vulns, then false positives. */}
+      <Findings findings={findings} rows={findings.filter(f => !f.is_false_positive && !isChainReport(f))}
                 knownVulns={known_vulns || []} chains={chains || []} knownFps={known_fps || []} canEdit={can_edit}
                 scanId={id} appId={app.id} onUpdate={load} metrics={metrics} />
-      {((chains && chains.length > 0) || findings.some(f => isPendingChainReport(f, metrics))) && (
+      {((chains && chains.length > 0) || findings.some(f => isChainReport(f) && !f.is_false_positive)) && (
         <Chains chains={chains || []} knownVulns={known_vulns || []} findings={findings} metrics={metrics}
                 knownFps={known_fps || []} appId={app.id} canEdit={can_edit} scanId={id} onUpdate={load} />
       )}
@@ -111,28 +111,36 @@ const NOVEL_STATUS = {
   not_a_chain: ['text-muted', 'Not a chain: fewer than two of its steps are catalogued vulns. Its vulns count on their own.'],
 };
 
-// A chain report still waiting for a decision: a new attack path of a known
-// chain (credited, unreviewed), or a candidate new chain (not credited).
+// Chain reports, by what's left to decide: a new attack path of a known chain
+// (credited, unreviewed), a candidate new chain (not credited), one on a known
+// attack path, or one not counted as a chain.
 const PENDING_PATH = ['novel_path', 'members_not_demonstrated'];
 const PENDING_CHAIN = ['candidate_new_chain', 'needs_sink'];
-const isPendingChainReport = (f, metrics) => !f.is_false_positive && !f.is_ignored &&
-  (metrics.novel_chains || []).some(n => n.finding_id === f.id && [...PENDING_PATH, ...PENDING_CHAIN].includes(n.status));
 
-// One pending chain report: what it chains (linked vuln names in run order,
-// end step underlined), and Add / FP / Ignore. Add turns it into an attack
-// path of its chain, or into a new chain; FP and Ignore act on the finding.
-function PendingChainReport({ f, n, kind, metrics, knownVulns, knownFps, appId, canEdit, scanId, onUpdate, refs }) {
+const REPORT_BADGE = {
+  path: ['badge-pending', 'pending'], chain: ['badge-pending', 'pending'],
+  linked: ['badge-low', 'reported'], other: ['badge-ignored', 'not counted'],
+};
+
+// One chain report: its title (click for the report), its steps as TP chips
+// right after the title (end step underlined: every attack path of a chain
+// ends on the same one) and by name below, what became of it, and the
+// actions that fit: Add (as an attack path of its chain, or as a new chain),
+// FP, Ignore. On a new chain, clicking a chip makes that step the end.
+function ChainReportBox({ f, n, kind, paths = [], metrics, knownVulns, knownFps, appId, canEdit, scanId, onUpdate, refs }) {
   const [busy, setBusy] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [markingFp, setMarkingFp] = useState(false);
   const vulnById = useMemo(() => new Map(knownVulns.map(v => [v.id, v])), [knownVulns]);
-  // Run order: the finding's matches as the importer recorded them
-  // (novel_chains sorts its member ids), with the step it ends on last.
-  const members = new Set(n.member_vuln_ids);
-  const recorded = (f.matched_vuln_ids || []).filter(v => members.has(v));
-  const sink = n.sink_vuln_id ?? recorded[recorded.length - 1] ?? null;
-  const ids = [...recorded.filter(v => v !== sink), ...(sink != null ? [sink] : [])];
+  // Run order: a followed path's own steps; else the finding's matches in the
+  // order the importer recorded them (novel_chains sorts its member ids), with
+  // the step it ends on last.
+  const members = n ? new Set(n.member_vuln_ids) : null;
+  const recorded = (f.matched_vuln_ids || []).filter(v => !members || members.has(v));
+  const sink = paths[0]?.sink_vuln_id ?? n?.sink_vuln_id ?? (kind === 'other' ? null : recorded[recorded.length - 1] ?? null);
+  const ids = paths.length ? paths[0].members : [...recorded.filter(v => v !== sink), ...(sink != null ? [sink] : [])];
   const run = async fn => { setBusy(true); try { await fn(); onUpdate(); } finally { setBusy(false); } };
+  const setSink = vid => run(() => api.post(`/scans/${scanId}/findings/${f.id}/novel-chain`, { sink_vuln_id: vid }));
   const add = () => {
     const sev = String(f.severity || '').toLowerCase();
     let severity = ['critical', 'high', 'medium', 'low'].includes(sev) ? sev : 'high';
@@ -146,54 +154,87 @@ function PendingChainReport({ f, n, kind, metrics, knownVulns, knownFps, appId, 
     }));
   };
   const ignore = () => run(() => api.post(`/scans/${scanId}/findings/${f.id}/ignore`, { ignored: true }));
-  const status = kind === 'path'
-    ? (n.status === 'novel_path' ? 'New attack path of this chain: credited, pending review'
-                                 : 'New attack path of this chain: not every step demonstrated, not credited')
-    : (n.status === 'needs_sink' ? 'New chain: pick the step it ends on' : 'New chain: not in the catalog, not credited');
+  const unreject = () => run(() => api.post(`/scans/${scanId}/findings/${f.id}/novel-chain`, { rejected: false }));
+
+  let status, statusCls = 'text-muted';
+  if (kind === 'path') {
+    status = n.status === 'novel_path' ? 'New attack path of this chain: credited, pending review'
+                                       : 'New attack path of this chain: not every step demonstrated, not credited';
+    statusCls = n.status === 'novel_path' ? 'text-success' : 'text-warning';
+  } else if (kind === 'chain') {
+    status = n.status === 'needs_sink' ? 'New chain: pick the step it ends on' : 'New chain: not in the catalog, not credited';
+    statusCls = 'text-warning';
+  } else if (kind === 'linked') {
+    const byChain = {};
+    paths.forEach(c => { (byChain[c.chain_code || c.chain_id] = byChain[c.chain_code || c.chain_id] || []).push(c.chain_id); });
+    status = `✓ Follows ${Object.entries(byChain).map(([code, list]) => list.join(' and ') + (code !== list[0] ? ` of ${code}` : '')).join('; ')}`;
+    statusCls = 'text-success';
+  } else if (n?.status === 'rejected') {
+    status = 'Rejected as a chain: its vulns count on their own';
+  } else if (n?.status === 'not_a_chain') {
+    status = 'Not a chain: fewer than two of its steps are catalogued vulns. Its vulns count on their own.';
+  } else {
+    status = 'Not scored as a chain: the importer judged its link not demonstrated (see the report). Its vulns count on their own.';
+  }
+  const [badgeCls, badgeText] = REPORT_BADGE[kind];
+  const chipsClickable = canEdit && kind === 'chain';
   return (
-    <div className="chain-pending">
-      <div className="chain-pending-main">
-        <div>
-          <span className="badge badge-pending" style={{ marginRight: 6 }}>pending</span>
-          <button type="button" className="chain-pending-title" onClick={() => setShowDetails(v => !v)}
+    <div className={'chain-report chain-report-' + kind} id={`finding-${f.id}`}>
+      <div className="chain-report-main">
+        <div className="chain-report-head">
+          <span className={'badge ' + badgeCls}>{badgeText}</span>
+          <button type="button" className="chain-report-title" onClick={() => setShowDetails(v => !v)}
                   title={showDetails ? 'Hide the report' : 'Show the report'}>
             {f.title || f.vuln_type} {showDetails ? '▾' : '▸'}
           </button>
+          {ids.length > 0 && (
+            <span className="chain-steps-inline">
+              {ids.map((vid, i) => (
+                <span key={vid}>
+                  {i > 0 && <span className="text-muted"> → </span>}
+                  <span title={(vulnById.get(vid)?.title || '') + (chipsClickable && vid !== sink ? ' (click: make this the end step)' : '')}
+                        onClick={chipsClickable && vid !== sink && !busy ? () => setSink(vid) : undefined}
+                        style={chipsClickable && vid !== sink ? { cursor: 'pointer' } : undefined}
+                        className={'chain-step found' + (vid === sink ? ' chain-step-sink' : '')}>
+                    {vulnById.get(vid)?.vuln_id || `#${vid}`}
+                  </span>
+                </span>
+              ))}
+            </span>
+          )}
         </div>
         {ids.length > 0 && (
           <div className="chain-report-steps">
             {ids.map((vid, i) => (
               <span key={vid}>
                 {i > 0 && <span className="text-muted"> → </span>}
-                <Link to={`/apps/${appId}/vulns/${vid}`} title={vulnById.get(vid)?.vuln_id}
-                      className={vid === sink ? 'chain-step-name chain-step-name-sink' : 'chain-step-name'}>
-                  {vulnById.get(vid)?.title || `#${vid}`}
-                </Link>
+                <Link to={`/apps/${appId}/vulns/${vid}`} className="chain-step-name">{vulnById.get(vid)?.title || `#${vid}`}</Link>
               </span>
             ))}
           </div>
         )}
-        <div className={`text-sm ${kind === 'path' && n.status === 'novel_path' ? 'text-success' : 'text-warning'}`}>{status}</div>
+        <div className={`text-sm ${statusCls}`}>{status}</div>
         {markingFp && (
           <FpGroup key={`fp-${f.id}`} scanId={scanId} finding={f} knownFps={knownFps} canEdit={canEdit}
                    onUpdate={onUpdate} startEditing onCancel={() => setMarkingFp(false)} />
         )}
       </div>
       {canEdit && (
-        <div className="chain-pending-actions">
-          {kind === 'chain' && (
-            <select className="chain-pick" style={{ marginLeft: 0 }} disabled={busy} value={sink ?? ''}
-                    title="The step this chain ends on"
-                    onChange={e => run(() => api.post(`/scans/${scanId}/findings/${f.id}/novel-chain`,
-                      { sink_vuln_id: e.target.value ? Number(e.target.value) : null }))}>
+        <div className="chain-report-actions">
+          {kind === 'chain' && n.status === 'needs_sink' && (
+            <select className="chain-pick" style={{ marginLeft: 0 }} disabled={busy} value=""
+                    onChange={e => e.target.value && setSink(Number(e.target.value))}>
               <option value="">Ends on…</option>
-              {n.member_vuln_ids.map(vid => <option key={vid} value={vid}>{vulnById.get(vid)?.title || `#${vid}`}</option>)}
+              {n.member_vuln_ids.map(vid => <option key={vid} value={vid}>{vulnById.get(vid)?.vuln_id} {vulnById.get(vid)?.title}</option>)}
             </select>
           )}
-          <button className="btn btn-primary btn-sm" disabled={busy || sink == null} onClick={add}
-                  title={kind === 'path' ? 'Register it as an attack path of this chain' : 'Register it as a new chain, ending on its last step'}>
-            {kind === 'path' ? 'Add attack path' : 'Add chain'}
-          </button>
+          {(kind === 'path' || kind === 'chain') && (
+            <button className="btn btn-primary btn-sm" disabled={busy || sink == null} onClick={add}
+                    title={kind === 'path' ? 'Register it as an attack path of this chain' : 'Register it as a new chain, ending on the underlined step'}>
+              {kind === 'path' ? 'Add attack path' : 'Add chain'}
+            </button>
+          )}
+          {n?.status === 'rejected' && <button className="fa-btn" disabled={busy} onClick={unreject}>Un-reject</button>}
           <button className="fa-btn fa-fp" disabled={busy} onClick={() => setMarkingFp(true)} title="Mark the report a false positive">FP</button>
           <button className="fa-btn fa-ignore" disabled={busy} onClick={ignore} title="Ignore the report (excluded from metrics; drops its matches)">Ignore</button>
         </div>
@@ -221,6 +262,14 @@ function Chains({ chains, knownVulns, findings, metrics, knownFps, appId, canEdi
     .filter(({ f }) => f && !f.is_false_positive && !f.is_ignored);
   const pendingPaths = pendingOf(PENDING_PATH);
   const pendingChains = pendingOf(PENDING_CHAIN);
+  const liveReports = findings.filter(f => isChainReport(f) && !f.is_false_positive && !f.is_ignored);
+  const pendingIds = new Set([...pendingPaths, ...pendingChains].map(({ f }) => f.id));
+  const notCounted = liveReports
+    .filter(f => !(f.matched_chain_ids || []).length && !pendingIds.has(f.id))
+    .map(f => ({ f, n: (metrics.novel_chains || []).find(x => x.finding_id === f.id) || null }));
+  const linkedFor = g => liveReports
+    .filter(f => (f.matched_chain_ids || []).some(id => g.paths.some(p => p.chain_pk === id)))
+    .map(f => ({ f, paths: (f.matched_chain_ids || []).map(id => chains.find(c => c.id === id)).filter(Boolean) }));
   const pendingFor = g => pendingPaths.filter(({ n }) => g.sink_vuln_id != null && n.sink_vuln_id === g.sink_vuln_id);
   // A chain with something pending starts open, so it isn't missed.
   const [open, setOpen] = useState(() => new Set((metrics.chain_groups || []).filter(g => pendingFor(g).length).map(g => g.key)));
@@ -376,10 +425,15 @@ function Chains({ chains, knownVulns, findings, metrics, knownFps, appId, canEdi
             {isOpen && (
               <div className="chain-row-paths">
                 {paths.map(pathRow)}
+                {linkedFor(g).map(({ f, paths: followed }) => (
+                  <ChainReportBox key={f.id} f={f} n={null} kind="linked" paths={followed} metrics={metrics}
+                                  knownVulns={knownVulns} knownFps={knownFps} appId={appId} canEdit={canEdit}
+                                  scanId={scanId} onUpdate={onUpdate} refs={refs} />
+                ))}
                 {pending.map(({ n, f }) => (
-                  <PendingChainReport key={f.id} f={f} n={n} kind="path" metrics={metrics} knownVulns={knownVulns}
-                                      knownFps={knownFps} appId={appId} canEdit={canEdit} scanId={scanId}
-                                      onUpdate={onUpdate} refs={refs} />
+                  <ChainReportBox key={f.id} f={f} n={n} kind="path" metrics={metrics} knownVulns={knownVulns}
+                                  knownFps={knownFps} appId={appId} canEdit={canEdit} scanId={scanId}
+                                  onUpdate={onUpdate} refs={refs} />
                 ))}
               </div>
             )}
@@ -393,14 +447,33 @@ function Chains({ chains, knownVulns, findings, metrics, knownFps, appId, canEdi
             <span className="text-warning">?</span>
             <div className="chain-row-name">
               <strong>New chains</strong>
-              <small>reported by this scan, not in the catalog: add, or reject as FP or Ignore</small>
+              <small>reported by this scan, ending on a step no chain ends on: add, or reject as FP or Ignore</small>
             </div>
           </div>
           <div className="chain-row-paths">
             {pendingChains.map(({ n, f }) => (
-              <PendingChainReport key={f.id} f={f} n={n} kind="chain" metrics={metrics} knownVulns={knownVulns}
-                                  knownFps={knownFps} appId={appId} canEdit={canEdit} scanId={scanId}
-                                  onUpdate={onUpdate} refs={refs} />
+              <ChainReportBox key={f.id} f={f} n={n} kind="chain" metrics={metrics} knownVulns={knownVulns}
+                              knownFps={knownFps} appId={appId} canEdit={canEdit} scanId={scanId}
+                              onUpdate={onUpdate} refs={refs} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {notCounted.length > 0 && (
+        <div className="chain-row">
+          <div className="chain-row-head" style={{ gridTemplateColumns: '22px 1fr', cursor: 'default' }}>
+            <span className="text-muted">–</span>
+            <div className="chain-row-name">
+              <strong>Reported as chains, not counted</strong>
+              <small>the scanner wrote these up as chains; they aren't scored as one (reason on each)</small>
+            </div>
+          </div>
+          <div className="chain-row-paths">
+            {notCounted.map(({ n, f }) => (
+              <ChainReportBox key={f.id} f={f} n={n} kind="other" metrics={metrics} knownVulns={knownVulns}
+                              knownFps={knownFps} appId={appId} canEdit={canEdit} scanId={scanId}
+                              onUpdate={onUpdate} refs={refs} />
             ))}
           </div>
         </div>

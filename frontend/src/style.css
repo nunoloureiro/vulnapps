@@ -1141,14 +1141,16 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .scans-coverage-missed td { padding-top: 0; color: var(--text-secondary); }
 
 
-/* Scan page pending chain reports (ScanDetail PendingChainReport). */
+/* Scan page chain reports (ScanDetail ChainReportBox). */
 .chain-report-steps { font-size: 0.8rem; line-height: 1.5; }
 .chain-step-name { color: var(--text-secondary); text-decoration: none; border-bottom: 1px dotted var(--border-hover); }
 .chain-step-name:hover { color: var(--accent); }
-.chain-step-name-sink { border-bottom: 2px solid var(--accent); }
-tr.finding-flash > td { background: var(--accent-dim); transition: background 0.3s; }
-.chain-pending { display: grid; grid-template-columns: 1fr auto; gap: 0.4rem 1rem; padding: 0.55rem 0.6rem; margin: 0.35rem 0;
-  border: 1px dashed var(--warning); border-radius: var(--radius); background: rgba(234, 179, 8, 0.04); }
-.chain-pending-main { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
-.chain-pending-title { background: none; border: none; padding: 0; color: var(--text); font-weight: 600; font-size: 0.85rem; cursor: pointer; text-align: left; }
-.chain-pending-actions { display: flex; gap: 0.4rem; align-items: flex-start; flex-wrap: wrap; justify-content: flex-end; }
+tr.finding-flash > td, .chain-report.finding-flash { background: var(--accent-dim); transition: background 0.3s; }
+.chain-report { display: grid; grid-template-columns: 1fr auto; gap: 0.4rem 1rem; padding: 0.55rem 0.6rem; margin: 0.35rem 0;
+  border: 1px solid var(--border); border-radius: var(--radius); }
+.chain-report-path, .chain-report-chain { border: 1px dashed var(--warning); background: rgba(234, 179, 8, 0.04); }
+.chain-report-linked { border-color: rgba(34, 197, 94, 0.35); }
+.chain-report-main { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+.chain-report-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.chain-report-title { background: none; border: none; padding: 0; color: var(--text); font-weight: 600; font-size: 0.85rem; cursor: pointer; text-align: left; }
+.chain-report-actions { display: flex; gap: 0.4rem; align-items: flex-start; flex-wrap: wrap; justify-content: flex-end; }
