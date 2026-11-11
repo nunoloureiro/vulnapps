@@ -1000,9 +1000,7 @@ function Findings({ findings, rows, variant = 'findings', metrics, knownVulns, c
                             </svg>
                           </button>
                         )}
-                        {variant === 'chains'
-                          ? <strong className="text-sm">{f.title || f.vuln_type}</strong>
-                          : <span>{f.vuln_type}</span>}
+                        {variant !== 'chains' && <span>{f.vuln_type}</span>}
                         {f.severity && <Badge severity={f.severity.toLowerCase()} />}
                         {/* The finding presents itself as a multi-step chain —
                             decided from its content, not from where it sat in
@@ -1015,6 +1013,11 @@ function Findings({ findings, rows, variant = 'findings', metrics, knownVulns, c
                       </div>
                       {variant !== 'chains' && f.title && f.title !== f.vuln_type && (
                         <div className="text-muted text-xs" style={{ marginTop: 2, marginLeft: hasDetails ? 18 : 0 }}>{f.title}</div>
+                      )}
+                      {variant === 'chains' && (
+                        <div style={{ marginTop: 4, marginLeft: hasDetails ? 18 : 0 }}>
+                          <strong className="text-sm">{f.title || f.vuln_type}</strong>
+                        </div>
                       )}
                       {variant === 'chains' && metrics && (
                         <div style={{ marginTop: 4, marginLeft: hasDetails ? 18 : 0 }}>
