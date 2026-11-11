@@ -125,9 +125,14 @@ function ChainReportStatus({ f, metrics, chains, knownVulns, appId, canEdit, sca
   const paths = (f.matched_chain_ids || []).map(id => chains.find(c => c.id === id)).filter(Boolean);
   const n = (metrics.novel_chains || []).find(x => x.finding_id === f.id);
   const sink = paths[0]?.sink_vuln_id ?? n?.sink_vuln_id ?? null;
+  // Run order: a matched path's own steps; else the finding's matches in the
+  // order the importer recorded them (novel_chains sorts its member ids, which
+  // loses that order), with the step it ends on last.
+  const inScope = n ? new Set(n.member_vuln_ids) : null;
+  const recorded = (f.matched_vuln_ids || []).filter(v => !inScope || inScope.has(v));
   const ids = paths.length
     ? paths[0].members
-    : [...(n?.member_vuln_ids || f.matched_vuln_ids || []).filter(v => v !== sink), ...(sink != null ? [sink] : [])];
+    : [...recorded.filter(v => v !== sink), ...(sink != null ? [sink] : [])];
   const run = async fn => { setBusy(true); try { await fn(); onUpdate(); } finally { setBusy(false); } };
   const review = body => run(() => api.post(`/scans/${scanId}/findings/${f.id}/novel-chain`, body));
   const promote = () => {
@@ -135,7 +140,7 @@ function ChainReportStatus({ f, metrics, chains, knownVulns, appId, canEdit, sca
     const best = group ? group.paths.reduce((a, b) => (b.weight > a.weight ? b : a)) : null;
     return run(() => api.post(`/scans/${scanId}/findings/${f.id}/promote-chain`, {
       title: f.title || 'Untitled chain', severity: best?.severity || 'critical',
-      member_vuln_ids: [...n.member_vuln_ids.filter(v => v !== n.sink_vuln_id), n.sink_vuln_id],
+      member_vuln_ids: ids,
       sink_vuln_id: n.sink_vuln_id,
     }));
   };
@@ -143,7 +148,11 @@ function ChainReportStatus({ f, metrics, chains, knownVulns, appId, canEdit, sca
   if (paths.length) {
     status = (
       <div className="text-success text-sm">
-        ✓ {paths.map(c => `${c.chain_id} of ${c.chain_code !== c.chain_id ? `${c.chain_code} ` : ''}${c.chain_name || c.title}`).join('; ')}
+        ✓ {Object.values(paths.reduce((acc, c) => {
+            const key = c.chain_code || c.chain_id;
+            (acc[key] = acc[key] || { code: key, name: c.chain_name || c.title, ids: [] }).ids.push(c.chain_id);
+            return acc;
+          }, {})).map(g => `${g.ids.join(' and ')}${g.code !== g.ids[0] ? ` of ${g.code}` : ''} ${g.name}`).join('; ')}
       </div>
     );
   } else if (n) {
