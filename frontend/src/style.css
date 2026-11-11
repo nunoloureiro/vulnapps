@@ -1140,3 +1140,11 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .chain-pick:hover { border-color: var(--border-hover); }
 .scans-coverage-missed td { padding-top: 0; color: var(--text-secondary); }
 
+
+/* Scan page chain reports (ScanDetail ChainReportStatus). */
+.chain-report-status { display: flex; flex-direction: column; gap: 0.2rem; }
+.chain-report-steps { font-size: 0.8rem; line-height: 1.5; }
+.chain-step-name { color: var(--text-secondary); text-decoration: none; border-bottom: 1px dotted var(--border-hover); }
+.chain-step-name:hover { color: var(--accent); }
+.chain-step-name-sink { border-bottom: 2px solid var(--accent); }
+tr.finding-flash > td { background: var(--accent-dim); transition: background 0.3s; }
