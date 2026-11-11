@@ -786,4 +786,6 @@ or revision change). Differences known so far vs the catalog's current sections:
 - TP-048 (#48 referral race) and TP-069 (#68): commodity on vulnapps -> business logic in the catalog.
 - TP-062 (#61 remember-me AES-GCM nonce) and TP-065 (#64 second-order SQLi): business_logic on vulnapps
   (my 2026-10 mapping of "Hard-with-source") -> commodity in the catalog.
-- [ ] Get TaintedPort's final list; diff every vuln's tier on 331 and 329; apply; verify per-tier counts.
+- [x] Aligned with the catalog's reviewed split (35 commodity / 29 business logic): TP-048, TP-069 -> business
+      logic; TP-062, TP-065 -> commodity (331; 329 the same minus TP-069). 331 = 35/29 = catalog; 329 = 35/28
+      (no TP-069). No revision opened; every scan's weighted score unchanged.
