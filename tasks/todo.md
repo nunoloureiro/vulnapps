@@ -811,3 +811,6 @@ or revision change). Differences known so far vs the catalog's current sections:
 - [x] Chain-reports table removed (Nuno: confusing). Pending chain reports live inside the Chains card:
       new attack paths at the end of their CH-NN block (opens by itself), new chains under "New chains";
       Add / FP / Ignore. Non-pending chain reports back in Findings under their own titles.
+- [x] No chain reports in Findings: linked ones under their chain ("reported"), pending as before,
+      the rest under "Reported as chains, not counted". TP chips inline after each title (end step
+      underlined; click a chip to set a new chain's end step; unlabelled dropdown removed).
