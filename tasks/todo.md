@@ -814,3 +814,8 @@ or revision change). Differences known so far vs the catalog's current sections:
 - [x] No chain reports in Findings: linked ones under their chain ("reported"), pending as before,
       the rest under "Reported as chains, not counted". TP chips inline after each title (end step
       underlined; click a chip to set a new chain's end step; unlabelled dropdown removed).
+- [x] CH-07.4 "Database Dump Seed + Login SQLi -> 2FA-Protected Takeover" (TP-013 -> TP-001 -> TP-028, Critical)
+      registered on 331 from scan 1408 CYA-CHAIN-01 (revision 3): 1408 467/909 -> 485/927; others +18 total.
+      Catalog addition requested from taintedport-29. Add buttons now have a severity picker.
+- [ ] Next, one at a time: CH-10 (validated: #57 -> #52, High, only if the stolen token was a customer's),
+      then the CYA-CHAIN-04 remap TP-064 -> TP-024 (validated).

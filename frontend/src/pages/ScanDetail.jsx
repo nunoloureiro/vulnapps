@@ -141,13 +141,20 @@ function ChainReportBox({ f, n, kind, paths = [], metrics, knownVulns, knownFps,
   const ids = paths.length ? paths[0].members : [...recorded.filter(v => v !== sink), ...(sink != null ? [sink] : [])];
   const run = async fn => { setBusy(true); try { await fn(); onUpdate(); } finally { setBusy(false); } };
   const setSink = vid => run(() => api.post(`/scans/${scanId}/findings/${f.id}/novel-chain`, { sink_vuln_id: vid }));
-  const add = () => {
+  // Severity of the path or chain to create: defaults to the chain's highest
+  // path (a new attack path) or the report's own severity (a new chain), and
+  // can be changed: a new path can outrank its chain's others (CH-07.4).
+  const defaultSeverity = (() => {
     const sev = String(f.severity || '').toLowerCase();
-    let severity = ['critical', 'high', 'medium', 'low'].includes(sev) ? sev : 'high';
+    let d = ['critical', 'high', 'medium', 'low'].includes(sev) ? sev : 'high';
     if (kind === 'path') {
       const group = (metrics.chain_groups || []).find(g => g.sink_vuln_id === sink);
-      severity = group ? group.paths.reduce((a, b) => (b.weight > a.weight ? b : a)).severity : severity;
+      d = group ? group.paths.reduce((a, b) => (b.weight > a.weight ? b : a)).severity : d;
     }
+    return d;
+  })();
+  const [severity, setSeverity] = useState(defaultSeverity);
+  const add = () => {
     return run(() => api.post(`/scans/${scanId}/findings/${f.id}/promote-chain`, {
       title: f.title || 'Untitled chain', severity, member_vuln_ids: ids, sink_vuln_id: sink,
       ...(kind === 'chain' ? { chain_name: f.title || 'Untitled chain' } : {}),
@@ -226,6 +233,12 @@ function ChainReportBox({ f, n, kind, paths = [], metrics, knownVulns, knownFps,
                     onChange={e => e.target.value && setSink(Number(e.target.value))}>
               <option value="">Ends on…</option>
               {n.member_vuln_ids.map(vid => <option key={vid} value={vid}>{vulnById.get(vid)?.vuln_id} {vulnById.get(vid)?.title}</option>)}
+            </select>
+          )}
+          {(kind === 'path' || kind === 'chain') && (
+            <select className="chain-pick" style={{ marginLeft: 0, maxWidth: 110 }} disabled={busy} value={severity}
+                    title="Severity of the attack path or chain to add" onChange={e => setSeverity(e.target.value)}>
+              {['critical', 'high', 'medium', 'low'].map(v => <option key={v} value={v}>{v[0].toUpperCase() + v.slice(1)}</option>)}
             </select>
           )}
           {(kind === 'path' || kind === 'chain') && (
