@@ -987,7 +987,7 @@ function Findings({ findings, rows, variant = 'findings', metrics, knownVulns, c
                   return (
                   <React.Fragment key={f.id}>
                   <tr id={`finding-${f.id}`}>
-                    <td data-label="Type">
+                    <td data-label="Type" style={variant === 'chains' ? { minWidth: 460, maxWidth: 640 } : undefined}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         {hasDetails && (
                           <button
