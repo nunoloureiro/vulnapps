@@ -1139,3 +1139,9 @@ th.sort-desc::after { content: ' ▼'; font-size: 0.625rem; }
 .chain-pick { background: var(--bg); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.5rem; font-size: 0.8rem; max-width: 170px; margin-left: 0.5rem; }
 .chain-pick:hover { border-color: var(--border-hover); }
 .scans-coverage-missed td { padding-top: 0; color: var(--text-secondary); }
+
+/* Compare radar (ScanCompare RadarPanel): quality figures under each radar. */
+.radar-figures { display: flex; justify-content: space-around; gap: 0.5rem; margin-top: 0.25rem; text-align: center; }
+.radar-figures b { display: block; font-family: var(--font-mono); font-size: 0.95rem; color: var(--text); }
+.radar-figures span { display: block; font-size: 0.7rem; color: var(--text-secondary); }
+.radar-figures small { display: block; font-size: 0.65rem; color: var(--text-muted); font-family: var(--font-mono); }

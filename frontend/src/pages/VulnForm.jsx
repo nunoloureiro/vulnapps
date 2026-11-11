@@ -20,8 +20,9 @@ const WEIGHTS = [
 // this vuln lands in, so the metric can show WHERE on the difficulty curve a
 // configuration improved.
 const TIERS = [
-  ['commodity', 'Commodity', 'a technical/input-handling defect (injection, protocol, config)'],
-  ['business_logic', 'Business logic', 'missing or client-trusted authorization/business-rule check'],
+  ['commodity', 'Commodity', 'found by a standard automated scan without knowledge of the app'],
+  ['advanced_technical', 'Advanced technical', 'a known technical class that needs manual or expert work'],
+  ['business_logic', 'Business logic', "breaks the app's own rules (prices, codes, ownership, checkout, account flows)"],
   ['chained', 'Chained', 'requires pivoting through more than one flaw'],
 ];
 

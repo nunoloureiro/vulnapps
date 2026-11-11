@@ -91,6 +91,7 @@ function ScanSelector({ scans, selected, onToggle, onCompare }) {
 
 const TIER_ROWS = [
   ['commodity', 'Commodity'],
+  ['advanced_technical', 'Advanced technical'],
   ['business_logic', 'Business logic'],
   ['chained', 'Chained'],
 ];
@@ -100,6 +101,7 @@ const TIER_ROWS = [
 // just when it happens to be non-commodity.
 const DETECTION_TIER_LABELS = {
   commodity: 'commodity',
+  advanced_technical: 'advanced technical',
   business_logic: 'business logic',
   chained: 'chained',
 };
@@ -234,7 +236,7 @@ function ComparisonView({ data, appId }) {
     // there is no filtered subset to compute a rate over — showing a
     // leftover unfiltered number here would just be wrong, not "filtered".
     const tiers = {};
-    for (const tier of ['commodity', 'business_logic']) {
+    for (const tier of ['commodity', 'advanced_technical', 'business_logic']) {
       const rows = applicable.filter(row => (row.vuln.difficulty_tier || 'commodity') === tier);
       const count = rows.length;
       const found = rows.filter(row => row.detections[scannerIdx]).length;
@@ -474,8 +476,8 @@ function ComparisonView({ data, appId }) {
                         {tierLabel}
                         {tier === 'chained' && (
                           <InfoTip>
-                            Counts chains, not a 4th bucket of the vulns above: each step of a
-                            chain is already counted under Commodity or Business logic. A chain
+                            Counts chains, not another bucket of the vulns above: each step of a
+                            chain is already counted under its own tier. A chain
                             is found when the scan reports any one of its attack paths. See the
                             Chains section below.
                           </InfoTip>
@@ -923,13 +925,16 @@ function TrendChart({ scanners, metrics, isFiltered, label }) {
 // unbounded number of scans, and overlaid same-hue-family polygons stop
 // being tellable-apart well before that — each panel's own title already
 // carries scanner identity, so no legend/categorical palette is needed.
+// The radar answers one question, "what kinds of vulnerability did this
+// scanner find": one spoke per tier, the share of that tier's catalog vulns
+// found. The quality numbers (weighted detection, precision, severity
+// accuracy) used to be spokes too, mixing two kinds of measure in one shape;
+// they're figures under each radar now (and rows in the table above).
 const RADAR_AXES = [
   ['commodity', 'Commodity', true],
+  ['advanced_technical', 'Advanced technical', true],
   ['business_logic', 'Business logic', true],
   ['chained', 'Chained', true],
-  ['severity_accuracy', 'Severity Accuracy', false],
-  ['precision_upper', 'Precision', false],
-  ['weighted_rate', 'Weighted detection', false],
 ];
 
 // The panel's own fixed drawing size (see RadarPanel) plus its card padding
@@ -971,7 +976,7 @@ function TierRadar({ scanners, metrics, isFiltered, winnerIdx, label, colWidths 
   return (
     <div className="card mb-2">
       <h3 className="card-title mb-2">
-        Coverage &amp; Quality Shape{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}
+        Detection by Category{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}
         <span className="text-muted text-sm font-mono" style={{ marginLeft: 8 }}>{label}</span>
       </h3>
       {aligned ? (
@@ -996,6 +1001,7 @@ function TierRadar({ scanners, metrics, isFiltered, winnerIdx, label, colWidths 
                   axes={axes}
                   values={axes.map(([key, , isTier]) => isTier ? (metrics[i].tiers?.[key]?.rate ?? 0) : (metrics[i][key] ?? 0))}
                   counts={axes.map(([key, , isTier]) => countsFor(metrics[i], key, isTier))}
+                  quality={metrics[i]}
                 />
               </div>
             ))}
@@ -1012,6 +1018,7 @@ function TierRadar({ scanners, metrics, isFiltered, winnerIdx, label, colWidths 
               axes={axes}
               values={axes.map(([key, , isTier]) => isTier ? (metrics[i].tiers?.[key]?.rate ?? 0) : (metrics[i][key] ?? 0))}
               counts={axes.map(([key, , isTier]) => countsFor(metrics[i], key, isTier))}
+              quality={metrics[i]}
             />
           ))}
         </div>
@@ -1020,7 +1027,7 @@ function TierRadar({ scanners, metrics, isFiltered, winnerIdx, label, colWidths 
   );
 }
 
-function RadarPanel({ name, version, isWinner, axes, values, counts }) {
+function RadarPanel({ name, version, isWinner, axes, values, counts, quality }) {
   const [hover, setHover] = useState(null);
 
   const SIZE = 260;
@@ -1052,6 +1059,9 @@ function RadarPanel({ name, version, isWinner, axes, values, counts }) {
   // above it, but the panel itself never stretches or shrinks to fill that
   // slot — it just centers within it (margin: auto).
   const RENDER_SIZE = 220;
+  // Side room for labels: two-word labels such as "Business logic" used to
+  // clip at the panel edge.
+  const PAD = 34;
 
   return (
     <div className="card" style={isWinner ? { borderColor: 'var(--accent)', borderWidth: '1.5px' } : undefined}>
@@ -1060,7 +1070,8 @@ function RadarPanel({ name, version, isWinner, axes, values, counts }) {
         <span className="font-mono text-sm" style={{ color: 'var(--text)' }}>{name}</span>
         {version && <span className="text-muted text-xs"> v{version}</span>}
       </div>
-      <svg viewBox={`0 0 ${SIZE} ${SIZE}`} width={RENDER_SIZE} height={RENDER_SIZE} style={{ display: 'block', margin: '0 auto' }}
+      <svg viewBox={`${-PAD} 0 ${SIZE + 2 * PAD} ${SIZE}`} width={RENDER_SIZE * (SIZE + 2 * PAD) / SIZE} height={RENDER_SIZE}
+        style={{ display: 'block', margin: '0 auto', maxWidth: '100%' }}
         role="img" aria-label={`${name}: ${axes.map(([, l], i) => `${l} ${Math.round(clamped[i] * 100)}%`).join(', ')}`}>
         {ringLevels.map(f => (
           <polygon key={f} points={ringPoints(f)} fill="none" stroke={GRID} strokeWidth="1" />
@@ -1083,7 +1094,18 @@ function RadarPanel({ name, version, isWinner, axes, values, counts }) {
           const [x, y] = pointAt(i, LABEL_R / R);
           const c = Math.cos(a);
           const anchor = Math.abs(c) < 0.2 ? 'middle' : (c > 0 ? 'start' : 'end');
-          return <text key={key} x={x} y={y + 3} textAnchor={anchor} fontSize="10" fill={MUTED}>{label}</text>;
+          const words = label.split(' ');
+          const lines = Math.abs(c) < 0.2 || words.length < 2 ? [label] : [words[0], words.slice(1).join(' ')];
+          const cnt = counts[i];
+          const rows = lines.length + (cnt ? 1 : 0);
+          const sin = Math.sin(a);
+          const top = sin < -0.5 ? -(rows - 1) * 11 - 2 : sin > 0.5 ? 6 : -((rows - 1) * 11) / 2;
+          return (
+            <text key={key} x={x} y={y + top + 3} textAnchor={anchor} fontSize="10" fill={MUTED}>
+              {lines.map((ln, k) => <tspan key={k} x={x} dy={k === 0 ? 0 : 11}>{ln}</tspan>)}
+              {cnt && <tspan x={x} dy={11} fontFamily="var(--font-mono)" fontSize="9.5">{cnt.found}/{cnt.count}</tspan>}
+            </text>
+          );
         })}
         {hover != null && (() => {
           const [x, y] = pointAt(hover, clamped[hover]);
@@ -1101,6 +1123,16 @@ function RadarPanel({ name, version, isWinner, axes, values, counts }) {
           );
         })()}
       </svg>
+      {quality && (
+        <div className="radar-figures">
+          <div><b>{((quality.weighted_rate ?? 0) * 100).toFixed(1)}%</b><span>Weighted detection</span>
+            {quality.weighted_total != null && <small>{quality.weighted_found}/{quality.weighted_total} pts</small>}</div>
+          <div><b>{quality.precision_lower != null && quality.precision_lower !== quality.precision_upper
+                ? `${(quality.precision_lower * 100).toFixed(0)}–${((quality.precision_upper ?? 0) * 100).toFixed(0)}%`
+                : `${((quality.precision_upper ?? 0) * 100).toFixed(0)}%`}</b><span>Precision</span></div>
+          <div><b>{((quality.severity_accuracy ?? 0) * 100).toFixed(0)}%</b><span>Severity accuracy</span></div>
+        </div>
+      )}
     </div>
   );
 }

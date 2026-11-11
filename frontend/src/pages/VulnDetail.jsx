@@ -4,6 +4,7 @@ import { api } from '../api/client';
 
 const TIER_LABELS = {
   commodity: 'Commodity',
+  advanced_technical: 'Advanced technical',
   business_logic: 'Business logic',
   chained: 'Chained',
 };

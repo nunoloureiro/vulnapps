@@ -1289,7 +1289,8 @@ def print_kpis(metrics: dict | None, source: str) -> None:
         print(f"    Severity accuracy   {pct(m.get('severity_accuracy'))}  "
               f"{C.DIM}{m.get('severity_correct', 0)} / {m.get('severity_checked', 0)} rated as the catalog does{C.RESET}")
     tiers = m.get("tiers") or {}
-    labels = {"commodity": "Commodity", "business_logic": "Business logic", "chained": "Chained"}
+    labels = {"commodity": "Commodity", "advanced_technical": "Advanced technical",
+              "business_logic": "Business logic", "chained": "Chained"}
     if tiers:
         print(f"    {C.DIM}Tier{' ' * 14}found / total   weighted{C.RESET}")
         for key, label in labels.items():

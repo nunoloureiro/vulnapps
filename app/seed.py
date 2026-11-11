@@ -6,7 +6,7 @@ decision. Severity here means CONTEXTUAL severity — what the flaw is worth in
 *this* application — which is why a directory listing that exposes the database
 and the JWT signing key belongs above its conventional Low.
 
-``difficulty_tier`` (commodity | business_logic | chained) is optional per entry
+``difficulty_tier`` (commodity | advanced_technical | business_logic | chained) is optional per entry
 and defaults to ``commodity``, matching the fallback migration 024 applied to
 existing databases. That default is a placeholder, not a measurement: it makes
 the tier matrix claim every flaw here is commodity, which is plainly false for

@@ -49,18 +49,19 @@ _SEVERITY_BY_WEIGHT = {27: "critical", 9: "high", 3: "medium", 1: "low"}
 # produces one opaque number and destroys the diagnostic: the point of the tier
 # is to see *where on the difficulty curve* a configuration improved.
 #
-# The split is about the DEFECT, not about how findable it happens to be:
-# `commodity` is a technical/input-handling flaw (injection, protocol,
-# crypto-implementation, config) — the kind of bug that exists independent of
-# what this particular application does. `business_logic` is a missing or
-# client-trusted authorization/business-rule check — BOLA/BFLA/BOPLA/mass
-# assignment all belong here even though dedicated tools exist that attempt
-# to find them, because "some tool could be built for this one shape" isn't
-# the same claim as "a signature generalizes across apps with no domain
-# input" — every one of those tools still has to be told, per endpoint,
-# what's self-scoped and what a privileged field is. That's the same
-# understanding the tier is naming, not a workaround around it.
-DIFFICULTY_TIERS = ("commodity", "business_logic", "chained")
+# The tests, as the benchmark catalog states them (2026-11-11):
+# `commodity` — found by a standard automated scan without knowledge of the
+#   application (injection, XSS, the JWT none/signature checks, directory
+#   listing, headers, TLS, CORS, CSRF, verbose errors, enumeration, rate limits).
+# `advanced_technical` — a known technical vulnerability class, but finding it
+#   needs manual or expert work (algorithm confusion, deserialization gadgets,
+#   second-order injection, crypto misuse such as nonce reuse or length
+#   extension, stateful token handling).
+# `business_logic` — breaks the application's own rules (prices, discounts,
+#   codes, ownership, checkout, account flows): recognising it as a bug needs
+#   an understanding of what the app is for.
+# `chained` — chains (and, historically, vulns mistagged as such).
+DIFFICULTY_TIERS = ("commodity", "advanced_technical", "business_logic", "chained")
 DEFAULT_TIER = "commodity"
 
 
