@@ -961,7 +961,8 @@ function Findings({ findings, rows, variant = 'findings', metrics, knownVulns, c
           <div className="table-wrap">
             <table className="cards-on-mobile">
               <thead><tr>
-                <th>Type</th><th>Location</th><th>Status</th><th>Matched Vuln</th>
+                <th style={variant === 'chains' ? { width: '48%' } : undefined}>{variant === 'chains' ? 'Chain report' : 'Type'}</th>
+                {variant !== 'chains' && <th>Location</th>}<th>Status</th><th>Matched Vuln</th>
                 <th></th>
               </tr></thead>
               <tbody>
@@ -1022,12 +1023,14 @@ function Findings({ findings, rows, variant = 'findings', metrics, knownVulns, c
                         </div>
                       )}
                     </td>
+                    {variant !== 'chains' && (
                     <td data-label="Location" className="font-mono text-sm">
                       {locationDisplay}
                       {f.parameter && (
                         <div className="text-muted text-xs" style={{ marginTop: 2 }}>param: {f.parameter}</div>
                       )}
                     </td>
+                    )}
                     <td data-label="Status">
                       {hasMatch ? <Badge severity="low">TP</Badge> :
                        f.is_false_positive ? <Badge severity="critical">FP</Badge> :
@@ -1146,7 +1149,7 @@ function Findings({ findings, rows, variant = 'findings', metrics, knownVulns, c
                   </tr>
                   {isExpanded && hasDetails && (
                     <tr>
-                      <td data-label="" colSpan="5" style={{ padding: '0.75rem 0' }}>
+                      <td data-label="" colSpan={variant === 'chains' ? 4 : 5} style={{ padding: '0.75rem 0' }}>
                         <div className="card">
                           <FindingDetails finding={f} refs={refs} />
                         </div>
