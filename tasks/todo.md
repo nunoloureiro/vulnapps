@@ -791,8 +791,8 @@ or revision change). Differences known so far vs the catalog's current sections:
       (no TP-069). No revision opened; every scan's weighted score unchanged.
 
 ## Three categories (2026-11-11)
-- [x] advanced_technical tier added (scoring, forms, scan page, Compare, importer KPIs); Compare radar is now
-      "Detection by Category" (4 tier spokes, quality figures underneath). Deployed (9858651).
+- [x] advanced_technical tier added (scoring, forms, scan page, Compare, importer KPIs); Compare radar has 7
+      spokes: 4 tiers + severity accuracy, precision, weighted detection (Nuno wants quality on the chart). 63cae98.
 - [x] Re-tiered to the catalog: 331 = 27 commodity / 14 advanced / 23 business logic (= catalog);
       329 = 27 / 14 / 22 (no TP-069). No revision, no score change. Live radar checked on both apps.
 - [ ] Optional: re-tier the 8 older TaintedPort apps so their tier rows compare with 329/331.
