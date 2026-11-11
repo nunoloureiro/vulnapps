@@ -808,3 +808,6 @@ or revision change). Differences known so far vs the catalog's current sections:
       review buttons; scanner ids (CYA-004) in report text link to that finding. Deployed (7605812..).
 - [ ] Pending Nuno: CH-07.4 (#13 -> #1 -> #28 Critical vs #13 -> #28 High), CH-10 severity, and the
       CYA-CHAIN-04 TP-064 -> TP-024 fix (1408: 467 -> 458, 39 -> 38 TP).
+- [x] Chain-reports table removed (Nuno: confusing). Pending chain reports live inside the Chains card:
+      new attack paths at the end of their CH-NN block (opens by itself), new chains under "New chains";
+      Add / FP / Ignore. Non-pending chain reports back in Findings under their own titles.
