@@ -789,3 +789,11 @@ or revision change). Differences known so far vs the catalog's current sections:
 - [x] Aligned with the catalog's reviewed split (35 commodity / 29 business logic): TP-048, TP-069 -> business
       logic; TP-062, TP-065 -> commodity (331; 329 the same minus TP-069). 331 = 35/29 = catalog; 329 = 35/28
       (no TP-069). No revision opened; every scan's weighted score unchanged.
+
+## Three categories (2026-11-11)
+- [x] advanced_technical tier added (scoring, forms, scan page, Compare, importer KPIs); Compare radar is now
+      "Detection by Category" (4 tier spokes, quality figures underneath). Deployed (9858651).
+- [x] Re-tiered to the catalog: 331 = 27 commodity / 14 advanced / 23 business logic (= catalog);
+      329 = 27 / 14 / 22 (no TP-069). No revision, no score change. Live radar checked on both apps.
+- [ ] Optional: re-tier the 8 older TaintedPort apps so their tier rows compare with 329/331.
+- [ ] Later (agreed with taintedport-29): one default ZAP/Burp scan of 1.50 to calibrate the Commodity list.
