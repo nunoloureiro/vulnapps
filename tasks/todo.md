@@ -772,6 +772,8 @@ it reconciles with the new app; 329 stays a historical v1.40 app that deliberate
 - [ ] Reconcile the new app with the catalog: 63 vulns, 7 decoys, 9 chains / 16 attack paths.
 - [x] Voucher replay (scan 1355 CYA-015): stays Ignored (Nuno).
 - [x] Scan on 329 from run 20261109-0107 (cyberAgent 1.8): before the /files/ narrowing, stays on 329 (Nuno).
-- [ ] Open: no scan on 331 exercised the cashout race, so TP-066 being in scope there assumes the busy timeout
-      shipped with the voucher fix and the /files/ narrowing. Nuno to confirm.
+- [x] Busy timeout confirmed live on 331's build: scan 1408 (cyberAgent 1.27, 2026-11-11) raced POST /orders
+      with 10 parallel requests and got 2 x 201 + 8 x 400, no 'database is locked' 500s. TP-066 in scope is right.
+- [ ] Scan 1408 CYA-026 (checkout race: 2 orders from one cart, credit to -406, max_uses=1 discount used twice)
+      pending: verification + race audit + catalog draft requested from taintedport-c3. Likely 331-only.
 - [x] Importer: a credited attack path now credits each of its steps (TP-028 was dropped as "covered").
