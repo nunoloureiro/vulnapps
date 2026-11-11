@@ -925,16 +925,16 @@ function TrendChart({ scanners, metrics, isFiltered, label }) {
 // unbounded number of scans, and overlaid same-hue-family polygons stop
 // being tellable-apart well before that — each panel's own title already
 // carries scanner identity, so no legend/categorical palette is needed.
-// The radar answers one question, "what kinds of vulnerability did this
-// scanner find": one spoke per tier, the share of that tier's catalog vulns
-// found. The quality numbers (weighted detection, precision, severity
-// accuracy) used to be spokes too, mixing two kinds of measure in one shape;
-// they're figures under each radar now (and rows in the table above).
+// One spoke per tier (the share of that tier's catalog vulns found), then
+// the three quality measures, all 0 at the centre to 100% at the edge.
 const RADAR_AXES = [
   ['commodity', 'Commodity', true],
   ['advanced_technical', 'Advanced technical', true],
   ['business_logic', 'Business logic', true],
   ['chained', 'Chained', true],
+  ['severity_accuracy', 'Severity accuracy', false],
+  ['precision_upper', 'Precision', false],
+  ['weighted_rate', 'Weighted detection', false],
 ];
 
 // The panel's own fixed drawing size (see RadarPanel) plus its card padding
@@ -976,7 +976,7 @@ function TierRadar({ scanners, metrics, isFiltered, winnerIdx, label, colWidths 
   return (
     <div className="card mb-2">
       <h3 className="card-title mb-2">
-        Detection by Category{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}
+        Coverage &amp; Quality Shape{isFiltered ? <span className="text-muted text-sm"> (filtered)</span> : ''}
         <span className="text-muted text-sm font-mono" style={{ marginLeft: 8 }}>{label}</span>
       </h3>
       {aligned ? (
@@ -1001,7 +1001,6 @@ function TierRadar({ scanners, metrics, isFiltered, winnerIdx, label, colWidths 
                   axes={axes}
                   values={axes.map(([key, , isTier]) => isTier ? (metrics[i].tiers?.[key]?.rate ?? 0) : (metrics[i][key] ?? 0))}
                   counts={axes.map(([key, , isTier]) => countsFor(metrics[i], key, isTier))}
-                  quality={metrics[i]}
                 />
               </div>
             ))}
@@ -1018,7 +1017,6 @@ function TierRadar({ scanners, metrics, isFiltered, winnerIdx, label, colWidths 
               axes={axes}
               values={axes.map(([key, , isTier]) => isTier ? (metrics[i].tiers?.[key]?.rate ?? 0) : (metrics[i][key] ?? 0))}
               counts={axes.map(([key, , isTier]) => countsFor(metrics[i], key, isTier))}
-              quality={metrics[i]}
             />
           ))}
         </div>
@@ -1027,7 +1025,7 @@ function TierRadar({ scanners, metrics, isFiltered, winnerIdx, label, colWidths 
   );
 }
 
-function RadarPanel({ name, version, isWinner, axes, values, counts, quality }) {
+function RadarPanel({ name, version, isWinner, axes, values, counts }) {
   const [hover, setHover] = useState(null);
 
   const SIZE = 260;
@@ -1123,16 +1121,6 @@ function RadarPanel({ name, version, isWinner, axes, values, counts, quality }) 
           );
         })()}
       </svg>
-      {quality && (
-        <div className="radar-figures">
-          <div><b>{((quality.weighted_rate ?? 0) * 100).toFixed(1)}%</b><span>Weighted detection</span>
-            {quality.weighted_total != null && <small>{quality.weighted_found}/{quality.weighted_total} pts</small>}</div>
-          <div><b>{quality.precision_lower != null && quality.precision_lower !== quality.precision_upper
-                ? `${(quality.precision_lower * 100).toFixed(0)}–${((quality.precision_upper ?? 0) * 100).toFixed(0)}%`
-                : `${((quality.precision_upper ?? 0) * 100).toFixed(0)}%`}</b><span>Precision</span></div>
-          <div><b>{((quality.severity_accuracy ?? 0) * 100).toFixed(0)}%</b><span>Severity accuracy</span></div>
-        </div>
-      )}
     </div>
   );
 }
