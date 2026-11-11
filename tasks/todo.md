@@ -803,3 +803,8 @@ or revision change). Differences known so far vs the catalog's current sections:
       summary counts reports by outcome. Deployed (ded08ac).
 - [ ] taintedport-29 reviewing all 8 reports (new attack path / new chain / not a chain). Suspected mis-map:
       CYA-CHAIN-04 credits TP-064 (invoice IDOR); the exposure step looks like TP-024.
+- [x] Scan page order: Findings, Chains (credit card + Chain reports table), Missed, False Positives.
+      Chain reports: own title, steps as linked vuln names in run order (sink underlined), outcome and
+      review buttons; scanner ids (CYA-004) in report text link to that finding. Deployed (7605812..).
+- [ ] Pending Nuno: CH-07.4 (#13 -> #1 -> #28 Critical vs #13 -> #28 High), CH-10 severity, and the
+      CYA-CHAIN-04 TP-064 -> TP-024 fix (1408: 467 -> 458, 39 -> 38 TP).
