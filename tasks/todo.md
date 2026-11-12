@@ -893,3 +893,11 @@ COS chains as chain reports.
       chain step. Added to the mapping prompt as NOT-a-chain shape (3), generic wording; AppBuilder updated.
 - [ ] Remaining with the user: re-check CH-02 (TP-023 may be a stack-on on TP-011/TP-012).
 - State 1454: 622/942, 48 TP, nothing pending.
+
+## CH-02 retired; TP-011/TP-012 Critical — 2026-11-12
+- [x] New chains.invalidate_chain + POST /api/apps/{id}/chains/{pk}/invalidate (reason chain_invalidated);
+      delete refused for matched paths; app page lists retired paths; importer hides them from the mapper. Test.
+- [x] (user agreed, conditional on taintedport-cc approval, which came) CH-02.1/CH-02.2 retired on 331 (rev 6, 7)
+      and 329 (rev 22, 23); TP-011/TP-012 High -> Critical (two weight-change revisions per app); TP-023 text =
+      catalog #23 (inert alone, not a chain step). Net: scans that found both forging bugs +9 against max +9
+      (942 -> 951 on 331, 897 -> 906 on 329); 1355 found one: 370 -> 361.
