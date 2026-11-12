@@ -626,7 +626,7 @@ async def create_revision(request: Request, app_id: int):
     """Open a new ground-truth revision.
 
     Body: ``{"reason": "weight_change" | "corpus_change" | "new_prior_vuln" |
-    "vuln_invalidated", "notes": "..."}``. Weight changes require this: weights
+    "vuln_invalidated" | "chain_invalidated", "notes": "..."}``. Weight changes require this: weights
     are immutable within a revision, so changing one without a new revision
     would make two numbers incomparable while looking identical.
     """

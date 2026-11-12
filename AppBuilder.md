@@ -771,7 +771,8 @@ release versions.
 | GET | `/api/apps/{id}/chains` | None / read | List chains, each with resolved ordered `members` |
 | POST | `/api/apps/{id}/chains` | App write / full | Create. See **Exploit chains** above for the full field list and modeling rule |
 | PUT | `/api/apps/{id}/chains/{pk}` | App write / full | Full update — title/description/weight/members |
-| DELETE | `/api/apps/{id}/chains/{pk}` | App write / full | Hard delete |
+| POST | `/api/apps/{id}/chains/{pk}/invalidate` | App write / full | Retire an attack path at a new revision (reason `chain_invalidated`). Body (optional): `{notes}`. Earlier revisions keep it; scans scored at the new revision lose its credit but keep their vuln matches. 409 if already retired |
+| DELETE | `/api/apps/{id}/chains/{pk}` | App write / full | Hard delete, only if no finding is matched to it (else 409: invalidate instead) |
 | GET | `/api/apps/{id}/known-fps` | None / read (app visible) | List known false positives with `finding_count` |
 | POST | `/api/apps/{id}/known-fps` | App write / full | Create: `{fp_id, source, title, vuln_type, http_method, url, parameter, filename, description, penalty_weight}`. `fp_id` required for decoys; reviewed ones default to the next `FP-NNN` |
 | PUT | `/api/apps/{id}/known-fps/{pk}` | App write / full | Update (incl. rename); rewrites linked findings' `fp_group`/`fp_impact_weight` |
@@ -1312,7 +1313,7 @@ is attacker work rather than a flaw (cracking a hash the chain leaked, computing
 from a stolen seed, self-registering) does not disqualify a chain; it is simply not a member,
 and how likely it is to succeed (e.g. a weak password policy) informs the chain's severity.
 No chain may depend on the app's deliberately published test credentials.
-*A step that only prolongs or entrenches access the attacker already has* is not a chain step either (settled 2026-11-12 with the benchmark owner, catalog rule (c)): the session surviving a password change, replacing the owner's second factor, overwriting the owner's password or email. It is credited as an ordinary vuln and the chain is judged without it, so one flaw plus such a stack-on is not a chain. A step needed to get INTO the account (disabling 2FA so the login succeeds, computing a code from a leaked seed) is a chain step. The importer's mapping prompt carries the same rule, as shape (3).
+*A step that only prolongs or entrenches access the attacker already has* is not a chain step either (settled 2026-11-12 with the benchmark owner, catalog rule (c)): the session surviving a password change, replacing the owner's second factor, overwriting the owner's password or email. It is credited as an ordinary vuln and the chain is judged without it, so one flaw plus such a stack-on is not a chain. A step needed to get INTO the account (disabling 2FA so the login succeeds, computing a code from a leaked seed) is a chain step. The importer's mapping prompt carries the same rule, as shape (3). A path ruled not to be a chain after scans were scored is *invalidated*, not deleted (`chains.invalidate_chain`, mirroring `invalidate_vuln`): the app page lists it under "Retired" and the importer no longer offers it to the mapper. TaintedPort CH-02 (forged JWT → admin claim) was retired this way on 2026-11-12: a forging bug reaches admin by naming the admin's user_id, so the claim-trust step is a stack-on, and TP-011/TP-012 were raised to Critical to carry that impact themselves.
 
 **Severity (migration 041).** `chains.severity` is what a curator sets; `impact_weight`
 derives from it 1:1 exactly as for vulns (critical 27, high 9, medium 3, low 1). Before 041
@@ -1391,7 +1392,7 @@ for `chains`/`chain_members`:
 | GET | `/api/apps/{id}/chains` | List chains with resolved, ordered `members` (`vuln_code`, `vuln_title`, `step_order`) |
 | POST | `/api/apps/{id}/chains` | Create. Body: `chain_id` (auto-generated `CHAIN-NNN` if omitted), `title`, `description`, `impact_weight` (required, 1\|3\|9\|27), `member_vuln_ids` (≥2, must belong to this app). Opens a `new_prior_vuln` revision, same as adding a vuln |
 | PUT | `/api/apps/{id}/chains/{pk}` | Full update — title/description/weight/members. A weight change opens a `weight_change` revision |
-| DELETE | `/api/apps/{id}/chains/{pk}` | Hard delete |
+| DELETE | `/api/apps/{id}/chains/{pk}` | Hard delete (unmatched paths only; else invalidate) |
 
 All three require app write access + `full` API scope, and log to `audit_log`
 (`entity_type='chain'`, actions `chain_created`/`chain_updated`/`chain_deleted`) exactly like

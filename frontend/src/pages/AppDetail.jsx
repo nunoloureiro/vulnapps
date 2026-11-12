@@ -475,8 +475,12 @@ export default function AppDetail() {
 // credited once per scan. A path with no sink is a chain of its own.
 const SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
 
-function Chains({ appId, chains, vulns, canEdit, onChange }) {
+function Chains({ appId, chains: allChains, vulns, canEdit, onChange }) {
   const [editing, setEditing] = useState(null); // path id, 'new', or null
+  // A retired path (invalidated at a revision) earns nothing from then on, so
+  // it leaves the catalog view; it is named below the list, not silently gone.
+  const chains = allChains.filter(c => c.invalidated_at_revision == null);
+  const retired = allChains.filter(c => c.invalidated_at_revision != null);
 
   const groups = [];
   const byKey = new Map();
@@ -569,6 +573,16 @@ function Chains({ appId, chains, vulns, canEdit, onChange }) {
             ))}
           </div>
         ))}
+        {retired.length > 0 && (
+          <p className="text-muted text-xs mt-2">
+            Retired (no credit from the revision shown; earlier scorings unchanged):{' '}
+            {retired.map(c => (
+              <span key={c.id} className="font-mono" title={c.title}>
+                {c.chain_id} @rev{c.invalidated_at_revision}{' '}
+              </span>
+            ))}
+          </p>
+        )}
       </div>
     </>
   );
@@ -664,6 +678,7 @@ const REVISION_REASONS = {
   new_prior_vuln: 'vuln added',
   weight_change: 'weight changed',
   vuln_invalidated: 'vuln invalidated',
+  chain_invalidated: 'chain retired',
   corpus_change: 'corpus changed',
 };
 

@@ -372,3 +372,46 @@ async def test_chain_and_attack_path_ids(db):
     await chains_service.delete_chain(db, ADMIN, app_id, p3["id"])
     cursor = await db.execute("SELECT code FROM chain_defs WHERE app_id = ?", (app_id,))
     assert [r["code"] for r in await cursor.fetchall()] == ["CH-01"]
+
+
+async def test_invalidate_chain_retires_credit_but_keeps_history(db):
+    """A path ruled not to be a chain after scans were scored (TaintedPort
+    CH-02, 2026-11-12) is invalidated, not deleted: a revision opens, scans
+    scored at it lose the chain credit but keep their vuln matches, and the
+    earlier revision still reproduces the old numbers."""
+    app_id, (a, b, c) = await setup(db)
+    path = await chains_service.create_chain(db, ADMIN, app_id, {
+        "title": "A to C", "severity": "critical", "member_vuln_ids": [a, c], "sink_vuln_id": c,
+    })
+    scan_id = await scans_service.submit_scan(
+        db, ADMIN, app_id, scanner_name="S", scan_date="2026-11-05", is_public=0,
+        notes=None, cost=None, tokens=None, duration=None,
+        findings_data=[{"vuln_type": "Chain", "title": "A then C", "is_chain": True}],
+    )
+    cursor = await db.execute("SELECT id FROM scan_findings WHERE scan_id = ?", (scan_id,))
+    fid = (await cursor.fetchone())["id"]
+    await scans_service.match_finding(db, ADMIN, scan_id, fid, [a, c], [path["id"]])
+
+    async def metrics(rev):
+        cursor = await db.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
+        return (await scoring_service.score(db, dict(await cursor.fetchone()), rev))["metrics"]
+
+    before_rev = await scoring_service.latest_revision(db, app_id)
+    before = await metrics(before_rev)
+    assert before["tiers"]["chained"]["found"] == 1
+
+    with pytest.raises(ValueError, match="cannot be deleted"):
+        await chains_service.delete_chain(db, ADMIN, app_id, path["id"])
+
+    result = await chains_service.invalidate_chain(db, ADMIN, app_id, path["id"], "not a chain")
+    rev = await scoring_service.latest_revision(db, app_id)
+    assert result["invalidated_at_revision"] == rev > before_rev
+    after = await metrics(rev)
+    assert after["tiers"]["chained"]["count"] == 0, "the retired path is out of scope"
+    assert after["tp"] == before["tp"], "its finding keeps the vuln matches"
+    assert after["weighted_total"] == before["weighted_total"] - 27
+    assert after["weighted_found"] == before["weighted_found"] - 27
+    assert (await metrics(before_rev))["weighted_found"] == before["weighted_found"], \
+        "the earlier revision still reproduces the old score"
+    with pytest.raises(ValueError, match="already invalidated"):
+        await chains_service.invalidate_chain(db, ADMIN, app_id, path["id"])

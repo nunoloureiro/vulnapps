@@ -78,6 +78,14 @@ async def clear(db, finding_id: int) -> None:
     await db.execute("DELETE FROM finding_matches WHERE finding_id = ?", (finding_id,))
 
 
+async def count_findings_for_chain(db, chain_id: int) -> int:
+    """How many findings are matched to attack path *chain_id* (the chain-delete guard)."""
+    cursor = await db.execute(
+        "SELECT COUNT(*) AS c FROM finding_matches WHERE chain_id = ?", (chain_id,)
+    )
+    return (await cursor.fetchone())["c"]
+
+
 async def count_findings_for_vuln(db, vuln_id: int) -> int:
     """How many findings are matched to *vuln_id* (the vuln-delete guard)."""
     cursor = await db.execute(

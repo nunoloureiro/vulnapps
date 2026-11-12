@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from fastapi import APIRouter, Request, HTTPException
 from app.database import get_connection
 from app.dependencies import require_scope
@@ -69,6 +70,40 @@ async def update_chain(request: Request, app_id: int, chain_pk: int):
     return {"chain": chain}
 
 
+@router.post("/{app_id}/chains/{chain_pk}/invalidate")
+async def invalidate_chain(request: Request, app_id: int, chain_pk: int):
+    """Retire an attack path from the next revision onward.
+
+    Body (optional): ``{"notes": "why"}``. Historical scorings keep the path in
+    scope and stay reproducible; the current revision drops its credit.
+    """
+    user = request.state.user
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    require_scope(user, "full")
+
+    raw = await request.body()
+    notes = None
+    if raw:
+        try:
+            notes = (json.loads(raw) or {}).get("notes")
+        except (ValueError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    db = await get_connection()
+    try:
+        result = await chains_service.invalidate_chain(db, user, app_id, chain_pk, notes)
+    except ValueError as e:
+        msg = str(e)
+        status = 409 if "already invalidated" in msg else 404
+        raise HTTPException(status_code=status, detail=msg)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    finally:
+        await db.close()
+    return result
+
+
 @router.delete("/{app_id}/chains/{chain_pk}")
 async def delete_chain(request: Request, app_id: int, chain_pk: int):
     user = request.state.user
@@ -80,7 +115,7 @@ async def delete_chain(request: Request, app_id: int, chain_pk: int):
     try:
         await chains_service.delete_chain(db, user, app_id, chain_pk)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=409 if "cannot be deleted" in str(e) else 404, detail=str(e))
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     finally:

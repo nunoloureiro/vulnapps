@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from app import scoring
 from app.services import audit as audit_service
+from app.services import finding_matches
 from app.services import scoring as scoring_service
 from app.services.vulns import _get_visible_app, _require_app_write
 
@@ -391,10 +392,18 @@ async def update_chain(db, user, app_id: int, chain_pk: int, chain_data: dict) -
     return next(c for c in chains if c["id"] == chain_pk)
 
 
-async def delete_chain(db, user, app_id: int, chain_pk: int) -> None:
-    """Delete a chain and its members.
+async def invalidate_chain(db, user, app_id: int, chain_pk: int, notes=None) -> dict:
+    """Retire an attack path from ground truth without destroying history.
 
-    Raises ``ValueError`` if app/chain not found.
+    The chain twin of ``vulns.invalidate_vuln``: opens a revision (reason
+    ``chain_invalidated``) and stamps ``invalidated_at_revision`` with it, so
+    the scope rule keeps the path for every earlier revision -- scorings
+    computed back then stay reproducible -- while every scan scored at this
+    revision or later stops getting credit for it. Its findings keep their vuln
+    matches. For a path ruled not to be a chain after scans were scored
+    (TaintedPort CH-02, 2026-11-12), or one a code change removed.
+
+    Raises ``ValueError`` if app/chain not found or already invalidated.
     Raises ``PermissionError`` if access is denied.
     """
     app = await _get_visible_app(db, user, app_id)
@@ -406,6 +415,55 @@ async def delete_chain(db, user, app_id: int, chain_pk: int) -> None:
     chain = await cursor.fetchone()
     if not chain:
         raise ValueError("Chain not found")
+    if chain["invalidated_at_revision"] is not None:
+        raise ValueError("Chain is already invalidated")
+
+    revision, _created = await scoring_service.revision_for_corpus_change(
+        db, app_id, "chain_invalidated",
+        notes=notes or f"Invalidated {chain['chain_id']}: {chain['title']}",
+        user=user,
+    )
+    await db.execute(
+        "UPDATE chains SET invalidated_at_revision = ? WHERE id = ?", (revision, chain_pk),
+    )
+    await audit_service.record_audit_event(
+        db, entity_type="chain", action="chain_invalidated", actor=user,
+        message=(
+            f"{user['name']} invalidated {chain['chain_id']}: \"{chain['title']}\" "
+            f"(opened ground-truth revision {revision})"
+        ),
+        entity_id=chain_pk, app_id=app_id,
+    )
+    await db.commit()
+    return {"ok": True, "chain_pk": chain_pk, "invalidated_at_revision": revision}
+
+
+async def delete_chain(db, user, app_id: int, chain_pk: int) -> None:
+    """Delete an attack path and its members.
+
+    Only for ground truth that was never measured, like ``delete_vuln``: a path
+    some scan finding is matched to cannot be deleted -- that would rewrite
+    history and orphan the finding; invalidate it instead
+    (:func:`invalidate_chain`).
+
+    Raises ``ValueError`` if app/chain not found or the path has been matched.
+    Raises ``PermissionError`` if access is denied.
+    """
+    app = await _get_visible_app(db, user, app_id)
+    await _require_app_write(db, user, app)
+
+    cursor = await db.execute(
+        "SELECT * FROM chains WHERE id = ? AND app_id = ?", (chain_pk, app_id)
+    )
+    chain = await cursor.fetchone()
+    if not chain:
+        raise ValueError("Chain not found")
+    matched = await finding_matches.count_findings_for_chain(db, chain_pk)
+    if matched:
+        raise ValueError(
+            f"This attack path is matched by {matched} scan finding(s) and cannot be "
+            "deleted. Invalidate it instead so historical scorings stay reproducible."
+        )
 
     await db.execute("DELETE FROM chains WHERE id = ?", (chain_pk,))
     await _drop_empty_chain_defs(db, app_id)

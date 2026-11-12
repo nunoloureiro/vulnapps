@@ -19,6 +19,7 @@ VALID_REASONS = (
     "new_prior_vuln",     # a vuln was added (promoted or authored)
     "weight_change",      # an impact_weight changed — weights are immutable within a revision
     "vuln_invalidated",   # a vuln was retired from ground truth
+    "chain_invalidated",  # an attack path was retired from ground truth
     "corpus_change",      # anything else that changes the corpus
 )
 

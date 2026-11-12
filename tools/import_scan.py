@@ -2910,7 +2910,11 @@ def main():
     # Get known vulnerabilities and any registered exploit chains
     vulns = client.get_vulns(args.app_id)
     print(f"  {colored('✓', 'GREEN')} Known vulns: {colored(str(len(vulns)), 'BOLD')}")
-    chains = client.get_chains(args.app_id) if vulns else []
+    # A retired attack path (invalidated at a revision) earns nothing, so the
+    # mapper must not see it: offered one, it would match a report to a path
+    # that no longer scores instead of judging it on its own.
+    chains = [c for c in (client.get_chains(args.app_id) if vulns else [])
+              if not c.get("invalidated_at_revision")]
     if chains:
         print(f"  {colored('✓', 'GREEN')} Known chains: {colored(str(len(chains)), 'BOLD')}")
 
