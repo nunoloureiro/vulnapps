@@ -868,3 +868,7 @@ COS chains as chain reports.
       (TP-017 -> TP-024) -- all stop short of a catalog path. Verdict also applies to 1412's rejected analogues.
 - State: 540/936, 40 TP, 1 FP, nothing pending.
 - [ ] TP-008 is HIGH in the catalog (summary row #8), MEDIUM on vulnapps 329 and 331: align (user's call).
+- [x] (user-confirmed) TP-069 criterion on 331 now includes "or more units sold than were in stock, by concurrent
+      checkouts" (stock floors at 0: proof is accepted quantities > starting stock), matching catalog #68.
+- [x] (user-confirmed) TP-008 Medium -> High on 329 and 331 (catalog #8): weight 3 -> 9, max 936 -> 942 (331),
+      891 -> 897 (329). +6 on scans that found it: 1358, 1408, 1409, 1412, 1413.
