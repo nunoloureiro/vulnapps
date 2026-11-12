@@ -879,6 +879,40 @@ def cyberagent_findings(path) -> list[dict] | None:
 
 _COS_EXCHANGE_CAP = 2000  # chars per request/response: enough to show the proof, not a page dump
 
+# vuln_type is the finding's heading in the UI, so it must read as a vuln class
+# ("SQLi", "IDOR"), never a bare CWE number nobody knows by heart -- the same
+# rule SYSTEM_PROMPT_EXTRACT gives the model. A report that names its class
+# only by CWE (COS) is translated here; an unlisted CWE falls back to the
+# finding's own title. The CWE itself stays in the description.
+CWE_NAMES = {
+    "CWE-20": "Input Validation", "CWE-22": "Path Traversal", "CWE-78": "Command Injection",
+    "CWE-79": "XSS", "CWE-89": "SQLi", "CWE-94": "Code Injection", "CWE-117": "Log Injection",
+    "CWE-200": "Information Disclosure", "CWE-204": "Account Enumeration",
+    "CWE-209": "Verbose Errors", "CWE-215": "Debug Information Exposure",
+    "CWE-269": "Privilege Escalation", "CWE-284": "Broken Access Control",
+    "CWE-285": "Broken Authorization", "CWE-287": "Broken Authentication",
+    "CWE-306": "Missing Authentication", "CWE-307": "Brute Force",
+    "CWE-312": "Sensitive Data Exposure", "CWE-319": "Cleartext Transmission",
+    "CWE-326": "Weak TLS", "CWE-327": "Weak Cryptography", "CWE-330": "Weak Randomness",
+    "CWE-345": "Signature Bypass", "CWE-347": "JWT Signature Bypass", "CWE-352": "CSRF",
+    "CWE-362": "Race Condition", "CWE-384": "Session Fixation", "CWE-400": "Resource Exhaustion",
+    "CWE-434": "Unrestricted File Upload", "CWE-472": "Parameter Tampering",
+    "CWE-489": "Debug Endpoint Exposure", "CWE-497": "Version Disclosure",
+    "CWE-502": "Insecure Deserialization", "CWE-522": "Credential Exposure",
+    "CWE-601": "Open Redirect", "CWE-611": "XXE", "CWE-613": "Session Not Invalidated",
+    "CWE-639": "IDOR", "CWE-640": "Weak Password Recovery", "CWE-693": "Missing Security Headers",
+    "CWE-770": "Missing Rate Limiting", "CWE-798": "Hardcoded Credentials",
+    "CWE-799": "Missing Usage Limit", "CWE-840": "Business Logic", "CWE-862": "Missing Authorization",
+    "CWE-863": "Broken Authorization", "CWE-915": "Mass Assignment", "CWE-918": "SSRF",
+    "CWE-942": "CORS", "CWE-943": "NoSQL Injection", "CWE-1021": "Clickjacking",
+    "CWE-1336": "SSTI", "CWE-1392": "Default Credentials",
+}
+
+
+def _type_from_cwe(cwe, title) -> str:
+    key = str(cwe or "").strip().upper()
+    return CWE_NAMES.get(key) or str(title or "")
+
 
 def cos_findings(path) -> list[dict] | None:
     """Findings straight from a COS ``penetration_test_report.json``
@@ -892,7 +926,7 @@ def cos_findings(path) -> list[dict] | None:
     only maps.
 
     A vulnerability: "vuln-NNNN: title" (chain steps reference that id),
-    severity, cwe -> vuln_type, endpoint/method, description + impact +
+    severity, cwe -> a readable vuln_type (CWE_NAMES), endpoint/method, description + impact +
     technical analysis + CWE, PoC description + each HTTP exchange (request,
     response, analysis; capped) -> poc, remediation steps. The PoC/verify
     scripts and diagrams are left out: the exchanges are the evidence. A chain
@@ -933,7 +967,7 @@ def cos_findings(path) -> list[dict] | None:
     out = []
     for v in data["vulnerabilities"]:
         out.append({
-            "vuln_type": str(v.get("cwe") or ""),
+            "vuln_type": _type_from_cwe(v.get("cwe"), v.get("title")),
             "title": f"{v.get('report_id', '')}: {v.get('title', '')}".strip(": "),
             "http_method": str(v.get("method") or ""),
             "url": str(v.get("endpoint") or ""),

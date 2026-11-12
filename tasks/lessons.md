@@ -278,3 +278,13 @@ payment transaction. That takes "brains": business logic.
 is for. Business logic = recognising it as a bug requires the app's own rules (money, codes,
 ownership, checkout, payments). Decide the tier from that test for each vuln; never copy it from
 a similar-looking one, and follow the catalog's section when it has one.
+
+## A converter that bypasses the extraction prompt must re-apply its rules
+User, 2026-11-12: "I don't want CWE as the title of vulns ... we're back to square 1." The extraction
+prompt says vuln_type is a short readable class ("SQLi", "IDOR"), and that had fixed this once. The new
+direct COS converter (cos_findings) skipped the model, so the prompt's rule never ran, and I copied the
+report's `cwe` field into vuln_type, which is the finding's heading on the scan page.
+- Rule: when a deterministic converter replaces model extraction, go through SYSTEM_PROMPT_EXTRACT's field
+  rules one by one and implement each (vuln_type readable, never a CWE number; scan_date = start; etc.).
+- Rule: before calling an import done, look at the scan page as the user will (first rows of Findings),
+  not only at counts. A count check can't catch a bad heading.

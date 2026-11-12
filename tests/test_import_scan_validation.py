@@ -979,7 +979,8 @@ def test_cos_report_is_read_without_extraction(tmp_path):
              "http_exchanges": [{"step_label": "1. forged", "request": "GET /auth/me",
                                  "response": "HTTP/1.1 200 OK\n" + "x" * 5000, "analysis": "accepted"}],
              "remediation_steps": ["Verify signatures."]},
-            {"report_id": "vuln-0002", "title": "hash leak", "severity": "high", "endpoint": "/admin/t"}],
+            {"report_id": "vuln-0002", "title": "hash leak", "severity": "high", "endpoint": "/admin/t",
+             "cwe": "CWE-99999"}],
         "vulnerability_chains": [
             {"chain_id": "chain-0001", "title": "forge + leak", "severity": "critical",
              "description": "Together they ...", "impact": "All hashes.",
@@ -989,9 +990,14 @@ def test_cos_report_is_read_without_extraction(tmp_path):
     path.write_text(json.dumps(report))
     out = import_scan.cos_findings(path)
     assert len(out) == 3
-    f, _, chain = out
+    f, unknown_cwe, chain = out
     assert (f["title"], f["severity"], f["url"], f["http_method"]) == (
         "vuln-0001: alg=none accepted", "critical", "/auth/me", "GET")
+    # The type is the finding's UI heading: a readable class, never a CWE number.
+    assert f["vuln_type"] == "JWT Signature Bypass" and "CWE-347" in f["description"]
+    assert unknown_cwe["vuln_type"] == "hash leak", "an unlisted CWE falls back to the title"
+    assert all(not k.startswith("CWE") or v and not v.startswith("CWE")
+               for k, v in import_scan.CWE_NAMES.items())
     assert "Admin takeover." in f["description"] and "HTTP/1.1 200 OK" in f["poc"] and "accepted" in f["poc"]
     assert "[... truncated]" in f["poc"] and "import requests" not in f["poc"]
     assert f["remediation"] == "- Verify signatures."
