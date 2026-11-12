@@ -824,3 +824,11 @@ or revision change). Differences known so far vs the catalog's current sections:
 - [x] 1408 CYA-CHAIN-02 rejected as a chain (novel-chain rejected=true), keeping its TP-018/TP-008
       matches as plain findings: score unchanged 485/936, 38 TP.
 - [ ] 1408 CYA-CHAIN-06 still pending (judged not a chain; Ignore costs nothing).
+
+## Scan 1409 (cyberAgent 1.30 on 331) pending review — 2026-11-12
+- [x] CYA-026 (exhausted discount code accepted at checkout) matched to TP-021: checkout never looks the
+      code up, any non-empty code gives discount_percent (default 10%); its fixed-10 code took 10% off.
+- [x] CYA-CHAIN-02 (TP-049 -> TP-018 -> TP-050) rejected as a chain, matches kept (only credit for TP-018):
+      no impact beyond TP-049, which re-escalates after any demotion.
+- [x] CYA-CHAIN-04 (TP-013 -> TP-067) ignored, same as 1408 CYA-CHAIN-06; both vulns credited elsewhere.
+- Result: 525 -> 534/936, 40 -> 41 TP, pending penalty 27 -> 0, no pending items left.
