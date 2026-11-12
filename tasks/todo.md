@@ -881,8 +881,10 @@ COS chains as chain reports.
 - [x] CYA-041 (order lifecycle / no restock on cancel; staff privilege, integrity not security) ignored.
 - [x] taintedport-cc: neither is a chain (stack-ons); both rejected, members credited. Asked: CYA-CHAIN-06 (TP-012 -> TP-059 + remember-me survives reset; user doubts it is a
       chain since #12 alone impersonates anyone) and CYA-CHAIN-08 (TP-018 profile token -> TP-037 2FA enroll).
-- [ ] Catalog proposals from taintedport-cc, user to decide: widen TP-035 (#39) to remember-me tokens surviving
-      password change/reset (+ POST /auth/remember); TP-018 (#18) re-issues a server-signed token for the TARGET
+- [x] (user-confirmed) TP-035 widened on 329 + 331 to match catalog #39: title 'No Server-Side Session Revocation
+      (JWT and Remember-Me Token Survive Password Change)', + POST /auth/remember, remember-me never expires/revoked,
+      demonstration criterion added. Text only, no score change.
+- [ ] Catalog proposals from taintedport-cc, user to decide: TP-018 (#18) re-issues a server-signed token for the TARGET
       user (any-account takeover) -> describe + raise to Critical; reword #58 chain note; add NOT-a-chain rule (c)
       'prolongs/entrenches access already held'; re-check CH-02 (#23 may be a stack-on on #11/#12).
 - State 1454: 622/942, 48 TP, nothing pending.
