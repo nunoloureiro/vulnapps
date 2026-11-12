@@ -948,7 +948,10 @@ def test_cyberagent_report_is_read_without_extraction(tmp_path):
                     "finding_ids": ["CYA-010", "CYA-011"], "narrative": "Together they ...",
                     "attack_steps": ["set price", "flip status"]}]}
     path = tmp_path / "findings.json"
+    path.write_text(json.dumps({**report, "version": "1.45"}))
+    assert import_scan._cyberagent_version(path) == "1.45", "the scan records which build ran"
     path.write_text(json.dumps(report))
+    assert import_scan._cyberagent_version(path) is None
     out = import_scan.cyberagent_findings(path)
     assert len(out) == 2
     f, chain = out

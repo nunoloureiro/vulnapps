@@ -877,6 +877,19 @@ def cyberagent_findings(path) -> list[dict] | None:
     return out
 
 
+def _cyberagent_version(path) -> str | None:
+    """The cyberAgent build a findings.json was produced by (``version``, else
+    ``run_version``), or None."""
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    v = str(data.get("version") or data.get("run_version") or "").strip()
+    return v or None
+
+
 _COS_EXCHANGE_CAP = 2000  # chars per request/response: enough to show the proof, not a page dump
 
 # vuln_type is the finding's heading in the UI, so it must read as a vuln class
@@ -2714,6 +2727,10 @@ def main():
             args.structured_source = "cyberagent"
             if not args.scanner:
                 args.scanner = "cyberAgent"
+            # The report states which cyberAgent build ran (top-level
+            # `version`, also `run_version`); an explicit --scanner-version wins.
+            if not args.scanner_version:
+                args.scanner_version = _cyberagent_version(args.file)
     if args.file and structured is None:
         structured = cos_findings(args.file)
         if structured is not None:
