@@ -821,5 +821,6 @@ or revision change). Differences known so far vs the catalog's current sections:
       a chain only for a non-staff victim; 1408's CYA-CHAIN-08 read customer joe's token) on 331 (revision 4), linked
       CYA-CHAIN-07/08; in the catalog. 1358 CYA-009 / 1359 CYA-008 ran it in an ADMIN's browser: no CH-10 credit.
 - [x] CYA-CHAIN-04 remapped TP-064 -> TP-024 and Ignored (not a chain): 1408 494 -> 485/936, 39 -> 38 TP.
-- [ ] 1408 still pending: CYA-CHAIN-02 (Ignore would drop TP-018/TP-008, credited only by it) and
-      CYA-CHAIN-06 (Ignore costs nothing). Both judged not chains.
+- [x] 1408 CYA-CHAIN-02 rejected as a chain (novel-chain rejected=true), keeping its TP-018/TP-008
+      matches as plain findings: score unchanged 485/936, 38 TP.
+- [ ] 1408 CYA-CHAIN-06 still pending (judged not a chain; Ignore costs nothing).
