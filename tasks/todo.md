@@ -887,6 +887,8 @@ COS chains as chain reports.
 - [x] TP-018 any-user token re-issue: user chose to FIX it in TaintedPort (uncommitted, same 1.50 label), not
       catalogue it. Past scans stay valid. (user-confirmed) TP-018 text on 329 + 331 widened to catalog #18: every
       write (name/company/role) hits the target, response returns the target's record. Still Medium.
-- [ ] Remaining taintedport-cc proposals, user to decide: reword #58 chain note; add NOT-a-chain rule (c)
+- [x] (user-confirmed) TP-059 text on 329 + 331 aligned to reworded catalog #58: inert alone; with a forged token
+      it makes the takeover durable (password OR email); no chain credit for forged-token -> TP-059. Still High.
+- [ ] Remaining taintedport-cc proposals, user to decide: add NOT-a-chain rule (c)
       'prolongs/entrenches access already held'; re-check CH-02 (#23 may be a stack-on on #11/#12).
 - State 1454: 622/942, 48 TP, nothing pending.
