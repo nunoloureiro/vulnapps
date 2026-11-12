@@ -1312,6 +1312,7 @@ is attacker work rather than a flaw (cracking a hash the chain leaked, computing
 from a stolen seed, self-registering) does not disqualify a chain; it is simply not a member,
 and how likely it is to succeed (e.g. a weak password policy) informs the chain's severity.
 No chain may depend on the app's deliberately published test credentials.
+*A step that only prolongs or entrenches access the attacker already has* is not a chain step either (settled 2026-11-12 with the benchmark owner, catalog rule (c)): the session surviving a password change, replacing the owner's second factor, overwriting the owner's password or email. It is credited as an ordinary vuln and the chain is judged without it, so one flaw plus such a stack-on is not a chain. A step needed to get INTO the account (disabling 2FA so the login succeeds, computing a code from a leaked seed) is a chain step. The importer's mapping prompt carries the same rule, as shape (3).
 
 **Severity (migration 041).** `chains.severity` is what a curator sets; `impact_weight`
 derives from it 1:1 exactly as for vulns (critical 27, high 9, medium 3, low 1). Before 041

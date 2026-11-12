@@ -260,7 +260,13 @@ still applies to every step. Two shapes \
 that are NOT chains, so is_chain=false: (1) several INDEPENDENT ways to the same \
 outcome ("each of these alone drives the order total to zero") — the steps do not \
 depend on each other; (2) one flaw with a consequence described after it ("…which \
-could then be used to…") without that next step actually performed. A step that is \
+could then be used to…") without that next step actually performed; (3) a step that only \
+prolongs or entrenches access to an account the attacker ALREADY controls (the session \
+surviving a password change, replacing the owner's second factor, overwriting the owner's \
+password or email) -- it is a stack-on: match it as an ordinary vuln and judge the chain \
+without it; if what remains is one flaw plus its own impact, is_chain=false. A step \
+needed to GET INTO the account (disabling the victim's 2FA so the login succeeds, \
+computing a code from a leaked TOTP seed) is a real chain step. A step that is \
 attacker work rather than a flaw (cracking a hash the chain leaked, generating a TOTP \
 code from a stolen seed, self-registering an account) does not stop it being a chain; \
 it just is not a member. \
