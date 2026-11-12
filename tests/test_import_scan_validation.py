@@ -965,6 +965,46 @@ def test_cyberagent_report_is_read_without_extraction(tmp_path):
     assert import_scan.cyberagent_findings(path) is None, "other JSON reports still go through extraction"
 
 
+def test_cos_report_is_read_without_extraction(tmp_path):
+    """A COS penetration_test_report.json is converted field by field: every
+    vulnerability and every chain arrives (extraction once dropped one and
+    folded the chains into ordinary findings), and the run's cost/tokens come
+    from the stats.jsonl beside it."""
+    report = {
+        "vulnerabilities": [
+            {"report_id": "vuln-0001", "title": "alg=none accepted", "severity": "Critical",
+             "cwe": "CWE-347", "endpoint": "/auth/me", "method": "GET",
+             "description": "Unsigned tokens are accepted.", "impact": "Admin takeover.",
+             "poc_description": "Forge a token.", "poc_script_code": "import requests  # script",
+             "http_exchanges": [{"step_label": "1. forged", "request": "GET /auth/me",
+                                 "response": "HTTP/1.1 200 OK\n" + "x" * 5000, "analysis": "accepted"}],
+             "remediation_steps": ["Verify signatures."]},
+            {"report_id": "vuln-0002", "title": "hash leak", "severity": "high", "endpoint": "/admin/t"}],
+        "vulnerability_chains": [
+            {"chain_id": "chain-0001", "title": "forge + leak", "severity": "critical",
+             "description": "Together they ...", "impact": "All hashes.",
+             "chain_steps": [{"vulnerability_id": "vuln-0001", "role": "admin token"},
+                             {"vulnerability_id": "vuln-0002", "role": "reads hashes"}]}]}
+    path = tmp_path / "penetration_test_report.json"
+    path.write_text(json.dumps(report))
+    out = import_scan.cos_findings(path)
+    assert len(out) == 3
+    f, _, chain = out
+    assert (f["title"], f["severity"], f["url"], f["http_method"]) == (
+        "vuln-0001: alg=none accepted", "critical", "/auth/me", "GET")
+    assert "Admin takeover." in f["description"] and "HTTP/1.1 200 OK" in f["poc"] and "accepted" in f["poc"]
+    assert "[... truncated]" in f["poc"] and "import requests" not in f["poc"]
+    assert f["remediation"] == "- Verify signatures."
+    assert chain["vuln_type"] == "Exploit chain" and chain["title"] == "chain-0001: forge + leak"
+    assert "vuln-0001, vuln-0002" in chain["description"] and "2. vuln-0002: reads hashes" in chain["poc"]
+    listed = tmp_path / "list.json"
+    listed.write_text(json.dumps(out))
+    import_scan.load_findings_json(listed)  # valid --findings-json shape
+    assert import_scan.cyberagent_findings(path) is None
+    path.write_text(json.dumps({"vulnerabilities": [{"title": "x"}], "vulnerability_chains": []}))
+    assert import_scan.cos_findings(path) is None, "other JSON reports still go through extraction"
+
+
 def test_credited_attack_path_credits_each_of_its_steps():
     """The mapper credited a path but not its end step; every step of a
     credited path is demonstrated by definition, so each is credited."""

@@ -832,3 +832,23 @@ or revision change). Differences known so far vs the catalog's current sections:
       no impact beyond TP-049, which re-escalates after any demotion.
 - [x] CYA-CHAIN-04 (TP-013 -> TP-067) ignored, same as 1408 CYA-CHAIN-06; both vulns credited elsewhere.
 - Result: 525 -> 534/936, 40 -> 41 TP, pending penalty 27 -> 0, no pending items left.
+
+## COS JSON report read directly (scan 1410 import lost data) — 2026-11-12
+Scan 1410 (COS on 331): report has 34 vulnerabilities + 5 vulnerability_chains = 39; vulnapps got 33
+(28 findings + 5 "chain" flags on ordinary findings). LLM extraction of the 1.26 MB JSON dropped
+"JWT Tokens Not Invalidated After Password or Email Change" (TP-035 now missed) and never emitted the 5
+COS chains as chain reports.
+- [x] `cos_findings(path)` in tools/import_scan.py, same pattern as `cyberagent_findings`: detect
+      `vulnerabilities` + `vulnerability_chains` (+ `report_id` on vulns); one finding per vuln titled
+      "vuln-NNNN: title" (description + impact + technical analysis + CWE; poc = poc_description + the
+      http_exchanges request/response pairs; remediation_steps); one "Exploit chain" finding per chain
+      ("chain_id: title", "Exploit chain combining vuln-a, vuln-b.", each step's role, impact, poc).
+- [x] Wire it next to the cyberAgent detection (structured_source "cos", default scanner "COS").
+- [x] --file with no run block: read the metrics stream (stats.jsonl) beside the report, so cost,
+      tokens and duration come from the run, not from a model's reading of the report.
+- [x] Tests for the converter (counts, chain references, titles) + the CI-style pytest run.
+- [x] Deleted 1410, re-imported as 1412: 39 = 34 findings + 5 chain reports, cost/tokens/duration from
+      stats.jsonl; 468 -> 513/936, TP-035 credited. 300 tests pass.
+- [ ] 1411 (labelled run-2) is the SAME report as 1412 (scan-d81ba96e); the other run in /tmp is
+      a11cfb6b (scan-df380a37, 50 vulns + 7 chains). Ask before deleting.
+- [ ] Review 1412: 5 pending findings + 2 candidate new chains (chain-0001, chain-0004).

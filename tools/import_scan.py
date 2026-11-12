@@ -877,6 +877,102 @@ def cyberagent_findings(path) -> list[dict] | None:
     return out
 
 
+_COS_EXCHANGE_CAP = 2000  # chars per request/response: enough to show the proof, not a page dump
+
+
+def cos_findings(path) -> list[dict] | None:
+    """Findings straight from a COS ``penetration_test_report.json``
+    (``vulnerabilities`` plus ``vulnerability_chains``), in --findings-json
+    shape, so the report needs no LLM extraction. None if the file isn't one.
+
+    Why: on 2026-11-12 extraction of a 1.26 MB COS report dropped one of its 34
+    vulnerabilities and never emitted its 5 chains as chain reports -- it
+    flagged 5 ordinary findings as chains instead (scan 1410). The report is
+    already structured, so fields are copied deterministically and the model
+    only maps.
+
+    A vulnerability: "vuln-NNNN: title" (chain steps reference that id),
+    severity, cwe -> vuln_type, endpoint/method, description + impact +
+    technical analysis + CWE, PoC description + each HTTP exchange (request,
+    response, analysis; capped) -> poc, remediation steps. The PoC/verify
+    scripts and diagrams are left out: the exchanges are the evidence. A chain
+    becomes one "Exploit chain" finding naming the vulns it combines and each
+    step's role, so the mapper can judge it as a chain report.
+    """
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+    if not (isinstance(data, dict) and isinstance(data.get("vulnerabilities"), list)
+            and isinstance(data.get("vulnerability_chains"), list)
+            and all(isinstance(v, dict) and "report_id" in v for v in data["vulnerabilities"])):
+        return None
+
+    def sev(v):
+        v = str(v or "").strip().lower()
+        return v if v in SEVERITIES else ""
+
+    def cap(s):
+        s = str(s or "")
+        return s if len(s) <= _COS_EXCHANGE_CAP else s[:_COS_EXCHANGE_CAP] + "\n[... truncated]"
+
+    def exchanges(items):
+        out = []
+        for x in items or []:
+            if isinstance(x, dict):
+                out.append(_cyberagent_text(
+                    str(x.get("step_label") or ""),
+                    f"Request:\n{cap(x.get('request'))}" if x.get("request") else "",
+                    f"Response:\n{cap(x.get('response'))}" if x.get("response") else "",
+                    f"Analysis: {x['analysis']}" if x.get("analysis") else ""))
+        return "\n\n".join(out)
+
+    def text(v):  # remediation_steps etc. may be a list or a string
+        return "\n".join(f"- {s}" for s in v) if isinstance(v, list) else str(v or "")
+
+    out = []
+    for v in data["vulnerabilities"]:
+        out.append({
+            "vuln_type": str(v.get("cwe") or ""),
+            "title": f"{v.get('report_id', '')}: {v.get('title', '')}".strip(": "),
+            "http_method": str(v.get("method") or ""),
+            "url": str(v.get("endpoint") or ""),
+            "parameter": "", "filename": "", "code_location": "",
+            "severity": sev(v.get("severity")),
+            "description": _cyberagent_text(
+                v.get("description"),
+                f"Impact: {v['impact']}" if v.get("impact") else "",
+                f"Technical analysis: {v['technical_analysis']}" if v.get("technical_analysis") else "",
+                str(v.get("cwe") or "")),
+            "poc": _cyberagent_text(
+                v.get("poc_description"),
+                f"HTTP exchanges:\n{exchanges(v.get('http_exchanges'))}" if v.get("http_exchanges") else ""),
+            "remediation": text(v.get("remediation_steps")),
+        })
+    for c in data["vulnerability_chains"]:
+        if not isinstance(c, dict):
+            continue
+        steps = [s for s in (c.get("chain_steps") or []) if isinstance(s, dict)]
+        combines = ", ".join(str(s.get("vulnerability_id") or "") for s in steps)
+        out.append({
+            "vuln_type": "Exploit chain",
+            "title": f"{c.get('chain_id', '')}: {c.get('title', '')}".strip(": "),
+            "http_method": "", "url": "", "parameter": "", "filename": "", "code_location": "",
+            "severity": sev(c.get("severity")),
+            "description": _cyberagent_text(
+                f"Exploit chain combining {combines}." if combines else "Exploit chain.",
+                c.get("description"),
+                f"Combined impact: {c['impact']}" if c.get("impact") else "",
+                f"Technical analysis: {c['technical_analysis']}" if c.get("technical_analysis") else ""),
+            "poc": _cyberagent_text(
+                "Chain steps:\n" + "\n".join(f"{i}. {s.get('vulnerability_id', '')}: {s.get('role', '')}"
+                                             for i, s in enumerate(steps, start=1)) if steps else "",
+                c.get("poc_description")),
+            "remediation": text(c.get("remediation_steps")),
+        })
+    return out
+
+
 _ANSWER_KEYS = ("mappings", "findings")
 
 
@@ -2584,6 +2680,12 @@ def main():
             args.structured_source = "cyberagent"
             if not args.scanner:
                 args.scanner = "cyberAgent"
+    if args.file and structured is None:
+        structured = cos_findings(args.file)
+        if structured is not None:
+            args.structured_source = "cos"
+            if not args.scanner:
+                args.scanner = "COS"
 
     if args.app_id is None and not args.create_app:
         print(f"  {colored('Error:', 'RED')} Either --app-id or --create-app is required", file=sys.stderr)
@@ -3155,9 +3257,14 @@ def main():
     # here, it's not an LLM guess at what the report text says. Only --dir
     # has a state_root to look in; --file/--probely have nothing to check.
     # --file: a JSON report can carry its own run block (cyberAgent's
-    # findings.json), read the same way.
+    # findings.json), read the same way. A COS penetration_test_report.json
+    # has no run block, but sits in the run's output directory beside its
+    # stats.jsonl -- read that (only for a recognised COS report, so a stray
+    # --file /tmp/x.json never sweeps all of /tmp).
     stats = (_read_scan_stats(state_root) if state_root is not None
              else _read_report_run(args.file) if getattr(args, "file", None) else None)
+    if stats is None and getattr(args, "structured_source", None) == "cos":
+        stats = _read_scan_stats(Path(args.file).resolve().parent)
     stats_use: dict[str, bool] = {}  # per-field operator answers, filled in below
 
     llm_scan_date = mapping.get("scan_date")  # kept so a declined date can be restored
