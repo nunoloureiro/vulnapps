@@ -1025,3 +1025,39 @@ def test_credited_attack_path_credits_each_of_its_steps():
                              "matched_chain_db_id": 70, "additional_vuln_db_ids": [17, 24]}]}
     import_scan.validate_llm_matches(mapping, vulns, chains)
     assert sorted(mapping["findings"][0]["additional_vuln_db_ids"]) == [17, 24, 28]
+
+
+def test_mythos_report_is_read_without_extraction(tmp_path):
+    """A Claude Code pentest-harness report is converted field by field, with
+    the extraction prompt's rules: readable type (never a CWE), the first
+    METHOD url, the validation record kept as evidence, rejected candidates
+    left out, and run metadata from its scan block."""
+    f = {"id": "F-06", "working_id": "w1", "title": "IDOR on orders", "severity": "Critical",
+         "class": "Broken access control", "class_detail": "A01 / CWE-639 IDOR + CWE-200",
+         "affected": "GET https://api.example/orders/{id} (any user)", "description": "No owner check.",
+         "business_impact": "Leaks PII.", "attack_steps": "curl /orders/2", "evidence": "HTTP 200 user_id 2",
+         "validation": "Reproduced between own accounts.", "remediation": "Check ownership."}
+    odd = {**f, "id": "F-07", "class_detail": "CWE-99999", "class": "Misconfiguration", "affected": "DNS"}
+    report = {"report": {}, "summary": {}, "rejected": [{"working_id": "x", "title": "dup"}],
+              "scan": {"start_time_utc": "2026-11-12T17:43:17Z", "duration_seconds": 7870,
+                       "model": "claude-mythos-5-1", "tokens": {"total": 3899420},
+                       "cost_usd": {"estimate": 70.19, "lower_bound_all_input_rate": 38.99}},
+              "findings": [f, odd],
+              "chains": [{**f, "id": "F-01", "title": "Takeover", "components": {"final_ids": ["F-06", "F-07"]}}]}
+    path = tmp_path / "TaintedPort-Pentest-Report.json"
+    path.write_text(json.dumps(report))
+    out = import_scan.mythos_findings(path)
+    assert len(out) == 3, "rejected candidates are not findings"
+    a, b, chain = out
+    assert (a["title"], a["vuln_type"], a["severity"], a["http_method"], a["url"]) == (
+        "F-06: IDOR on orders", "IDOR", "critical", "GET", "https://api.example/orders/{id}")
+    assert "Reproduced between own accounts." in a["poc"] and "HTTP 200" in a["poc"]
+    assert (b["vuln_type"], b["url"]) == ("Misconfiguration", ""), "unlisted CWE falls back to the class"
+    assert chain["vuln_type"] == "Exploit chain" and "F-06, F-07" in chain["description"]
+    listed = tmp_path / "list.json"
+    listed.write_text(json.dumps(out))
+    import_scan.load_findings_json(listed)
+    run = import_scan._read_mythos_scan(path)
+    assert (run["cost_usd"], run["tokens_used"], run["duration_seconds"], run["model_names"]) == (
+        70.19, 3899420, 7870.0, {"claude-mythos-5-1"})
+    assert import_scan.cyberagent_findings(path) is None and import_scan.cos_findings(path) is None

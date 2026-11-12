@@ -1026,6 +1026,108 @@ def cos_findings(path) -> list[dict] | None:
     return out
 
 
+_CWE_RE = re.compile(r"CWE-\d+", re.I)
+_METHOD_URL_RE = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)")
+
+
+def _is_mythos_report(data) -> bool:
+    return (isinstance(data, dict) and isinstance(data.get("findings"), list)
+            and isinstance(data.get("chains"), list) and isinstance(data.get("scan"), dict)
+            and isinstance(data.get("report"), dict) and data["findings"]
+            and all(isinstance(f, dict) and "working_id" in f and "attack_steps" in f
+                    for f in data["findings"]))
+
+
+def mythos_findings(path) -> list[dict] | None:
+    """Findings straight from a Claude Code pentest-harness report
+    (``TaintedPort-Pentest-Report.json``: ``report``, ``scan``, ``summary``,
+    ``findings``, ``chains``, ``rejected``), in --findings-json shape, so the
+    report needs no LLM extraction. None if the file isn't one.
+
+    Same reasons as cos_findings, and the same field rules SYSTEM_PROMPT_EXTRACT
+    gives the model (see tasks/lessons.md): one finding per entry, title as
+    given (prefixed with its id, which chains reference), severity transcribed,
+    vuln_type a readable class (the first CWE in class_detail via CWE_NAMES,
+    else the report's class -- never a bare CWE), the first "METHOD url" in
+    `affected` -> http_method/url, description = description + business impact
+    + affected + class detail, poc = attack steps + evidence + the validation
+    record (it says what was and wasn't reproduced), remediation. A chain
+    becomes one "Exploit chain" finding naming the finding ids it combines.
+    `rejected` entries are candidates the report itself discarded (e.g. a
+    duplicate), not findings, so they are not imported.
+    """
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+    if not _is_mythos_report(data):
+        return None
+
+    def sev(v):
+        v = str(v or "").strip().lower()
+        return v if v in SEVERITIES else ""
+
+    def vtype(f):
+        cwe = _CWE_RE.search(str(f.get("class_detail") or ""))
+        return (CWE_NAMES.get(cwe.group(0).upper()) if cwe else None) or str(f.get("class") or f.get("title") or "")
+
+    def entry(f, vuln_type, lead=""):
+        affected = str(f.get("affected") or "")
+        m = _METHOD_URL_RE.search(affected)
+        return {
+            "vuln_type": vuln_type,
+            "title": f"{f.get('id', '')}: {f.get('title', '')}".strip(": "),
+            "http_method": m.group(1) if m else "",
+            "url": m.group(2).rstrip(".,;)") if m else "",
+            "parameter": "", "filename": "", "code_location": "",
+            "severity": sev(f.get("severity")),
+            "description": _cyberagent_text(
+                lead, f.get("description"),
+                f"Business impact: {f['business_impact']}" if f.get("business_impact") else "",
+                f"Affected: {affected}" if affected else "",
+                str(f.get("class_detail") or "")),
+            "poc": _cyberagent_text(
+                f"Attack steps:\n{f['attack_steps']}" if f.get("attack_steps") else "",
+                f"Evidence:\n{f['evidence']}" if f.get("evidence") else "",
+                f"Validation: {f['validation']}" if f.get("validation") else ""),
+            "remediation": str(f.get("remediation") or ""),
+        }
+
+    out = [entry(f, vtype(f)) for f in data["findings"]]
+    for c in data["chains"]:
+        if not isinstance(c, dict):
+            continue
+        ids = (c.get("components") or {}).get("final_ids") or []
+        lead = f"Exploit chain combining {', '.join(ids)}." if ids else "Exploit chain."
+        out.append(entry(c, "Exploit chain", lead))
+    return out
+
+
+def _read_mythos_scan(path) -> dict | None:
+    """Cost/tokens/duration/start/model from a mythos report's ``scan`` block,
+    in ``_read_scan_stats``'s shape. Cost is the report's own ``estimate``
+    (it gives lower/upper bounds too); tokens the stated ``total``."""
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+    if not _is_mythos_report(data):
+        return None
+    scan = data["scan"]
+    cost = scan.get("cost_usd")
+    tokens = scan.get("tokens")
+    return {
+        "cost_usd": _as_float(cost.get("estimate") if isinstance(cost, dict) else cost),
+        "tokens_used": _as_int(tokens.get("total") if isinstance(tokens, dict) else tokens),
+        "tokens_partial": None,
+        "duration_seconds": _as_float(scan.get("duration_seconds")),
+        "started_at": scan.get("start_time_utc"),
+        "model_names": {str(scan["model"])} if scan.get("model") else set(),
+        "is_final": True,
+        "source_files": [f"{Path(path).name} (scan)"],
+    }
+
+
 _ANSWER_KEYS = ("mappings", "findings")
 
 
@@ -2743,6 +2845,10 @@ def main():
             args.structured_source = "cos"
             if not args.scanner:
                 args.scanner = "COS"
+    if args.file and structured is None:
+        structured = mythos_findings(args.file)
+        if structured is not None:
+            args.structured_source = "mythos-pt"
 
     if args.app_id is None and not args.create_app:
         print(f"  {colored('Error:', 'RED')} Either --app-id or --create-app is required", file=sys.stderr)
@@ -3326,6 +3432,8 @@ def main():
              else _read_report_run(args.file) if getattr(args, "file", None) else None)
     if stats is None and getattr(args, "structured_source", None) == "cos":
         stats = _read_scan_stats(Path(args.file).resolve().parent)
+    if stats is None and getattr(args, "structured_source", None) == "mythos-pt":
+        stats = _read_mythos_scan(args.file)
     stats_use: dict[str, bool] = {}  # per-field operator answers, filled in below
 
     llm_scan_date = mapping.get("scan_date")  # kept so a declined date can be restored

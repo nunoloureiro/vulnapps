@@ -901,3 +901,11 @@ COS chains as chain reports.
       and 329 (rev 22, 23); TP-011/TP-012 High -> Critical (two weight-change revisions per app); TP-023 text =
       catalog #23 (inert alone, not a chain step). Net: scans that found both forging bugs +9 against max +9
       (942 -> 951 on 331, 897 -> 906 on 329); 1355 found one: 370 -> 361.
+
+## Scan 1456 (Claude Code, claude-mythos-5-1, blackbox run-1) — 2026-11-12
+- [x] New mythos_findings converter + _read_mythos_scan (test); 54 findings + 6 chains = 60 converted; mapped.
+- [ ] BLOCKED: Zscaler 403s every response that returns this scan's findings (GET /api/scans/1456), so the
+      importer died after submit: LLM match corrections not applied (server heuristic only: 19 TP, 39 pending,
+      229 pts). Likely trigger: PHP webshell code ($_GET[...]) in F-20/F-28/F-37 PoCs and/or card numbers in
+      F-33/F-45. The user's browser will be blocked on the scan page too. Labels added by hand.
+      Mapping is in /tmp/mythos_import.log (per-finding results) -- reusable without re-running the LLM.
