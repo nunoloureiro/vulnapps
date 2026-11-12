@@ -904,8 +904,12 @@ COS chains as chain reports.
 
 ## Scan 1456 (Claude Code, claude-mythos-5-1, blackbox run-1) — 2026-11-12
 - [x] New mythos_findings converter + _read_mythos_scan (test); 54 findings + 6 chains = 60 converted; mapped.
-- [ ] BLOCKED: Zscaler 403s every response that returns this scan's findings (GET /api/scans/1456), so the
+- [x] (resolved: user turned Zscaler off; 1456 deleted, re-imported as 1457) Zscaler 403'd every response that returns this scan's findings (GET /api/scans/1456), so the
       importer died after submit: LLM match corrections not applied (server heuristic only: 19 TP, 39 pending,
       229 pts). Likely trigger: PHP webshell code ($_GET[...]) in F-20/F-28/F-37 PoCs and/or card numbers in
       F-33/F-45. The user's browser will be blocked on the scan page too. Labels added by hand.
       Mapping is in /tmp/mythos_import.log (per-finding results) -- reusable without re-running the LLM.
+- [x] 1457: 60 = 54 + 6 verified; 786/951, 60 TP, CH-01/05/07/08. F-23 (TP-011 -> TP-059) rejected as a chain;
+      ignored coverage endpoint, version disclosure, order-status/no-restock, /a/ operator area, SPF/DMARC,
+      Cloudflare WAF, client-IP not propagated, image-upload polyglot. Nothing pending. Missed: TP-013, TP-033,
+      TP-061, TP-069. (My check script wrongly copied a cyberAgent coverage note onto 1457; cleared.)

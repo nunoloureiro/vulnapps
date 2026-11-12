@@ -288,3 +288,8 @@ report's `cwe` field into vuln_type, which is the finding's heading on the scan 
   rules one by one and implement each (vuln_type readable, never a CWE number; scan_date = start; etc.).
 - Rule: before calling an import done, look at the scan page as the user will (first rows of Findings),
   not only at counts. A count check can't catch a bad heading.
+
+## Copied check scripts carry their side effects
+2026-11-12, self-caught: I reused the 1454 check script (which also SETS the coverage note) for scan 1457 by
+sed-replacing the scan id, and it wrote a cyberAgent coverage note onto the Claude Code scan.
+- Rule: keep read-only checks and writes in separate scripts; never reuse a script that writes for another scan.
