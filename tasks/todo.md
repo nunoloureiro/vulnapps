@@ -856,3 +856,13 @@ COS chains as chain reports.
       chains, matches kept: chain-0001 (TP-022 -> TP-051, stops before TP-036) and chain-0004 (TP-008 -> TP-035).
       513/936, 34 TP, pending penalty 108 -> 0, nothing pending.
 - [x] 1411 (duplicate of 1412) deleted; run-2 = a11cfb6b re-imported.
+
+## Scan 1413 (COS run-2, a11cfb6b) review — 2026-11-12
+- [x] Imported via cos_findings: 57 = 50 vulns + 7 chains; cost $281.35, 19.2M tokens, 155m; note = coverage summary.
+- [x] Ignored 7: demo creds (vuln-0023, vuln-0004), coverage endpoint (vuln-0001, -0005), version disclosure
+      (vuln-0002, -0040, -0068).
+- [x] vuln-0074 (cross-user gift card/voucher redemption, credit farming) marked FP (user): bearer/transferable by design.
+- [ ] Asked taintedport-29: does a concurrent-checkout stock oversell (vuln-0060) demonstrate TP-069?
+- [ ] Asked taintedport-29: chain-0003 (TP-049 -> TP-051), chain-0006 (TP-008 -> TP-035), chain-0002
+      (TP-017 -> TP-024) -- all stop short of a catalog path. Verdict also applies to 1412's rejected analogues.
+- State: 531/936, 39 TP, 1 FP (27), pending penalty 27 (vuln-0060).
