@@ -862,7 +862,9 @@ COS chains as chain reports.
 - [x] Ignored 7: demo creds (vuln-0023, vuln-0004), coverage endpoint (vuln-0001, -0005), version disclosure
       (vuln-0002, -0040, -0068).
 - [x] vuln-0074 (cross-user gift card/voucher redemption, credit farming) marked FP (user): bearer/transferable by design.
-- [ ] Asked taintedport-29: does a concurrent-checkout stock oversell (vuln-0060) demonstrate TP-069?
-- [ ] Asked taintedport-29: chain-0003 (TP-049 -> TP-051), chain-0006 (TP-008 -> TP-035), chain-0002
+- [x] taintedport-29: stock oversell demonstrates TP-069 (same missing transaction; proof = order count, stock
+      floors at 0). vuln-0060 matched to TP-069. Extending TP-069's criterion to stock oversell: user's call.
+- [x] taintedport-29 agreed none is a chain; all three rejected (matches kept): chain-0003 (TP-049 -> TP-051), chain-0006 (TP-008 -> TP-035), chain-0002
       (TP-017 -> TP-024) -- all stop short of a catalog path. Verdict also applies to 1412's rejected analogues.
-- State: 531/936, 39 TP, 1 FP (27), pending penalty 27 (vuln-0060).
+- State: 540/936, 40 TP, 1 FP, nothing pending.
+- [ ] TP-008 is HIGH in the catalog (summary row #8), MEDIUM on vulnapps 329 and 331: align (user's call).
