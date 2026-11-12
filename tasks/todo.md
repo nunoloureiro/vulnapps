@@ -851,4 +851,8 @@ COS chains as chain reports.
       stats.jsonl; 468 -> 513/936, TP-035 credited. 300 tests pass.
 - [ ] 1411 (labelled run-2) is the SAME report as 1412 (scan-d81ba96e); the other run in /tmp is
       a11cfb6b (scan-df380a37, 50 vulns + 7 chains). Ask before deleting.
-- [ ] Review 1412: 5 pending findings + 2 candidate new chains (chain-0001, chain-0004).
+- [x] 1412 review: Ignored default creds (vuln-0010), OpenAPI demo creds (vuln-0036), coverage endpoint
+      (vuln-0011/0023; benchmark instrumentation), version disclosure (vuln-0005, user: ignore). Rejected as
+      chains, matches kept: chain-0001 (TP-022 -> TP-051, stops before TP-036) and chain-0004 (TP-008 -> TP-035).
+      513/936, 34 TP, pending penalty 108 -> 0, nothing pending.
+- [x] 1411 (duplicate of 1412) deleted; run-2 = a11cfb6b re-imported.
