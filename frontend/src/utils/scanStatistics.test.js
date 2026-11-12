@@ -107,12 +107,15 @@ test('incomplete or unknown review is excluded from headlines and group means', 
   assert.equal(scanStatistics(scans, 'weighted_f05').mean, .9);
 });
 
-test('comparison crowns a unique reviewed weighted F0.5 winner only when all scores are available', () => {
-  const run = score => ({ metrics: { weighted_f05: score, weighted_score_provisional: false } });
+test('comparison crowns a unique reviewed weighted-detection winner only when all scores are available', () => {
+  const run = score => ({ metrics: { weighted_found: score * 100, weighted_total: 100, weighted_score_provisional: false } });
   assert.equal(weightedScoreWinner([run(.7), run(.9)]), 1);
   assert.equal(weightedScoreWinner([run(.7), run(.7)]), -1);
   assert.equal(weightedScoreWinner([run(0), run(0)]), -1);
   assert.equal(weightedScoreWinner([run(.7)]), -1);
-  assert.equal(weightedScoreWinner([run(.7), { metrics: { weighted_f05: .9, weighted_score_provisional: true } }]), -1);
+  assert.equal(weightedScoreWinner([run(.7), { metrics: { weighted_found: 90, weighted_total: 100, weighted_score_provisional: true } }]), -1);
+  // Detection, not F0.5: more points found wins even with lower precision.
+  const ran = (found, f05) => ({ metrics: { weighted_found: found, weighted_total: 942, weighted_f05: f05, weighted_score_provisional: false } });
+  assert.equal(weightedScoreWinner([ran(547, .864), ran(540, .870)]), 0);
   assert.equal(weightedScoreWinner([run(.7), { metrics: {} }]), -1);
 });

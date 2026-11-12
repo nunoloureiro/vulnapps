@@ -148,7 +148,7 @@ function ScannerHeader({ s, isWinner }) {
   return (
     <>
       {isWinner && (
-        <div title="Highest reviewed weighted F₀.₅" style={{ fontSize: '1rem', lineHeight: 1, marginBottom: '0.15rem' }}>🏆</div>
+        <div title="Highest weighted detection (reviewed)" style={{ fontSize: '1rem', lineHeight: 1, marginBottom: '0.15rem' }}>🏆</div>
       )}
       <Link to={`/scans/${s.scan.id}`}>{s.scan.scanner_name}</Link>
       {s.scan.scanner_version && <span className="text-muted text-xs"> v{s.scan.scanner_version}</span>}
@@ -1064,7 +1064,7 @@ function RadarPanel({ name, version, isWinner, axes, values, counts }) {
   return (
     <div className="card" style={isWinner ? { borderColor: 'var(--accent)', borderWidth: '1.5px' } : undefined}>
       <div className="text-center mb-1">
-        {isWinner && <span title="Highest reviewed weighted F₀.₅" style={{ marginRight: 4 }}>🏆</span>}
+        {isWinner && <span title="Highest weighted detection (reviewed)" style={{ marginRight: 4 }}>🏆</span>}
         <span className="font-mono text-sm" style={{ color: 'var(--text)' }}>{name}</span>
         {version && <span className="text-muted text-xs"> v{version}</span>}
       </div>

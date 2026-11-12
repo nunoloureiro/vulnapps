@@ -55,8 +55,14 @@ export function metricExtremes(stats, field) {
   return [['Min', stats.min], ['Max', stats.max]];
 }
 
+// The trophy: the unique highest weighted detection (share of the corpus's
+// impact-weighted points found). Only once every run's review is complete
+// (weighted_score_provisional false): a pending finding could still add points.
 export function weightedScoreWinner(scans) {
-  const scores = scans.map(scan => scanQuality(scan).weighted_f05);
+  const scores = scans.map(scan => {
+    const q = scanQuality(scan);
+    return scan.metrics?.weighted_score_provisional === false ? q.weighted_rate : null;
+  });
   if (scores.length < 2 || scores.some(score => score === null)) return -1;
   const best = Math.max(...scores);
   return best > 0 && scores.filter(score => score === best).length === 1 ? scores.indexOf(best) : -1;
