@@ -938,4 +938,5 @@ COS chains as chain reports.
       Max 957 -> 984 (331), 912 -> 939 (329). 1466 CYA-CHAIN-02 and 1454 CYA-CHAIN-02 linked to CH-11.1 (1454's
       was still matched to retired CH-02.1): 1466 835 -> 862, 1454 637 -> 664. 1457 unchanged (no admin route shown).
       331: 10 chains / 23 paths active, matching the catalog.
-- [ ] Catalog now lists "4 AI traps": ask taintedport-cc what they are and whether vulnapps needs them (decoy-like?).
+- [x] Catalog "AI client traps" (26a-26d, prompt-injection canaries in seeded reviews): user ruled they are NOT
+      for vulnapps. Not modelled, not reconciled; catalog-sync stays vulns/chains + D* decoys only.
