@@ -968,4 +968,7 @@ COS chains as chain reports.
 - [x] Ignored seeded demo-account creds; FP sign-up bonus farming (weight 1, user); rejected TP-053 -> TP-024
       (stops at harvest) and TP-054 + TP-063 -> cash-out (parallel forging + a feature; user agreed not a chain).
 - State: 832/1011, 54 TP, 1 FP; CH-01/05/07/08/09/12.
-- [ ] Asked taintedport-cc: hard-coded partner API keys in PartnerController (possible new Low, CWE-798).
+- [x] taintedport-cc: partner API keys are deliberate demo login credentials (standing ruling: demo logins in
+      the public source are fixtures; only signing/encryption secrets must stay out). A partner token alone
+      reaches nothing (403 on admin, null user elsewhere); its value is as TP-045's entry. Ignored like the
+      demo logins. 1582 final: 832/1011, 54 TP, nothing pending.
