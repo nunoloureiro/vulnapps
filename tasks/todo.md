@@ -932,3 +932,10 @@ COS chains as chain reports.
 - [x] Ignored CYA-047 (password policy; user rejected cataloguing) and CYA-050 (order status/no restock).
 - [ ] Asked taintedport-cc: CYA-CHAIN-02 (forged admin -> second-order SQLi, TP-011 -> TP-065; lean chain) and
       CYA-CHAIN-05 (TP-019 0.01 order -> TP-025 self-set processing; lean not a chain).
+- [x] taintedport-cc: CYA-CHAIN-05 not a chain (no review gate; #19 and #25 each reach processing) -> rejected.
+- [x] (user-approved) CH-11 "Admin access -> second-order SQLi dump" on 331 + 329: CH-11.1..11.7 (TP-011 / TP-012 /
+      TP-013+TP-045 / TP-027+TP-061 / TP-022 / TP-049 / TP-001, each -> TP-065), Critical; TP-065 stays Critical.
+      Max 957 -> 984 (331), 912 -> 939 (329). 1466 CYA-CHAIN-02 and 1454 CYA-CHAIN-02 linked to CH-11.1 (1454's
+      was still matched to retired CH-02.1): 1466 835 -> 862, 1454 637 -> 664. 1457 unchanged (no admin route shown).
+      331: 10 chains / 23 paths active, matching the catalog.
+- [ ] Catalog now lists "4 AI traps": ask taintedport-cc what they are and whether vulnapps needs them (decoy-like?).
