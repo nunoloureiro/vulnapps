@@ -926,3 +926,9 @@ COS chains as chain reports.
       that found it; max 951 -> 957 on 331, 906 -> 912 on 329; 1356 didn't find it). C: TP-011/TP-012 + TP-061
       "forged token without exp never expires". E: TP-027 php:// wrappers. TP-014 frontend tree readable.
 - [x] I (password-policy entry): rejected by the user.
+
+## Scan 1466 (cyberAgent v1.58, greybox run-2; replaces deleted 1455) — 2026-11-13
+- [x] 56 = 50 + 6 verified; labels as 1455; 835/957, 54 TP; CH-03/05/07/08/09. No coverage CSV for this run.
+- [x] Ignored CYA-047 (password policy; user rejected cataloguing) and CYA-050 (order status/no restock).
+- [ ] Asked taintedport-cc: CYA-CHAIN-02 (forged admin -> second-order SQLi, TP-011 -> TP-065; lean chain) and
+      CYA-CHAIN-05 (TP-019 0.01 order -> TP-025 self-set processing; lean not a chain).
