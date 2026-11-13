@@ -36,6 +36,22 @@ findings contain **proof-of-concept attack text by design**, for example:
 - forged JWTs, SQL-injection payloads, fake/test payment-card numbers, cloud-metadata URLs.
 None of it is live phishing; it is evidence text inside JSON returned to authenticated users of our own app.
 
+## Most likely trigger (analysed 2026-11-13 with Zscaler off; not confirmed — please check the event log)
+We compared the two blocked responses with six scan responses Zscaler allowed (same app, same kind of
+content). Generic attack text is **not** the difference: allowed scans carry as much XSS, `<script>`,
+`onerror=`, `javascript:` and token-exfiltration code as the blocked ones (scan 1582, allowed, has more).
+
+What only the blocked responses contain is a **look-alike of the real site's domain**:
+- `GET /api/scans/1490` → finding "Permissive CORS Policy Reflects Arbitrary Origins…": `Origin: https://api.taintedport.com.evil.com`
+  (plus `https://data-thief.evil.com`, `https://data-stealer.evil.org`, `attacker.evil.com`)
+- `GET /api/scans/1456` (same report as today's 1457) → finding "F-54: CORS reflects any Origin…": `https://taintedport.com.evil.example`
+
+Both come from the scanners' CORS test: they check whether the API trusts a look-alike origin, a standard
+penetration-test step. `<brand-domain>.<other-domain>` is the classic phishing-URL shape, which matches the block
+reason "IPS block inbound response: **phishing content**". The intermittent result on 1490 also fits a URL/reputation
+classifier rather than a fixed byte signature. The Zscaler event for the URLs/times above should name the rule or
+threat; that would confirm or rule this out.
+
 ## What we need
 An exception for **`vulnapps.net`** (the site and its `/api/*` paths, served via Cloudflare) from Zscaler
 **IPS / inbound response content inspection** — or an SSL-inspection bypass for that domain — so scan
