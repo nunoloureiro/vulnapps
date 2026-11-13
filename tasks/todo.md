@@ -913,3 +913,16 @@ COS chains as chain reports.
       ignored coverage endpoint, version disclosure, order-status/no-restock, /a/ operator area, SPF/DMARC,
       Cloudflare WAF, client-IP not propagated, image-upload polyglot. Nothing pending. Missed: TP-013, TP-033,
       TP-061, TP-069. (My check script wrongly copied a cyberAgent coverage note onto 1457; cleared.)
+
+## Scan 1457 catalog-gap review — 2026-11-13
+- A: not an answer-key leak (confirmed by taintedport-cc): frontend/.env is an untracked local file copied into
+  the image by build.sh (working-tree context, not in .dockerignore); holds only the fake/example ADMIN_PASS;
+  production refused it (401). Suggested: add frontend/.env* to TaintedPort's .dockerignore (user's call).
+- B: real-infra exposure (SSRF -> IMDSv1 identity-credentials; SSRF also reaches vulnapps 172.17.0.3 and another
+  app 172.17.0.2 on the default Docker bridge). Gave the user exact steps: IMDSv2 + hop limit 1, DOCKER-USER drop
+  for 169.254.169.254, taintedport on its own network, verify, revoke/check role sessions. Deploy scripts still to
+  update (TaintedPort setup-ec2.sh; vulnapps aws/setup-ec2.sh if user agrees).
+- [x] (user-approved) D: TP-015 -> "Open Redirect and javascript: URI XSS on Login", Medium -> High (+6 for scans
+      that found it; max 951 -> 957 on 331, 906 -> 912 on 329; 1356 didn't find it). C: TP-011/TP-012 + TP-061
+      "forged token without exp never expires". E: TP-027 php:// wrappers. TP-014 frontend tree readable.
+- [x] I (password-policy entry): rejected by the user.
