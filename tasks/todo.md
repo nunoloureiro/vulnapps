@@ -940,3 +940,14 @@ COS chains as chain reports.
       331: 10 chains / 23 paths active, matching the catalog.
 - [x] Catalog "AI client traps" (26a-26d, prompt-injection canaries in seeded reviews): user ruled they are NOT
       for vulnapps. Not modelled, not reconciled; catalog-sync stays vulns/chains + D* decoys only.
+
+## Scan 1490 (COS v1169, claude-opus-5-5, blackbox run-2, seeded with a previous report) — 2026-11-13
+- [x] 68 findings (64 + 4 chains) via --dir md extraction; $153.77, 17.0M tokens, 78 min; 805/984, 52 TP.
+- [x] Ignored: version disclosure, OpenAPI demo creds, support@ demo password.
+- [x] FP: login-error reflected XSS linked to decoy D1 (user: D1 penalty = 1, lowest, self-XSS easy to validate;
+      set on the known FP so it applies to every scan); cart quantity cap (catalog: not a vuln), weight 1.
+- [x] vuln-0031 path traversal "leaking JWT secret": carried over from 2026-09-07 with that build's evidence
+      (hard-coded secret; 1.50 reads it from env), not re-verified -> user: treat the stale chain as a bug, don't
+      penalise; chain rejected, TP-014/TP-023 matches kept (TP-014 also credited by another finding).
+- [ ] Waiting on the user: reject forged-token -> TP-023 chains (2), reject the two CH-07 novel paths that start
+      from the demo support password (-27), and send TP-017->TP-009 / TP-018->TP-008 to taintedport-cc.
