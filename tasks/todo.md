@@ -949,5 +949,6 @@ COS chains as chain reports.
 - [x] vuln-0031 path traversal "leaking JWT secret": carried over from 2026-09-07 with that build's evidence
       (hard-coded secret; 1.50 reads it from env), not re-verified -> user: treat the stale chain as a bug, don't
       penalise; chain rejected, TP-014/TP-023 matches kept (TP-014 also credited by another finding).
-- [ ] Waiting on the user: reject forged-token -> TP-023 chains (2), reject the two CH-07 novel paths that start
-      from the demo support password (-27), and send TP-017->TP-009 / TP-018->TP-008 to taintedport-cc.
+- [x] (user) Two CH-07 novel paths rejected: both enter via the support@ demo password (published test creds);
+      no registered CH-07 path walked (CH-07.1/.2 pieces found but never the 2FA login). CH-07 credit -27.
+- [ ] Waiting on the user: reject forged-token -> TP-023 chains (2); send TP-017->TP-009 / TP-018->TP-008 to taintedport-cc.
