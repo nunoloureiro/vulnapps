@@ -956,3 +956,7 @@ COS chains as chain reports.
 - [x] (user-approved, Critical) CH-12 "Cross-user profile write -> stored XSS in the victim's own header",
       CH-12.1 TP-018 -> TP-008, on 331 + 329. Max 984 -> 1011 (331). Linked: 1490 (778 -> 805), 1466 CYA-017
       (862 -> 889), 1408 CYA-CHAIN-02 (506 -> 533; its earlier 'not a chain' rejection superseded by CH-12).
+- [x] CH-12 in the catalog (taintedport-cc). Mirrored on 329 + 331: TP-018 drops the "e.g. plant a TP-008 payload"
+      aside and names its CH-12.1 entry role; TP-008 notes it is CH-12.1's end step. Reconciled 331 with the
+      catalog: 64 vulns, 11 chains / 24 paths, 7 decoys. (329 = 62 vulns / 10 chains / 22 paths by design: no
+      TP-069, TP-066 out of scope, no CH-10 or CH-07.4.)
