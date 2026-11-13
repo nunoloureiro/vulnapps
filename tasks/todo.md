@@ -952,5 +952,7 @@ COS chains as chain reports.
 - [x] (user) Two CH-07 novel paths rejected: both enter via the support@ demo password (published test creds);
       no registered CH-07 path walked (CH-07.1/.2 pieces found but never the 2FA login). CH-07 credit -27.
 - [x] (user) Rejected the two forged-token -> TP-023 chains (CH-02 ruling). 778/984, 52 TP.
-- [ ] Asked taintedport-cc: TP-017 -> TP-009 (IDOR delivers shipping-name XSS; lean not a chain) and
-      TP-018 -> TP-008 (plant navbar XSS in any user; lean chain).
+- [x] taintedport-cc: TP-017 -> TP-009 not a chain (TP-009 already reaches any victim via a tracking link) -> rejected.
+- [x] (user-approved, Critical) CH-12 "Cross-user profile write -> stored XSS in the victim's own header",
+      CH-12.1 TP-018 -> TP-008, on 331 + 329. Max 984 -> 1011 (331). Linked: 1490 (778 -> 805), 1466 CYA-017
+      (862 -> 889), 1408 CYA-CHAIN-02 (506 -> 533; its earlier 'not a chain' rejection superseded by CH-12).
