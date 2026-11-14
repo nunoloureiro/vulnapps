@@ -1004,6 +1004,8 @@ COS chains as chain reports.
       pointer lines 231-234. 1592: #6 -> TP-025 (chain rejected), #4 ignored (functional). 1592 final 865/1015.
 - [ ] 1592 57578 "bonus farming + cash-out race" now a candidate chain (TP-071 + TP-066): proposed reject (race
       works on any credit). Waiting on user.
-- [ ] User wants TaintedPort changed: remove the EUR 10 sign-up promo voucher; EUR 5 welcome only on the user's first
-      order. Asked taintedport-cc: is EUR 10 meant for referrals? + knock-on on TP-063 (#62), TP-054, TP-071, cashout
-      race, tests; needs a NEW app version on vulnapps (TP-071 invalidated from it).
+- [x] EUR 10 promo is not referral-related (taintedport-cc). User chose option 1: promos = admin discount codes only
+      (drop /vouchers/promo); gift cards bought by users (Stripe test) or issued by admins, transferable, redeem to
+      store credit; welcome = discount bound to the new user, first order only. Sent to taintedport-cc to plan.
+- [ ] When the new TaintedPort version ships: register it as a new app on vulnapps (clone 331), apply its per-entry
+      changes (TP-071 fixed; TP-054/TP-063/TP-066 re-sourced), and reconcile counts.
