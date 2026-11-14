@@ -988,8 +988,9 @@ COS chains as chain reports.
 - [x] Ignored demo creds and the length-only password policy (user).
 - [x] (user-approved) CH-06.2 "Online Password Guessing -> 2FA-Disable IDOR -> Takeover" (TP-031 -> TP-020, High)
       on 331 + 329; 1592's report linked to it (CH-06 credit already counted; max unchanged).
-- [ ] Fetch-timeout DoS on /wines/import-url: user says catalogue as a NEW Low (CWE-400); waiting on taintedport-cc
-      wording/tier/1.40 presence, then register + credit 1592.
+- [x] Catalog #69 registered as TP-070 "Unbounded Server-Side Fetch on Wine Import (Worker Exhaustion)", Low,
+      advanced_technical, existed since rev 1, on 331 + 329 (same code on 1.40). 1592 credited: 861 -> 862/1012.
+      CH-06.2 notes mirrored on TP-020 / TP-031. 331 reconciles with the catalog: 65 vulns, 11 chains / 25 paths.
 - [ ] Sign-up bonus farming: user ruled a welcome gift must be bound to the user (vouchers may be transferable) ->
       real vuln; asked taintedport-cc to catalogue it and decide /vouchers/promo. Then re-map 1592, and flip the
       FPs on 1413 (weight 9) and 1582 (weight 1) to TPs.
