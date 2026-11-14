@@ -993,6 +993,6 @@ COS chains as chain reports.
 - [ ] Sign-up bonus farming: user ruled a welcome gift must be bound to the user (vouchers may be transferable) ->
       real vuln; asked taintedport-cc to catalogue it and decide /vouchers/promo. Then re-map 1592, and flip the
       FPs on 1413 (weight 9) and 1582 (weight 1) to TPs.
-- [ ] Cancellation no restock/refund (#4) + any-customer cancel via TP-025 (#6): pending user decision on whether
-      to send back to taintedport-cc (attacker-triggerable via TP-025).
+- [ ] #4 + #6 sent to taintedport-cc. User framing: restocking is a business process; the problem is the missing
+      REFUND of what a customer paid, which matters once an attacker can cancel someone else's order via TP-025.
 - [x] UI: scan cost now 2 decimals everywhere (utils/formatCost.js); cost-per-point keeps 4.
