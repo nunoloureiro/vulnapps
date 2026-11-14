@@ -999,3 +999,11 @@ COS chains as chain reports.
 - [ ] #4 + #6 sent to taintedport-cc. User framing: restocking is a business process; the problem is the missing
       REFUND of what a customer paid, which matters once an attacker can cancel someone else's order via TP-025.
 - [x] UI: scan cost now 2 decimals everywhere (utils/formatCost.js); cost-per-point keeps 4.
+- [x] TP-071 also on 329 (1.40; notes its promo had no per-account limit, a separate uncatalogued bug).
+- [x] (user) TP-025 wording widened on 329 + 331 (victim loses applied credit; card payment stays captured) + code
+      pointer lines 231-234. 1592: #6 -> TP-025 (chain rejected), #4 ignored (functional). 1592 final 865/1015.
+- [ ] 1592 57578 "bonus farming + cash-out race" now a candidate chain (TP-071 + TP-066): proposed reject (race
+      works on any credit). Waiting on user.
+- [ ] User wants TaintedPort changed: remove the EUR 10 sign-up promo voucher; EUR 5 welcome only on the user's first
+      order. Asked taintedport-cc: is EUR 10 meant for referrals? + knock-on on TP-063 (#62), TP-054, TP-071, cashout
+      race, tests; needs a NEW app version on vulnapps (TP-071 invalidated from it).
