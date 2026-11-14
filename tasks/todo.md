@@ -991,9 +991,11 @@ COS chains as chain reports.
 - [x] Catalog #69 registered as TP-070 "Unbounded Server-Side Fetch on Wine Import (Worker Exhaustion)", Low,
       advanced_technical, existed since rev 1, on 331 + 329 (same code on 1.40). 1592 credited: 861 -> 862/1012.
       CH-06.2 notes mirrored on TP-020 / TP-031. 331 reconciles with the catalog: 65 vulns, 11 chains / 25 paths.
-- [ ] Sign-up bonus farming: user ruled a welcome gift must be bound to the user (vouchers may be transferable) ->
-      real vuln; asked taintedport-cc to catalogue it and decide /vouchers/promo. Then re-map 1592, and flip the
-      FPs on 1413 (weight 9) and 1582 (weight 1) to TPs.
+- [x] Catalog #70 registered on 331 as TP-071 "Sign-Up Incentives Not Bound to the Claiming Account (Incentive
+      Farming)", Medium, business_logic (welcome gift card + promo voucher; cashout vouchers excluded). Credited:
+      1592 (2 findings, 862 -> 865), 1582 FP -> TP (832 -> 835), 1413 FP -> TP (562 -> 565). Max 1012 -> 1015.
+- [ ] TP-071 on 1.40 (329): user to decide (welcome card same; 1.40 promo had NO per-account limit, a different
+      uncatalogued bug).
 - [ ] #4 + #6 sent to taintedport-cc. User framing: restocking is a business process; the problem is the missing
       REFUND of what a customer paid, which matters once an attacker can cancel someone else's order via TP-025.
 - [x] UI: scan cost now 2 decimals everywhere (utils/formatCost.js); cost-per-point keeps 4.
