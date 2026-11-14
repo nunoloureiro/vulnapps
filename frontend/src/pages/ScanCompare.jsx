@@ -6,6 +6,7 @@ import { api } from '../api/client';
 import { Badge } from '../components/Badge';
 import { LabelBadge } from '../components/LabelBadge';
 import { scanQuality, weightedScoreWinner } from '../utils/scanStatistics';
+import { formatCost } from '../utils/formatCost';
 
 export default function ScanCompare() {
   const { id: appId } = useParams();
@@ -522,7 +523,7 @@ function ComparisonView({ data, appId }) {
                 <tr>
                   <td className="detail-label sticky-col">Cost</td>
                   {scanners.map((s, i) => (
-                    <td key={s.scan.id} className="text-center font-mono text-secondary" style={winnerStyle(i)}>{s.scan.cost != null ? `$${s.scan.cost.toFixed(4)}` : '-'}</td>
+                    <td key={s.scan.id} className="text-center font-mono text-secondary" style={winnerStyle(i)}>{formatCost(s.scan.cost)}</td>
                   ))}
                 </tr>
               )}

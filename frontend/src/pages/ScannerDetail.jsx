@@ -3,10 +3,11 @@ import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { LabelBadge } from '../components/LabelBadge';
 import { MultiSelect } from '../components/MultiSelect';
+import { formatCost } from '../utils/formatCost';
 
 const pctColor = (v) => (v >= 0.7 ? 'text-success' : v >= 0.4 ? 'text-warning' : 'text-error');
 const fmt = (v) => (v * 100).toFixed(1) + '%';
-const fmtCost = (v) => (v != null ? `$${v.toFixed(4)}` : '-');
+const fmtCost = (v) => formatCost(v);
 const fmtDuration = (s) => {
   if (s == null) return '-';
   if (s >= 60) return `${Math.floor(s / 60)}m ${s % 60}s`;

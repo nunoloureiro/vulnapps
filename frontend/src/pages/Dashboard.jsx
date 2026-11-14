@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import { Badge } from '../components/Badge';
 import { MultiSelect } from '../components/MultiSelect';
+import { formatCost } from '../utils/formatCost';
 
 const ALL_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 
@@ -21,7 +22,7 @@ const pctBarColor = (v) => (v >= 0.7 ? 'var(--success)' : v >= 0.4 ? 'var(--warn
 
 const fmt = (v) => (v * 100).toFixed(1) + '%';
 
-const fmtCost = (c) => (c != null ? `$${c.toFixed(4)}` : '-');
+const fmtCost = (c) => formatCost(c);
 
 const fmtValue = (v) => (v != null ? v.toFixed(2) : '—');
 
@@ -812,7 +813,7 @@ function SummaryTable({ scanners, isFiltered, grouped, hasCostData }) {
                   <td className={`text-center font-mono ${pctColor(m.recall)}`}>{fmt(m.recall)}</td>
                   <td className={`text-center font-mono ${pctColor(m.f1)}`}>{fmt(m.f1)}</td>
                   {hasCostData && (
-                    <td className="text-center font-mono" title={filteredValue != null ? `F1 ${m.f1.toFixed(3)} per $1k of avg scan cost ($${s.avg_cost?.toFixed(4)})` : 'No cost data'}>
+                    <td className="text-center font-mono" title={filteredValue != null ? `F1 ${m.f1.toFixed(3)} per $1k of avg scan cost (${formatCost(s.avg_cost)})` : 'No cost data'}>
                       {fmtValue(filteredValue)}
                     </td>
                   )}

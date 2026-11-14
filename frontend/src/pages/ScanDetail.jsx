@@ -8,6 +8,7 @@ import { api } from '../api/client';
 import { Badge } from '../components/Badge';
 import { LabelBadge } from '../components/LabelBadge';
 import { HistoryLog } from '../components/HistoryLog';
+import { formatCost } from '../utils/formatCost';
 
 // Finding-action icons (12px, inherit currentColor).
 const svg = (children) => (props) => (
@@ -644,7 +645,7 @@ function ScanMeta({ scan, app, labels, canEdit, canViewCost, scanId, onUpdate })
         {canViewCost && (
           <EditableField
             label={<>Cost <span className="text-muted text-xs">(private)</span></>}
-            value={scan.cost != null ? `$${scan.cost.toFixed(4)}` : ''}
+            value={formatCost(scan.cost, '')}
             editValue={scan.cost != null ? String(scan.cost) : ''}
             canEdit={canEdit}
             type="number"
