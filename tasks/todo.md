@@ -1007,5 +1007,7 @@ COS chains as chain reports.
 - [x] EUR 10 promo is not referral-related (taintedport-cc). User chose option 1: promos = admin discount codes only
       (drop /vouchers/promo); gift cards bought by users (Stripe test) or issued by admins, transferable, redeem to
       store credit; welcome = discount bound to the new user, first order only. Sent to taintedport-cc to plan.
+- [x] User approved taintedport-cc's option-1 plan + 2 additions (welcome discount capped at order total, stacking
+      rule defined/tested; regression tests for purchase/issue/list/welcome concurrency). Build in progress there.
 - [ ] When the new TaintedPort version ships: register it as a new app on vulnapps (clone 331), apply its per-entry
       changes (TP-071 fixed; TP-054/TP-063/TP-066 re-sourced), and reconcile counts.
