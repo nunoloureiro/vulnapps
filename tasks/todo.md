@@ -982,3 +982,17 @@ COS chains as chain reports.
 - [x] Ignored: partner keys + runtime secrets via RCE (fixture / RCE impact), AI prompt-injection traps (out of
       scope), demo creds in openapi. 569/1011, 40 TP, CH-05/09/10. Nothing pending.
 - Also: previous greybox run-2 (20261113_19_20) was interrupted (exit 130), no report; user is re-running it.
+
+## Scan 1592 (COS v1169, claude-opus-5-5, greybox run-2; complete re-run 20261114_12_06) — 2026-11-14
+- [x] 68 = 62 + 6 verified; $106.02, 12.8M tokens, 67 min; 861/1011, 57 TP.
+- [x] Ignored demo creds and the length-only password policy (user).
+- [x] (user-approved) CH-06.2 "Online Password Guessing -> 2FA-Disable IDOR -> Takeover" (TP-031 -> TP-020, High)
+      on 331 + 329; 1592's report linked to it (CH-06 credit already counted; max unchanged).
+- [ ] Fetch-timeout DoS on /wines/import-url: user says catalogue as a NEW Low (CWE-400); waiting on taintedport-cc
+      wording/tier/1.40 presence, then register + credit 1592.
+- [ ] Sign-up bonus farming: user ruled a welcome gift must be bound to the user (vouchers may be transferable) ->
+      real vuln; asked taintedport-cc to catalogue it and decide /vouchers/promo. Then re-map 1592, and flip the
+      FPs on 1413 (weight 9) and 1582 (weight 1) to TPs.
+- [ ] Cancellation no restock/refund (#4) + any-customer cancel via TP-025 (#6): pending user decision on whether
+      to send back to taintedport-cc (attacker-triggerable via TP-025).
+- [x] UI: scan cost now 2 decimals everywhere (utils/formatCost.js); cost-per-point keeps 4.
