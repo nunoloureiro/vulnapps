@@ -1033,6 +1033,7 @@ COS chains as chain reports.
 - [x] 70 = 64 + 6 verified (cos converter). No cost/tokens/duration in the output (left blank). 705/1021, 44 TP.
 - [x] Ignored demo creds x2, coverage endpoint, partner keys; login-error self-XSS -> FP linked to D1 (weight 1);
       chain-0006 (TP-014 source read -> TP-011 -> TP-023) rejected.
-- [ ] vuln-0097 remember-me login skips 2FA: user says REAL -> asked taintedport-cc for a catalog entry.
+- [x] Catalog #71 registered as TP-072 "Remember-Me Login Ignores the Account's Current 2FA State", Medium,
+      advanced_technical, on 331 + 329; 1594 credited 705 -> 708/1024 (max +3). Nothing pending on 1594.
 - [x] 1593: ignored openapi demo creds + coverage endpoint. Asked taintedport-cc about CYA-045 (self-asserted
       company membership on statements) and CYA-CHAIN-01 (TP-002 -> TP-001 -> TP-028, proposed CH-07.5).
