@@ -1021,3 +1021,10 @@ COS chains as chain reports.
       via the UI from 1592 to credit COS (knowingly generous). Keeps 1592 at 874.
 - [ ] Asked taintedport-cc: drop #36 (or move under AI traps) + reword #44's cross-reference; add CH-13 to the
       catalog's 1.50 history. Then mirror #44 wording and reconcile 331 counts.
+
+## Scan 1593 (cyberAgent v1.63, greybox run-1; Mythos/Opus/Sonnet) — 2026-11-15
+- First submit blocked by Zscaler ("IPS block outbound request: malicious content"); user turned it off, re-run OK.
+- [x] 58 = 52 + 6 verified, confirmed to cyberagent-21 (counts only). $267.61, 189.4M tokens. Haiku label dropped
+      (user). 1454 kept (user). 918/1021 (89.9%), 59 TP — top score on 1.50.
+- [ ] Pending: openapi demo creds, coverage endpoint (ignore); CYA-045 self-asserted company membership (new?);
+      CYA-CHAIN-01 TP-002 -> TP-001 -> TP-028 novel CH-07 path.
