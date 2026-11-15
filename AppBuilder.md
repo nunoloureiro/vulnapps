@@ -783,7 +783,7 @@ release versions.
 |--------|------|-------------|-------------|
 | GET | `/api/scans` | None / read | List scans with filters: `?app_id=`, `?scanner=`, `?latest=`, `?q=`, `?authenticated=`, `?label=`, `?filter=`. Returns scans, scan_labels_map, scanners list, apps list, all labels |
 | GET | `/api/scans/{id}` | Varies / read | Scan detail with metrics, findings, missed vulns, labels |
-| PUT | `/api/scans/{id}` | Scan write / vuln-mapper | Update scan metadata: `{scanner_name, scan_date, authenticated, notes}` |
+| PUT | `/api/scans/{id}` | Scan write / vuln-mapper | Update scan metadata: `{scanner_name, scanner_version, scan_date, notes, cost, tokens, duration, is_public, model, model_version, reasoning_effort}`. The run description (model, effort) is correctable; importer/matcher provenance is import-time only |
 | DELETE | `/api/scans/{id}` | Scan write | Delete scan |
 | POST | `/api/apps/{id}/scans` | User+ / vuln-mapper | Submit scan. Body: `{scanner_name, scanner_version, scan_date, authenticated, is_public, notes, cost, tokens, duration, findings, labels}`. The server stamps `corpus_revision` with the app's latest revision. Each finding may include `{vuln_type, http_method, url, parameter, filename, title, severity, description, poc, remediation, code_location, fp_group}` |
 | POST | `/api/scans/{id}/findings/{fid}/match` | Scan write / vuln-mapper | Set a finding's complete match set: `{vuln_ids: [int], chain_ids: [int]}` (full replacement; both empty clears it to Pending). One finding may credit several vulns and/or chains — see **Exploit chains**. The legacy single-value bodies (`{vuln_id: int\|null}` / `{chain_id: int\|null}`, mutually exclusive) are still accepted for older clients |

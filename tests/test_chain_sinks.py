@@ -415,3 +415,20 @@ async def test_invalidate_chain_retires_credit_but_keeps_history(db):
         "the earlier revision still reproduces the old score"
     with pytest.raises(ValueError, match="already invalidated"):
         await chains_service.invalidate_chain(db, ADMIN, app_id, path["id"])
+
+
+async def test_run_model_is_correctable_but_provenance_is_not(db):
+    """A scan imported with the wrong model (a COS production run recorded as
+    claude-opus-5-5) can be corrected; the importer's provenance cannot."""
+    app_id, _ = await setup(db)
+    scan_id = await scans_service.submit_scan(
+        db, ADMIN, app_id, scanner_name="COS", scan_date="2026-11-15", is_public=0,
+        notes=None, cost=None, tokens=None, duration=None, findings_data=[],
+    )
+    out = await scans_service.update_scan(db, ADMIN, scan_id, {
+        "model": "claude-opus-4-6", "reasoning_effort": "extended", "scanner_version": "",
+        "duration": 15300, "matcher_version": "forged",
+    })
+    assert (out["model"], out["reasoning_effort"], out["scanner_version"], out["duration"]) == (
+        "claude-opus-4-6", "extended", "", 15300)
+    assert out["matcher_version"] != "forged", "importer/matcher provenance stays import-time only"

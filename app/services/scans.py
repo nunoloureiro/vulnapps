@@ -824,9 +824,14 @@ async def update_scan(db, user, scan_id: int, updates: dict) -> dict:
     scan, app = await _get_scan_and_app(db, scan_id)
     await _check_scan_write(db, user, scan, app)
 
+    # The run's own description (which model/effort ran it) is correctable like
+    # scanner_version -- an import can record it wrong (2026-11-15: a COS
+    # production scan imported as claude-opus-5-5 instead of claude-opus-4-6).
+    # The importer/matcher provenance fields stay import-time only.
     allowed = {
         "scanner_name", "scanner_version", "scan_date", "notes",
         "cost", "tokens", "duration", "is_public",
+        "model", "model_version", "reasoning_effort",
     }
     clean = {k: v for k, v in updates.items() if k in allowed and v is not None}
 
