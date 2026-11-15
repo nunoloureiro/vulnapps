@@ -1013,3 +1013,11 @@ COS chains as chain reports.
       Keep importing to 1.50 (331) until the user deploys v1.51 and says so; then set up 1.51 BEFORE the next import.
 - [ ] When the new TaintedPort version ships: register it as a new app on vulnapps (clone 331), apply its per-entry
       changes (TP-071 fixed; TP-054/TP-063/TP-066 re-sourced), and reconcile counts.
+
+## Catalog-sync items — 2026-11-15
+- [x] (user) TP-032 (/pi-log-data, AI-trap callback log) retired on 331 at revision 23 (matched by 8 scans, so
+      invalidated not deleted; each -3, max 1024 -> 1021). 329 keeps it (user: ignore).
+- [x] CH-13.1 "Sign-up Bonus Farming + Store-Credit Cash-out Race" (TP-071 -> TP-066, High) was added by the user
+      via the UI from 1592 to credit COS (knowingly generous). Keeps 1592 at 874.
+- [ ] Asked taintedport-cc: drop #36 (or move under AI traps) + reword #44's cross-reference; add CH-13 to the
+      catalog's 1.50 history. Then mirror #44 wording and reconcile 331 counts.
