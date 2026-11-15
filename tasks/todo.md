@@ -1035,5 +1035,8 @@ COS chains as chain reports.
       chain-0006 (TP-014 source read -> TP-011 -> TP-023) rejected.
 - [x] Catalog #71 registered as TP-072 "Remember-Me Login Ignores the Account's Current 2FA State", Medium,
       advanced_technical, on 331 + 329; 1594 credited 705 -> 708/1024 (max +3). Nothing pending on 1594.
-- [x] 1593: ignored openapi demo creds + coverage endpoint. Asked taintedport-cc about CYA-045 (self-asserted
-      company membership on statements) and CYA-CHAIN-01 (TP-002 -> TP-001 -> TP-028, proposed CH-07.5).
+- [x] 1593: ignored openapi demo creds, coverage endpoint and CYA-045 (company is free text on users, no IDs,
+      statement is API-only/admin-only: user "this is nothing").
+- [x] (user) CH-07.5 "Wine-Detail SQLi Seed + Login SQLi -> 2FA-Protected Takeover" (TP-002 -> TP-001 -> TP-028,
+      Critical) on 331 + 329; 1593 linked; 918/1024 final. Kept for consistency with CH-07.4 even though the login
+      SQLi alone may reach a 2FA account (UNION row with an attacker-chosen totp_secret) -- not verified live.
