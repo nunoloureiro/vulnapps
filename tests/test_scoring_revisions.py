@@ -289,6 +289,18 @@ async def test_compare_suppresses_precision_when_adjudication_is_incomplete(db):
     assert scanner_b["metrics"]["precision_lower"] < scanner_b["metrics"]["precision_upper"]
 
 
+async def test_compare_columns_follow_the_requested_order(db):
+    """The user sets the column order by ordering ?scans= (repeats dropped),
+    not by scan date."""
+    app_id = await make_app(db)
+    await add_vuln(db, app_id, "V-1", url="/login")
+    a = await submit(db, app_id, [{"vuln_type": "SQLi", "url": "/login"}])
+    b = await submit(db, app_id, [{"vuln_type": "SQLi", "url": "/login"}])
+    c = await submit(db, app_id, [{"vuln_type": "SQLi", "url": "/login"}])
+    result = await scans_service.compare_scans(db, ADMIN, app_id, [c, a, b, a])
+    assert [s["scan"]["id"] for s in result["scanners"]] == [c, a, b]
+
+
 # ---------------------------------------------------------------------------
 # Chains through the service layer
 # ---------------------------------------------------------------------------

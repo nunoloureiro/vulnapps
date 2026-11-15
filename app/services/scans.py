@@ -1546,6 +1546,8 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
     )
     available_scans = await cursor.fetchall()
 
+    scan_ids = list(dict.fromkeys(scan_ids))  # keep the requested order, drop repeats
+
     # If no scan IDs, return just the selector data
     if not scan_ids:
         return {
@@ -1635,8 +1637,9 @@ async def compare_scans(db, user, app_id: int, scan_ids: list[int]) -> dict:
             "severity_by_vuln": severity_by_vuln,
         })
 
-    # Sort by scan date ascending (oldest first)
-    scanners.sort(key=lambda s: (s["scan"]["scan_date"] or "", s["scan"]["id"]))
+    # Columns keep the order the scans were requested in (?scans=a,b,c), which
+    # is the order they were picked in the UI -- the user sets the layout by
+    # ordering the URL (user, 2026-11-15; was: oldest scan_date first).
 
     # Detection matrix. `credits` is 0/1 per scan (1 = matched); `applicable`
     # is false where the vuln postdates the run, so the cell reads "not
