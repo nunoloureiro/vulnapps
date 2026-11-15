@@ -1009,5 +1009,7 @@ COS chains as chain reports.
       store credit; welcome = discount bound to the new user, first order only. Sent to taintedport-cc to plan.
 - [x] User approved taintedport-cc's option-1 plan + 2 additions (welcome discount capped at order total, stacking
       rule defined/tested; regression tests for purchase/issue/list/welcome concurrency). Build in progress there.
+- [ ] TaintedPort v1.51 is tagged (repo e372d33, catalog cffd0c1) but the user is NOT moving vulnapps to 1.51 yet.
+      Keep importing to 1.50 (331) until the user deploys v1.51 and says so; then set up 1.51 BEFORE the next import.
 - [ ] When the new TaintedPort version ships: register it as a new app on vulnapps (clone 331), apply its per-entry
       changes (TP-071 fixed; TP-054/TP-063/TP-066 re-sourced), and reconcile counts.
