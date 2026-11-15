@@ -1052,7 +1052,8 @@ COS chains as chain reports.
 - [x] (user) Ignored: openapi demo creds, AI-trap log bypass, password policy, company field, cart quantity, VAT/credit
       ordering (not a vuln), EOL Next.js, no audit trail. Rejected chains: partner-key -> import read; TP-012 -> TP-059.
 - [x] (user) CH-01.5 "Directory Listing DB Dump -> Pass-the-Hash" (TP-013 -> TP-036, Critical) on 331 + 329; 1595 linked.
-- [ ] Asked taintedport-cc: review-comment length DoS (CYA-060). Only pending item on 1595.
+- [x] (user) CYA-060 review-length folded into TP-068 (sentence added on 331 + 329; 1595 credited, score unchanged as
+      TP-068 was already found). 1595 final 834/1024, nothing pending.
 - [x] 1593 relabelled: plain claude-opus-5-5 -> judge:claude-opus-5-5 (user: plain labels for testing models, judge: for
-      the validator). Open: drop claude-sonnet-5-5 from 1593 or add it to 1595?
+      the validator). claude-sonnet-5-5 dropped from 1593 (user). Convention saved to memory.
 - [x] Compare: columns follow ?scans= order; an empty slot draws a light divider (user).
