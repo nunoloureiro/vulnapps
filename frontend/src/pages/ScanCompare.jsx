@@ -7,6 +7,7 @@ import { Badge } from '../components/Badge';
 import { LabelBadge } from '../components/LabelBadge';
 import { scanQuality, weightedScoreWinner } from '../utils/scanStatistics';
 import { formatCost } from '../utils/formatCost';
+import { groupBreaksAfter } from '../utils/compareGroups';
 
 export default function ScanCompare() {
   const { id: appId } = useParams();
@@ -53,7 +54,7 @@ export default function ScanCompare() {
       {!comparison ? (
         <ScanSelector scans={available} selected={selected} onToggle={toggleScan} onCompare={doCompare} />
       ) : (
-        <ComparisonView data={comparison} appId={appId} />
+        <ComparisonView data={comparison} appId={appId} breaks={groupBreaksAfter(scanIds)} />
       )}
     </>
   );
@@ -173,7 +174,7 @@ function ScannerHeader({ s, isWinner }) {
   );
 }
 
-function ComparisonView({ data, appId }) {
+function ComparisonView({ data, appId, breaks = new Set() }) {
   const { scanners, matrix, fp_matrix, guards, label, chains } = data;
   const ALL_SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
   const [sevFilter, setSevFilter] = useState(new Set(ALL_SEVERITIES));
@@ -329,7 +330,14 @@ function ComparisonView({ data, appId }) {
   };
 
   const WINNER_BG = 'rgba(249, 115, 22, 0.08)';
-  const winnerStyle = (i) => (i === winnerIdx ? { background: WINNER_BG } : undefined);
+  // A light divider after a column the URL marks with an empty slot ("a,b,,c").
+  const GROUP_BREAK = '1px solid rgba(255, 255, 255, 0.14)';
+  const winnerStyle = (i) => {
+    const style = {};
+    if (i === winnerIdx) style.background = WINNER_BG;
+    if (scanners[i] && breaks.has(scanners[i].scan.id)) style.borderRight = GROUP_BREAK;
+    return Object.keys(style).length ? style : undefined;
+  };
 
   return (
     <>

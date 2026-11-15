@@ -1044,3 +1044,15 @@ COS chains as chain reports.
       version -> scanner_version cleared, label claude-opus-5-5 -> claude-opus-4-6, model field fixed (new: PUT
       /api/scans/{id} accepts model/model_version/reasoning_effort; test added), duration 4h15m (user). My mistake:
       I took version and model from the request instead of checking the run files.
+
+## Scan 1595 (cyberAgent v1.63, greybox run-2; labels greybox, run-2, claude-mythos-5-1, gpt-6-cyber,
+## judge:claude-opus-5-5) — 2026-11-15
+- [x] 69 = 62 + 7 verified, confirmed to cyberagent-21. 834/1024, 61 TP. First attempt hit a 502 caused by MY push
+      (deploy restart) during the import -- never push while an import is starting or running.
+- [x] (user) Ignored: openapi demo creds, AI-trap log bypass, password policy, company field, cart quantity, VAT/credit
+      ordering (not a vuln), EOL Next.js, no audit trail. Rejected chains: partner-key -> import read; TP-012 -> TP-059.
+- [x] (user) CH-01.5 "Directory Listing DB Dump -> Pass-the-Hash" (TP-013 -> TP-036, Critical) on 331 + 329; 1595 linked.
+- [ ] Asked taintedport-cc: review-comment length DoS (CYA-060). Only pending item on 1595.
+- [x] 1593 relabelled: plain claude-opus-5-5 -> judge:claude-opus-5-5 (user: plain labels for testing models, judge: for
+      the validator). Open: drop claude-sonnet-5-5 from 1593 or add it to 1595?
+- [x] Compare: columns follow ?scans= order; an empty slot draws a light divider (user).
