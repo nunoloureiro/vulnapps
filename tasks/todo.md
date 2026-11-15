@@ -1040,3 +1040,7 @@ COS chains as chain reports.
 - [x] (user) CH-07.5 "Wine-Detail SQLi Seed + Login SQLi -> 2FA-Protected Takeover" (TP-002 -> TP-001 -> TP-028,
       Critical) on 331 + 329; 1593 linked; 918/1024 final. Kept for consistency with CH-07.4 even though the login
       SQLi alone may reach a 2FA account (UNION row with an attacker-chosen totp_secret) -- not verified live.
+- [x] 1594 corrected (user): it is a COS PRODUCTION run (/tmp/ai-pentest-*), model claude-opus-4-6 per its logs, no
+      version -> scanner_version cleared, label claude-opus-5-5 -> claude-opus-4-6, model field fixed (new: PUT
+      /api/scans/{id} accepts model/model_version/reasoning_effort; test added), duration 4h15m (user). My mistake:
+      I took version and model from the request instead of checking the run files.

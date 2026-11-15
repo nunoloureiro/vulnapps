@@ -293,3 +293,9 @@ report's `cwe` field into vuln_type, which is the finding's heading on the scan 
 2026-11-12, self-caught: I reused the 1454 check script (which also SETS the coverage note) for scan 1457 by
 sed-replacing the scan id, and it wrote a cyberAgent coverage note onto the Claude Code scan.
 - Rule: keep read-only checks and writes in separate scripts; never reuse a script that writes for another scan.
+
+## Check a run's own files before trusting the stated model/version
+2026-11-15: I imported a COS report from /tmp/ai-pentest-* with version 1169 and model claude-opus-5-5 from the
+request. That layout is COS production (like 1412/1413): no version, and its logs said claude-opus-4-6.
+- Rule: /tmp/ai-pentest-<uuid>/ = COS production (no scanner_version, model from the logs); scan_results/.../
+  scans_history/ = the local COS build (version = commit count). Grep the run's logs/run_info for the model.
