@@ -10,6 +10,15 @@ site, **vulnapps.net**, with HTTP 403 and the Zscaler block page:
 
 The request is allowed out; it is the **response body** that is classified and dropped.
 
+## Also blocked: uploads (outbound)
+On 2026-11-15 11:25 UTC Zscaler blocked the **request** itself, not a response:
+
+> **IPS block outbound request: malicious content**
+> `POST https://vulnapps.net/api/apps/331/scans` (submitting a scan's findings; no scan was created)
+
+The body is the same kind of evidence text (proof-of-concept payloads from a security scanner's report). So the
+exception needs to cover **uploads to** vulnapps.net as well as responses from it.
+
 ## Where and when (UTC)
 | When | URL | Result |
 |---|---|---|
