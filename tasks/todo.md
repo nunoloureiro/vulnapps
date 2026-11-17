@@ -1057,3 +1057,11 @@ COS chains as chain reports.
 - [x] 1593 relabelled: plain claude-opus-5-5 -> judge:claude-opus-5-5 (user: plain labels for testing models, judge: for
       the validator). claude-sonnet-5-5 dropped from 1593 (user). Convention saved to memory.
 - [x] Compare: columns follow ?scans= order; an empty slot draws a light divider (user).
+
+## Scan 1597 (COS v1169, claude-mythos-5-1 via Bedrock, greybox run-1; 20261117_01_11) — 2026-11-17
+- Greybox source was a stale clone (ff583d3, commit 8/51, May 2026); user: forget the source, import as is.
+- [x] 50 = 47 + 3 verified (cos converter on scan/controller/output JSON). Cost: scanner's $272.59 came from a
+      fallback rate (Mythos had no price entry); recorded $155.92 = first-party Mythos 5.1 rates on the run's tokens
+      (user), with a note. 789/1024, 45 TP, nothing pending.
+- [x] Rejected TP-017 -> TP-009 (1490 ruling); ignored coverage, partner keys, default demo creds (wrongly matched to
+      TP-031), pi-log-data (matched to retired TP-032; AI-trap plumbing).
