@@ -1078,3 +1078,13 @@ COS chains as chain reports.
       (say not exposed).
 - [x] User: KEEP all four TP-001 paths (CH-01.1, CH-07.4, CH-07.5, CH-11.7) despite TP-001 alone sufficing.
 - [x] Server briefly truncated large API responses at ~143 KB (2026-11-17, disk-full symptom); healthy again 11-18.
+
+## Scan 1598 (cyberAgent v1.74, greybox run-1; labels greybox, run-1, gpt-6-cyber, judge:claude-opus-5-5) — 2026-11-18
+- Requested by session zero-config-provenance-read-auth on the user's behalf.
+- [x] 49 = 44 (6C/20H/12M/6L) + 5 chains (3C/1H/1M), matching vulnerabilities.csv, vulnerabilities/ and
+      vulnerability_chains/; reported back. $172.39 (run block). 793/1051, 49 TP.
+- [x] Settled by standing rulings: ignored demo admin creds, password policy, EOL Next.js; rejected CYA-CHAIN-05
+      (enumeration helper + TP-031's own impact, per the CH-06.2 verdict).
+- [x] taintedport-validator: CYA-CHAIN-04 NOT a chain (rule a: #61/TP-062 alone reaches admin; admin id 3 needs no
+      leak, same as CH-02) -> rejected; CYA-005 -> TP-013, CYA-016 -> TP-062. 1598 final, nothing pending.
+- Labels: Opus as judge assumed from the 1595 pattern (GPT-6 tested); confirm with the user.
