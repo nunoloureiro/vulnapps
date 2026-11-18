@@ -1065,3 +1065,16 @@ COS chains as chain reports.
       (user), with a note. 789/1024, 45 TP, nothing pending.
 - [x] Rejected TP-017 -> TP-009 (1490 ruling); ignored coverage, partner keys, default demo creds (wrongly matched to
       TP-031), pi-log-data (matched to retired TP-032; AI-trap plumbing).
+
+## Committed partner RS256 private key (TP-073) — 2026-11-17/18
+- [x] taintedport-cc confirmed + fixed for the next release (key generated per container). User chose option 2: register
+      as a normal Critical (advanced_technical, CWE-321) on 1.40 (329; jwt.php via /files/, black-box) and 1.50 (331;
+      docker/entrypoint.sh, source-only). Not in the catalog (describes current version only). TODO: also register on
+      1.51 when that app is created; invalidate from the fixed version.
+- [x] Re-mapped 1595 CYA-005 -> TP-073 (+TP-023), dropping the wrong TP-013 match: 834 -> 861/1051.
+- [x] Sweep (private key named/forged only; not partner_public.pem, not partner API keys): credited 1593 CYA-006
+      (918 -> 945), 1592 x2 (874 -> 901), 1582 x2 (835 -> 862), 1346 on 1.40 x2 (597 -> 624/1018). Not credited: 1594
+      (claims key in traversal-reachable files -- false on 1.50), 1584 (read via RCE env), 1490 (stale), 1466/1457/1409
+      (say not exposed).
+- [x] User: KEEP all four TP-001 paths (CH-01.1, CH-07.4, CH-07.5, CH-11.7) despite TP-001 alone sufficing.
+- [x] Server briefly truncated large API responses at ~143 KB (2026-11-17, disk-full symptom); healthy again 11-18.
