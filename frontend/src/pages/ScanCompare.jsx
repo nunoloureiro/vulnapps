@@ -1,17 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
 import { InfoTip } from '../components/InfoTip';
 import { SeverityBreakdown } from '../components/SeverityBreakdown';
-import { useParams, useSearchParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge } from '../components/Badge';
 import { LabelBadge } from '../components/LabelBadge';
 import { scanQuality, weightedScoreWinner } from '../utils/scanStatistics';
 import { formatCost } from '../utils/formatCost';
 import { groupBreaksAfter } from '../utils/compareGroups';
+import { compareQuery } from '../utils/compareQuery';
 
 export default function ScanCompare() {
   const { id: appId } = useParams();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [app, setApp] = useState(null);
   const [available, setAvailable] = useState([]);
   const [comparison, setComparison] = useState(null);
@@ -19,6 +21,19 @@ export default function ScanCompare() {
   const [loading, setLoading] = useState(true);
 
   const scanIds = searchParams.get('scans') || '';
+  // The report's name lives in the URL (?title=...&scans=...), so a named
+  // comparison is shareable and bookmarkable with no server-side state.
+  const title = searchParams.get('title') || '';
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const saveTitle = () => {
+    setEditingTitle(false);
+    if (titleDraft.trim() !== title) navigate(compareQuery(titleDraft, scanIds), { replace: true });
+  };
+
+  useEffect(() => {
+    document.title = title ? `${title} · vulnapps` : 'Compare Scans · vulnapps';
+  }, [title]);
 
   useEffect(() => {
     const qs = scanIds ? `?scans=${scanIds}` : '';
@@ -39,7 +54,7 @@ export default function ScanCompare() {
   };
 
   const doCompare = () => {
-    setSearchParams({ scans: Array.from(selected).join(',') });
+    navigate(compareQuery(title, Array.from(selected).join(',')));
   };
 
   if (loading) return <p className="text-muted">Loading...</p>;
@@ -47,7 +62,24 @@ export default function ScanCompare() {
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">Compare Scans <span className="text-muted text-sm">{app?.name}{app?.version ? ` v${app.version}` : ''}</span></h1>
+        <h1 className="page-title">
+          {editingTitle ? (
+            <input className="inline-input" autoFocus value={titleDraft} placeholder="Compare Scans"
+              style={{ fontSize: 'inherit', fontWeight: 'inherit', width: 'min(36rem, 70vw)' }}
+              onChange={e => setTitleDraft(e.target.value)}
+              onBlur={saveTitle}
+              onKeyDown={e => { if (e.key === 'Enter') saveTitle(); if (e.key === 'Escape') setEditingTitle(false); }} />
+          ) : (
+            <span className="editable-field" title="Click to name this comparison"
+              onClick={() => { setTitleDraft(title); setEditingTitle(true); }}>
+              {title || 'Compare Scans'}
+              <svg className="edit-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" style={{ opacity: 0.6 }}>
+                <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>
+              </svg>
+            </span>
+          )}{' '}
+          <span className="text-muted text-sm">{app?.name}{app?.version ? ` v${app.version}` : ''}</span>
+        </h1>
         <Link to={`/apps/${appId}`} className="btn btn-outline">Back to App</Link>
       </div>
 
