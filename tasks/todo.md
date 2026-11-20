@@ -1100,3 +1100,10 @@ COS chains as chain reports.
 - [x] Ignored per standing rulings: support@ demo password, order lifecycle/no restock, password policy, no audit trail.
       Match warnings OK: CYA-008 -> TP-013; CYA-051 (origin reachable on :80) -> TP-027 via its own SSRF PoC.
       904/1051, 61 TP, 0 FP, nothing pending.
+
+## CyberAgent version-analysis numbers — 2026-11-20
+- [x] User approved sending aggregate per-scan TP (catalog severity) / FP / chain groups / weighted score for the 12
+      cyberAgent scans to the cyberAgent session for docs/version-analysis.md. No catalog IDs or mappings.
+- [x] 1356 scanner_version 1.8 -> 1.6: run started 2026-11-09 01:07Z, cyberAgent main was at 1.6 (commit 56f6f59,
+      11-08 01:17; version = 1.<commits on main>). findings.json says 1.12 only because it was re-rendered later.
+      1355 stays 1.4 (same reason for its findings.json 1.6).
